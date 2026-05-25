@@ -44,3 +44,7 @@ export async function fetchTools(): Promise<ToolRow[]> {
 export async function fetchSessions(): Promise<SessionRow[]> {
   return fetchJson<SessionRow[]>("/api/sessions");
 }
+
+export function buildExportUrl(format: "csv" | "json"): string {
+  return `/api/exports/${format}`;
+}

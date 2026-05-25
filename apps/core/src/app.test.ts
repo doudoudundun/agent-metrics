@@ -193,4 +193,48 @@ describe("core api", () => {
 
     await app.close();
   });
+
+  it("returns a session detail timeline", async () => {
+    await appendJsonLine(logPath, {
+      event_id: "evt_detail_1",
+      session_id: "ses_detail_1",
+      timestamp: "2026-05-25T08:00:00.000Z",
+      source_vendor: "claude-code",
+      source_adapter: "claude",
+      workspace_path: "D:/projects/dev/agent-metrics",
+      type: "session.started"
+    });
+
+    await appendJsonLine(logPath, {
+      event_id: "evt_detail_2",
+      session_id: "ses_detail_1",
+      timestamp: "2026-05-25T08:00:01.000Z",
+      source_vendor: "claude-code",
+      source_adapter: "claude",
+      workspace_path: "D:/projects/dev/agent-metrics",
+      type: "tool.succeeded",
+      tool_name: "Read",
+      status: "succeeded",
+      duration_ms: 14
+    });
+
+    const app = buildApp({ dbPath });
+    await ingestEventLog({ app, eventLogPath: logPath });
+    const response = await app.inject({ method: "GET", url: "/api/sessions/ses_detail_1" });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      sessionId: "ses_detail_1",
+      timeline: [
+        {
+          type: "tool.succeeded",
+          toolName: "Read",
+          status: "succeeded",
+          durationMs: 14
+        }
+      ]
+    });
+
+    await app.close();
+  });
 });

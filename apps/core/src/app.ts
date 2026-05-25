@@ -53,6 +53,12 @@ type SessionListRow = {
   workspacePath: string;
 };
 
+type SessionTimelineRow = {
+  toolName: string;
+  status: string;
+  durationMs: number;
+};
+
 const TOOL_RANKING_QUERY = `
   SELECT
     tool_name AS toolName,
@@ -175,13 +181,34 @@ export function buildApp(input: { dbPath: string }): MetricsApp {
     return selectSessions(db);
   });
 
+  app.get("/api/sessions/:id", async (request) => {
+    const params = request.params as { id: string };
+    const rows = db
+      .prepare<SessionTimelineRow>(
+        "SELECT tool_name AS toolName, status, duration_ms AS durationMs FROM tool_events WHERE session_id = ? ORDER BY created_at ASC"
+      )
+      .all(params.id);
+
+    return {
+      sessionId: params.id,
+      timeline: rows.map((row) => ({
+        type: `tool.${row.status}`,
+        toolName: row.toolName,
+        status: row.status,
+        durationMs: row.durationMs
+      }))
+    };
+  });
+
   app.get("/api/exports/json", async (_, reply) => {
     reply.header("content-type", "application/json; charset=utf-8");
+    reply.header("content-disposition", 'attachment; filename="tools.json"');
     return toJson(selectToolRanking(db));
   });
 
   app.get("/api/exports/csv", async (_, reply) => {
     reply.header("content-type", "text/csv; charset=utf-8");
+    reply.header("content-disposition", 'attachment; filename="tools.csv"');
     return toCsv(selectToolRanking(db));
   });
 

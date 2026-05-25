@@ -1,6 +1,6 @@
 import { lazy, startTransition, Suspense, useEffect, useEffectEvent, useState } from "react";
 import type { OverviewResponse, SessionRow, ToolRow } from "./api";
-import { fetchOverview, fetchSessions, fetchTools } from "./api";
+import { buildExportUrl, fetchOverview, fetchSessions, fetchTools } from "./api";
 import { KpiGrid } from "./components/KpiGrid";
 import { RecentSessionsTable } from "./components/RecentSessionsTable";
 import { ToolRankingTable } from "./components/ToolRankingTable";
@@ -126,6 +126,14 @@ export function App() {
               <span>{lastUpdated}</span>
             </div>
           ) : null}
+        </div>
+        <div className="hero-actions">
+          <a className="hero-link" href={buildExportUrl("csv")}>
+            Export CSV
+          </a>
+          <a className="hero-link" href={buildExportUrl("json")}>
+            Export JSON
+          </a>
         </div>
       </section>
 

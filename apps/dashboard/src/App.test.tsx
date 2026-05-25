@@ -27,7 +27,8 @@ vi.mock("./api", () => ({
     estimatedTokens: 900
   }),
   fetchTools: async () => [{ toolName: "Read", count: 6, failures: 0, averageDurationMs: 15 }],
-  fetchSessions: async () => [{ sessionId: "ses_1", workspacePath: "D:/projects/dev/agent-metrics" }]
+  fetchSessions: async () => [{ sessionId: "ses_1", workspacePath: "D:/projects/dev/agent-metrics" }],
+  buildExportUrl: (format: "csv" | "json") => `/api/exports/${format}`
 }));
 
 describe("App", () => {
@@ -37,6 +38,21 @@ describe("App", () => {
     expect(await screen.findByText("12")).toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "Recent Sessions" })).toBeInTheDocument();
     expect(await screen.findByText("ses_1")).toBeInTheDocument();
+
+    view.unmount();
+  });
+
+  it("renders export links", async () => {
+    const view = render(<App />);
+
+    expect(await screen.findByRole("link", { name: "Export CSV" })).toHaveAttribute(
+      "href",
+      "/api/exports/csv"
+    );
+    expect(await screen.findByRole("link", { name: "Export JSON" })).toHaveAttribute(
+      "href",
+      "/api/exports/json"
+    );
 
     view.unmount();
   });
