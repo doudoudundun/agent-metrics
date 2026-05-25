@@ -1,5 +1,6 @@
 declare module "better-sqlite3" {
   interface Statement<Result = unknown> {
+    all(...params: unknown[]): Result[];
     get(...params: unknown[]): Result;
     run(...params: unknown[]): unknown;
   }

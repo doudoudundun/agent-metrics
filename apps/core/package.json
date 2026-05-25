@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@agent-metrics/event-schema": "workspace:*",
+    "@agent-metrics/metrics-engine": "workspace:*",
     "@agent-metrics/shared-utils": "workspace:*",
     "better-sqlite3": "^11.10.0",
     "fastify": "^5.3.3"

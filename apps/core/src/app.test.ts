@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
 import { beforeEach, describe, expect, it } from "vitest";
 import { appendJsonLine } from "@agent-metrics/shared-utils";
 import { buildApp, ingestEventLog, resolveDefaultDbPath } from "./app.js";
@@ -17,7 +18,7 @@ beforeEach(async () => {
 });
 
 describe("ingestEventLog", () => {
-  it("stores succeeded and failed tool events into SQLite-backed overview rows", async () => {
+  it("stores tool and code edit events into SQLite-backed overview rows", async () => {
     await appendJsonLine(logPath, {
       event_id: "evt_1",
       session_id: "ses_1",
@@ -54,14 +55,37 @@ describe("ingestEventLog", () => {
       duration_ms: 21
     });
 
+    await appendJsonLine(logPath, {
+      event_id: "evt_4",
+      session_id: "ses_1",
+      timestamp: "2026-05-25T08:00:03.000Z",
+      source_vendor: "claude-code",
+      source_adapter: "claude",
+      workspace_path: "D:/projects/dev/agent-metrics",
+      type: "code.edit.applied",
+      tool_name: "Edit",
+      files_changed: ["src/app.ts", "src/index.ts"],
+      file_count: 2,
+      insertions: 12,
+      deletions: 4,
+      edit_operation_count: 1
+    });
+
     const app = buildApp({ dbPath });
     await ingestEventLog({ app, eventLogPath: logPath });
     const response = await app.inject({ method: "GET", url: "/api/overview" });
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({
+      affectedFileCount: 2,
+      deletions: 4,
+      editOperationCount: 1,
+      estimatedTokens: 0,
+      failedExecutions: 1,
+      insertions: 12,
       totalToolCalls: 2,
       successfulExecutions: 1,
+      successRate: 0.5,
       sessionCount: 1
     });
 
@@ -84,7 +108,7 @@ describe("ingestEventLog", () => {
     const serverModuleUrl = new URL("./server.ts", import.meta.url).href;
 
     expect(resolveDefaultDbPath(serverModuleUrl)).toBe(
-      resolve(process.cwd(), "..", "..", "data", "sqlite", "metrics.sqlite")
+      fileURLToPath(new URL("../../../data/sqlite/metrics.sqlite", serverModuleUrl))
     );
   });
 });
