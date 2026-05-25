@@ -23,4 +23,17 @@ describe("runWrappedSession", () => {
     expect(lines[0]).toContain("\"type\":\"session.started\"");
     expect(lines[1]).toContain("\"type\":\"session.ended\"");
   });
+
+  it("runs the wrapped command with the default runner", async () => {
+    const root = await mkdtemp(join(tmpdir(), "agent-metrics-"));
+    const outputFile = join(root, "events.jsonl");
+
+    const exitCode = await runWrappedSession({
+      args: [process.execPath, "-e", "process.exit(7)"],
+      eventLogPath: outputFile,
+      workspacePath: root
+    });
+
+    expect(exitCode).toBe(7);
+  });
 });

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { appendJsonLine } from "@agent-metrics/shared-utils";
 import type { SessionEndedEvent, SessionStartedEvent } from "@agent-metrics/event-schema";
@@ -10,14 +11,38 @@ export type WrappedSessionOptions = {
   runCommand?: (args: string[]) => Promise<number>;
 };
 
-async function defaultRunCommand(): Promise<number> {
-  return 0;
+async function defaultRunCommand(args: string[], workspacePath: string): Promise<number> {
+  if (args.length === 0) {
+    return 0;
+  }
+
+  return await new Promise<number>((resolve, reject) => {
+    const child = spawn(args[0], args.slice(1), {
+      cwd: workspacePath,
+      shell: false,
+      stdio: "inherit",
+      windowsHide: true
+    });
+
+    child.on("error", (error) => {
+      reject(error);
+    });
+
+    child.on("close", (code, signal) => {
+      if (code !== null) {
+        resolve(code);
+        return;
+      }
+
+      resolve(signal ? 1 : 0);
+    });
+  });
 }
 
 export async function runWrappedSession(options: WrappedSessionOptions): Promise<number> {
   const sessionId = randomUUID();
   const startedAt = new Date();
-  const runCommand = options.runCommand ?? defaultRunCommand;
+  const runCommand = options.runCommand ?? ((args: string[]) => defaultRunCommand(args, options.workspacePath));
 
   const startedEvent: SessionStartedEvent = {
     event_id: randomUUID(),
