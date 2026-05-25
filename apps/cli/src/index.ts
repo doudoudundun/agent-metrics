@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { pathToFileURL } from "node:url";
-import { appendJsonLine } from "../../../packages/shared-utils/src/index.js";
+import { appendJsonLine } from "@agent-metrics/shared-utils";
 import type { SessionEndedEvent, SessionStartedEvent } from "@agent-metrics/event-schema";
 
 export type WrappedSessionOptions = {
@@ -60,7 +60,7 @@ if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) 
       .argument("<command>")
       .argument("[args...]")
       .option("--event-log-path <path>", "Path to event log", "data/events/events.jsonl")
-      .action(async (command, args, options) => {
+      .action(async (command: string, args: string[], options: { eventLogPath: string }) => {
         const exitCode = await runWrappedSession({
           args: [command, ...args],
           eventLogPath: options.eventLogPath,

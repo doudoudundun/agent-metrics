@@ -2,7 +2,7 @@ import { mkdtemp, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
-import { runWrappedSession } from "./index";
+import { runWrappedSession } from "./index.js";
 
 describe("runWrappedSession", () => {
   it("writes session.started and session.ended events", async () => {
