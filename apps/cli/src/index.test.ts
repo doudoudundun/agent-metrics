@@ -36,4 +36,27 @@ describe("runWrappedSession", () => {
 
     expect(exitCode).toBe(7);
   });
+
+  it("writes session.ended when the wrapped command rejects", async () => {
+    const root = await mkdtemp(join(tmpdir(), "agent-metrics-"));
+    const outputFile = join(root, "events.jsonl");
+
+    await expect(
+      runWrappedSession({
+        args: ["ignored"],
+        eventLogPath: outputFile,
+        workspacePath: root,
+        runCommand: async () => {
+          throw new Error("launch failed");
+        }
+      })
+    ).rejects.toThrow("launch failed");
+
+    const lines = (await readFile(outputFile, "utf8")).trim().split("\n");
+    const endedEvent = JSON.parse(lines[1]) as { exit_code?: number | null };
+
+    expect(lines).toHaveLength(2);
+    expect(lines[1]).toContain("\"type\":\"session.ended\"");
+    expect(endedEvent.exit_code).toBeNull();
+  });
 });

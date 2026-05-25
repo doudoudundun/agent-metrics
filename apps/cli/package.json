@@ -5,7 +5,11 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "bin": {
+    "agent-metrics": "dist/index.js"
+  },
   "scripts": {
+    "postinstall": "node scripts/link-bin.mjs",
     "prebuild": "corepack pnpm --filter @agent-metrics/shared-utils build",
     "build": "tsc -p tsconfig.json",
     "pretest": "corepack pnpm --filter @agent-metrics/shared-utils build",

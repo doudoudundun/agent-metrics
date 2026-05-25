@@ -7,6 +7,6 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "vitest run src/*.test.ts"
+    "test": "vitest run"
   }
 }

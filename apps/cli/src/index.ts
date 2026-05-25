@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
@@ -43,6 +44,8 @@ export async function runWrappedSession(options: WrappedSessionOptions): Promise
   const sessionId = randomUUID();
   const startedAt = new Date();
   const runCommand = options.runCommand ?? ((args: string[]) => defaultRunCommand(args, options.workspacePath));
+  let exitCode: number | null = null;
+  let failure: unknown = null;
 
   const startedEvent: SessionStartedEvent = {
     event_id: randomUUID(),
@@ -55,7 +58,12 @@ export async function runWrappedSession(options: WrappedSessionOptions): Promise
   };
 
   await appendJsonLine(options.eventLogPath, startedEvent);
-  const exitCode = await runCommand(options.args);
+  try {
+    exitCode = await runCommand(options.args);
+  } catch (error) {
+    failure = error;
+  }
+
   const endedAt = new Date();
 
   const endedEvent: SessionEndedEvent = {
@@ -71,7 +79,10 @@ export async function runWrappedSession(options: WrappedSessionOptions): Promise
   };
 
   await appendJsonLine(options.eventLogPath, endedEvent);
-  return exitCode;
+  if (failure) {
+    throw failure;
+  }
+  return exitCode ?? 0;
 }
 
 if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
@@ -82,6 +93,8 @@ if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) 
     program
       .name("agent-metrics")
       .command("wrap")
+      .allowUnknownOption(true)
+      .allowExcessArguments(true)
       .argument("<command>")
       .argument("[args...]")
       .option("--event-log-path <path>", "Path to event log", "data/events/events.jsonl")
