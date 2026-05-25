@@ -111,4 +111,86 @@ describe("ingestEventLog", () => {
       fileURLToPath(new URL("../../../data/sqlite/metrics.sqlite", serverModuleUrl))
     );
   });
+
+  it("migrates a legacy sessions table before ingest and overview queries", async () => {
+    const { default: LegacyDatabase } = await import("better-sqlite3");
+    const legacyDb = new LegacyDatabase(dbPath);
+
+    legacyDb.exec(`
+      CREATE TABLE sessions (
+        session_id TEXT PRIMARY KEY,
+        started_at TEXT NOT NULL,
+        workspace_path TEXT NOT NULL
+      );
+    `);
+    legacyDb.close();
+
+    await appendJsonLine(logPath, {
+      event_id: "evt_legacy_1",
+      session_id: "ses_legacy_1",
+      timestamp: "2026-05-25T08:00:00.000Z",
+      source_vendor: "claude-code",
+      source_adapter: "claude",
+      workspace_path: "D:/projects/dev/agent-metrics",
+      type: "session.started"
+    });
+
+    const app = buildApp({ dbPath });
+    await ingestEventLog({ app, eventLogPath: logPath });
+    const response = await app.inject({ method: "GET", url: "/api/overview" });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      estimatedTokens: 0,
+      sessionCount: 1
+    });
+
+    await app.close();
+  });
+});
+
+describe("core api", () => {
+  it("returns tool, session, and export payloads", async () => {
+    await appendJsonLine(logPath, {
+      event_id: "evt_1",
+      session_id: "ses_1",
+      timestamp: "2026-05-25T08:00:00.000Z",
+      source_vendor: "claude-code",
+      source_adapter: "claude",
+      workspace_path: "D:/projects/dev/agent-metrics",
+      type: "session.started"
+    });
+
+    await appendJsonLine(logPath, {
+      event_id: "evt_2",
+      session_id: "ses_1",
+      timestamp: "2026-05-25T08:00:01.000Z",
+      source_vendor: "claude-code",
+      source_adapter: "claude",
+      workspace_path: "D:/projects/dev/agent-metrics",
+      type: "tool.succeeded",
+      tool_name: "Read",
+      status: "succeeded",
+      duration_ms: 14
+    });
+
+    const app = buildApp({ dbPath });
+    await ingestEventLog({ app, eventLogPath: logPath });
+
+    const tools = await app.inject({ method: "GET", url: "/api/tools" });
+    const sessions = await app.inject({ method: "GET", url: "/api/sessions" });
+    const json = await app.inject({ method: "GET", url: "/api/exports/json" });
+    const csv = await app.inject({ method: "GET", url: "/api/exports/csv" });
+
+    expect(tools.statusCode).toBe(200);
+    expect(tools.json()).toEqual([{ toolName: "Read", count: 1, failures: 0, averageDurationMs: 14 }]);
+    expect(sessions.statusCode).toBe(200);
+    expect(sessions.json()).toEqual([{ sessionId: "ses_1", workspacePath: "D:/projects/dev/agent-metrics" }]);
+    expect(json.statusCode).toBe(200);
+    expect(json.json()).toEqual([{ toolName: "Read", count: 1, failures: 0, averageDurationMs: 14 }]);
+    expect(csv.statusCode).toBe(200);
+    expect(csv.body).toContain("toolName,count,failures,averageDurationMs");
+
+    await app.close();
+  });
 });

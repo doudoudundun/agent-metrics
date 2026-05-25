@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 import Fastify from "fastify";
 import { AnyEventSchema } from "@agent-metrics/event-schema";
+import { toCsv, toJson } from "@agent-metrics/export-kit";
 import { buildOverviewMetrics } from "@agent-metrics/metrics-engine";
 
 type MetricsStatement<Result = unknown> = {
@@ -23,8 +24,95 @@ type MetricsApp = ReturnType<typeof Fastify> & {
   db: MetricsDatabase;
 };
 
+type SessionOverviewRow = {
+  session_id: string;
+  estimated_tokens: number;
+};
+
+type ToolEventOverviewRow = {
+  status: string;
+  duration_ms: number | null;
+};
+
+type CodeEditOverviewRow = {
+  file_count: number;
+  insertions: number;
+  deletions: number;
+  edit_operation_count: number;
+};
+
+type ToolRankingRow = {
+  toolName: string;
+  count: number;
+  failures: number;
+  averageDurationMs: number;
+};
+
+type SessionListRow = {
+  sessionId: string;
+  workspacePath: string;
+};
+
+const TOOL_RANKING_QUERY = `
+  SELECT
+    tool_name AS toolName,
+    COUNT(*) AS count,
+    SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failures,
+    COALESCE(CAST(AVG(duration_ms) AS INTEGER), 0) AS averageDurationMs
+  FROM tool_events
+  GROUP BY tool_name
+  ORDER BY count DESC, toolName ASC
+`;
+
 export function resolveDefaultDbPath(moduleUrl: string): string {
   return fileURLToPath(new URL("../../../data/sqlite/metrics.sqlite", moduleUrl));
+}
+
+function selectOverviewRows(db: MetricsDatabase): {
+  sessions: SessionOverviewRow[];
+  toolEvents: ToolEventOverviewRow[];
+  codeEdits: CodeEditOverviewRow[];
+  estimatedTokens: number;
+} {
+  const sessions = db
+    .prepare<SessionOverviewRow>("SELECT session_id, estimated_tokens FROM sessions")
+    .all();
+  const toolEvents = db
+    .prepare<ToolEventOverviewRow>("SELECT status, duration_ms FROM tool_events")
+    .all();
+  const codeEdits = db
+    .prepare<CodeEditOverviewRow>(
+      "SELECT file_count, insertions, deletions, edit_operation_count FROM code_edits"
+    )
+    .all();
+
+  return {
+    sessions,
+    toolEvents,
+    codeEdits,
+    estimatedTokens: sessions.reduce((sum, row) => sum + row.estimated_tokens, 0)
+  };
+}
+
+function selectToolRanking(db: MetricsDatabase): ToolRankingRow[] {
+  return db.prepare<ToolRankingRow>(TOOL_RANKING_QUERY).all();
+}
+
+function selectSessions(db: MetricsDatabase): SessionListRow[] {
+  return db
+    .prepare<SessionListRow>(
+      "SELECT session_id AS sessionId, workspace_path AS workspacePath FROM sessions ORDER BY started_at DESC"
+    )
+    .all();
+}
+
+function migrateLegacySessionsSchema(db: MetricsDatabase): void {
+  const sessionColumns = db.prepare<{ name: string }>("PRAGMA table_info(sessions)").all();
+  const hasEstimatedTokens = sessionColumns.some((column) => column.name === "estimated_tokens");
+
+  if (!hasEstimatedTokens) {
+    db.exec("ALTER TABLE sessions ADD COLUMN estimated_tokens INTEGER NOT NULL DEFAULT 0");
+  }
 }
 
 export function buildApp(input: { dbPath: string }): MetricsApp {
@@ -60,6 +148,7 @@ export function buildApp(input: { dbPath: string }): MetricsApp {
       created_at TEXT NOT NULL
     );
   `);
+  migrateLegacySessionsSchema(db);
 
   const app = Fastify();
 
@@ -68,26 +157,32 @@ export function buildApp(input: { dbPath: string }): MetricsApp {
   });
 
   app.get("/api/overview", async () => {
-    const sessions = db.prepare<{ session_id: string; estimated_tokens: number }>(
-      "SELECT session_id, estimated_tokens FROM sessions"
-    ).all();
-    const toolEvents = db.prepare<{ status: string; duration_ms: number | null }>(
-      "SELECT status, duration_ms FROM tool_events"
-    ).all();
-    const codeEdits = db.prepare<{
-      file_count: number;
-      insertions: number;
-      deletions: number;
-      edit_operation_count: number;
-    }>("SELECT file_count, insertions, deletions, edit_operation_count FROM code_edits").all();
-    const estimatedTokens = sessions.reduce((sum, row) => sum + row.estimated_tokens, 0);
+    const overviewRows = selectOverviewRows(db);
 
     return buildOverviewMetrics({
-      sessions,
-      toolEvents,
-      codeEdits,
-      estimatedTokens
+      sessions: overviewRows.sessions,
+      toolEvents: overviewRows.toolEvents,
+      codeEdits: overviewRows.codeEdits,
+      estimatedTokens: overviewRows.estimatedTokens
     });
+  });
+
+  app.get("/api/tools", async () => {
+    return selectToolRanking(db);
+  });
+
+  app.get("/api/sessions", async () => {
+    return selectSessions(db);
+  });
+
+  app.get("/api/exports/json", async (_, reply) => {
+    reply.header("content-type", "application/json; charset=utf-8");
+    return toJson(selectToolRanking(db));
+  });
+
+  app.get("/api/exports/csv", async (_, reply) => {
+    reply.header("content-type", "text/csv; charset=utf-8");
+    return toCsv(selectToolRanking(db));
   });
 
   return Object.assign(app, { db });
