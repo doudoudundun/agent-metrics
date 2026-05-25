@@ -1,0 +1,18 @@
+{
+  "name": "@agent-metrics/cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx src/index.ts",
+    "test": "vitest run src/index.test.ts"
+  },
+  "dependencies": {
+    "@agent-metrics/event-schema": "workspace:*",
+    "@agent-metrics/shared-utils": "workspace:*",
+    "commander": "^12.1.0"
+  }
+}
