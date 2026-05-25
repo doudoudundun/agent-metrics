@@ -40,10 +40,15 @@ export const ToolFailedEventSchema = BaseEventSchema.extend({
   duration_ms: z.number().int().nonnegative()
 });
 
-export const ToolFinishedEventSchema = z.union([
+const ToolFinishedEventSchemas = [
   ToolSucceededEventSchema,
   ToolFailedEventSchema
-]);
+] as const;
+
+export const ToolFinishedEventSchema = z.discriminatedUnion(
+  "type",
+  ToolFinishedEventSchemas
+);
 
 export const CodeEditAppliedEventSchema = BaseEventSchema.extend({
   type: z.literal("code.edit.applied"),
@@ -70,8 +75,7 @@ export const AnyEventSchema = z.discriminatedUnion("type", [
   SessionStartedEventSchema,
   SessionEndedEventSchema,
   ToolCalledEventSchema,
-  ToolSucceededEventSchema,
-  ToolFailedEventSchema,
+  ...ToolFinishedEventSchemas,
   CodeEditAppliedEventSchema,
   SnapshotCreatedEventSchema,
   IngestErrorEventSchema
