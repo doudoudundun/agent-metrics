@@ -1,38 +1,40 @@
 export function diffTextStats(before: string, after: string): { insertions: number; deletions: number } {
-  const beforeLines = before.split("\n");
-  const afterLines = after.split("\n");
-  let insertions = 0;
-  let deletions = 0;
-  let beforeIndex = 0;
-  let afterIndex = 0;
-
-  while (beforeIndex < beforeLines.length && afterIndex < afterLines.length) {
-    if (beforeLines[beforeIndex] === afterLines[afterIndex]) {
-      beforeIndex += 1;
-      afterIndex += 1;
-      continue;
-    }
-
-    if (afterLines[afterIndex + 1] === beforeLines[beforeIndex]) {
-      insertions += 1;
-      afterIndex += 1;
-      continue;
-    }
-
-    if (beforeLines[beforeIndex + 1] === afterLines[afterIndex]) {
-      deletions += 1;
-      beforeIndex += 1;
-      continue;
-    }
-
-    insertions += 1;
-    deletions += 1;
-    beforeIndex += 1;
-    afterIndex += 1;
-  }
-
-  insertions += Math.max(0, afterLines.length - afterIndex);
-  deletions += Math.max(0, beforeLines.length - beforeIndex);
+  const beforeLines = splitLines(before);
+  const afterLines = splitLines(after);
+  const lcsLength = longestCommonSubsequenceLength(beforeLines, afterLines);
+  const insertions = afterLines.length - lcsLength;
+  const deletions = beforeLines.length - lcsLength;
 
   return { insertions, deletions };
+}
+
+function splitLines(text: string): string[] {
+  const lines = text.split("\n");
+  if (lines.length > 0 && lines[lines.length - 1] === "") {
+    lines.pop();
+  }
+
+  return lines;
+}
+
+function longestCommonSubsequenceLength(beforeLines: string[], afterLines: string[]): number {
+  const previousRow = new Array(afterLines.length + 1).fill(0);
+  const currentRow = new Array(afterLines.length + 1).fill(0);
+
+  for (let beforeIndex = 1; beforeIndex <= beforeLines.length; beforeIndex += 1) {
+    for (let afterIndex = 1; afterIndex <= afterLines.length; afterIndex += 1) {
+      if (beforeLines[beforeIndex - 1] === afterLines[afterIndex - 1]) {
+        currentRow[afterIndex] = previousRow[afterIndex - 1] + 1;
+      } else {
+        currentRow[afterIndex] = Math.max(previousRow[afterIndex], currentRow[afterIndex - 1]);
+      }
+    }
+
+    for (let afterIndex = 0; afterIndex <= afterLines.length; afterIndex += 1) {
+      previousRow[afterIndex] = currentRow[afterIndex];
+      currentRow[afterIndex] = 0;
+    }
+  }
+
+  return previousRow[afterLines.length];
 }
