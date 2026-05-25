@@ -3,10 +3,10 @@
   "private": true,
   "packageManager": "pnpm@10.11.0",
   "scripts": {
-    "build": "pnpm -r build",
-    "dev": "pnpm --parallel --filter @agent-metrics/core --filter @agent-metrics/dashboard dev",
-    "lint": "pnpm -r exec tsc --noEmit",
-    "test": "pnpm -r test"
+    "build": "corepack pnpm -r build",
+    "dev": "corepack pnpm --parallel --filter @agent-metrics/core --filter @agent-metrics/dashboard dev",
+    "lint": "corepack pnpm -r exec tsc --noEmit",
+    "test": "corepack pnpm -r test"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.6.3",
