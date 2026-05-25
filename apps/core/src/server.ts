@@ -1,6 +1,6 @@
-import { buildApp } from "./app.js";
+import { buildApp, resolveDefaultDbPath } from "./app.js";
 
-const app = buildApp({ dbPath: "data/sqlite/metrics.sqlite" });
+const app = buildApp({ dbPath: resolveDefaultDbPath(import.meta.url) });
 
 app.listen({ host: "127.0.0.1", port: 4318 }).catch((error: unknown) => {
   app.log.error(error as Error);

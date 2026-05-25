@@ -1,4 +1,7 @@
+import { mkdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 import Fastify from "fastify";
 import { AnyEventSchema } from "@agent-metrics/event-schema";
@@ -7,7 +10,13 @@ type MetricsApp = ReturnType<typeof Fastify> & {
   db: Database.Database;
 };
 
+export function resolveDefaultDbPath(moduleUrl: string): string {
+  return fileURLToPath(new URL("../../../data/sqlite/metrics.sqlite", moduleUrl));
+}
+
 export function buildApp(input: { dbPath: string }): MetricsApp {
+  mkdirSync(dirname(input.dbPath), { recursive: true });
+
   const db = new Database(input.dbPath);
 
   db.exec(`
@@ -28,6 +37,10 @@ export function buildApp(input: { dbPath: string }): MetricsApp {
   `);
 
   const app = Fastify();
+
+  app.addHook("onClose", async () => {
+    db.close();
+  });
 
   app.get("/api/overview", async () => {
     const sessionCount = Number(

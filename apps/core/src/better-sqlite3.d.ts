@@ -5,6 +5,7 @@ declare module "better-sqlite3" {
   }
 
   interface Database {
+    close(): this;
     exec(sql: string): this;
     prepare<Result = unknown>(sql: string): Statement<Result>;
   }
