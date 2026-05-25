@@ -1,0 +1,10 @@
+node_modules/
+dist/
+coverage/
+.vite/
+.DS_Store
+data/events/*.jsonl
+data/sqlite/*.db
+data/sqlite/*.sqlite
+data/sqlite/*.sqlite-shm
+data/sqlite/*.sqlite-wal
