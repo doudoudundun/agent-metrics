@@ -12,12 +12,17 @@ $DashboardPort = 4173
 $CoreUrl = "http://127.0.0.1:$CorePort/api/overview"
 $DashboardUrl = "http://127.0.0.1:$DashboardPort"
 $RuntimeDir = Join-Path $RepoRoot ".runtime"
+$ParserOutLog = Join-Path $RuntimeDir "parser.out.log"
+$ParserErrLog = Join-Path $RuntimeDir "parser.err.log"
+$ParserPidPath = Join-Path $RuntimeDir "parser.pid"
 $CoreOutLog = Join-Path $RuntimeDir "core.out.log"
 $CoreErrLog = Join-Path $RuntimeDir "core.err.log"
 $DashboardOutLog = Join-Path $RuntimeDir "dashboard.out.log"
 $DashboardErrLog = Join-Path $RuntimeDir "dashboard.err.log"
+$CliWorkingDir = Join-Path $RepoRoot "apps\\cli"
 $CoreWorkingDir = Join-Path $RepoRoot "apps\\core"
 $DashboardWorkingDir = Join-Path $RepoRoot "apps\\dashboard"
+$CliEntry = Join-Path $CliWorkingDir "dist\\index.js"
 $CoreEntry = Join-Path $CoreWorkingDir "dist\\server.js"
 $ViteEntry = Join-Path $RepoRoot "node_modules\\vite\\bin\\vite.js"
 
@@ -80,7 +85,7 @@ function Ensure-Bootstrap() {
     }
   }
 
-  if ($Rebuild -or -not (Test-Path $CoreEntry) -or -not (Test-Path $ViteEntry)) {
+  if ($Rebuild -or -not (Test-Path $CliEntry) -or -not (Test-Path $CoreEntry) -or -not (Test-Path $ViteEntry)) {
     Write-Step "Building workspace packages"
     Push-Location $RepoRoot
     try {
@@ -89,6 +94,67 @@ function Ensure-Bootstrap() {
       Pop-Location
     }
   }
+}
+
+function Get-ManagedParserPid() {
+  if (-not (Test-Path $ParserPidPath)) {
+    return $null
+  }
+
+  $rawPid = (Get-Content $ParserPidPath -Raw).Trim()
+
+  if ($rawPid -notmatch '^\d+$') {
+    Remove-Item $ParserPidPath -ErrorAction SilentlyContinue
+    return $null
+  }
+
+  $managedPid = [int]$rawPid
+  $process = Get-CimInstance Win32_Process -Filter "ProcessId = $managedPid" -ErrorAction SilentlyContinue
+
+  if (
+    $null -eq $process -or
+    $process.Name -ne "node.exe" -or
+    $process.CommandLine -notmatch "hooks\s+parse" -or
+    $process.CommandLine -notlike "*$RepoRoot*"
+  ) {
+    Remove-Item $ParserPidPath -ErrorAction SilentlyContinue
+    return $null
+  }
+
+  return $managedPid
+}
+
+function Start-ParserIfNeeded() {
+  $existingPid = Get-ManagedParserPid
+
+  if ($null -ne $existingPid) {
+    Write-Step "Parser already running with PID $existingPid"
+    return
+  }
+
+  Write-Step "Starting raw hook parser"
+  $process = Start-Process -FilePath "node" `
+    -ArgumentList @("dist/index.js", "hooks", "parse", "--follow", "--repo-root", $RepoRoot) `
+    -WorkingDirectory $CliWorkingDir `
+    -RedirectStandardOutput $ParserOutLog `
+    -RedirectStandardError $ParserErrLog `
+    -WindowStyle Hidden `
+    -PassThru
+
+  Start-Sleep -Seconds 1
+
+  if ($process.HasExited) {
+    if (Test-Path $ParserErrLog) {
+      Write-Host ""
+      Write-Host "Parser log tail:"
+      Get-Content $ParserErrLog -Tail 40
+    }
+
+    throw "Parser did not stay running."
+  }
+
+  Set-Content -Path $ParserPidPath -Value "$($process.Id)" -NoNewline
+  Write-Step "Parser started with PID $($process.Id)"
 }
 
 function Start-CoreIfNeeded() {
@@ -162,10 +228,12 @@ if (-not (Test-Path $RuntimeDir)) {
 }
 
 Ensure-Bootstrap
+Start-ParserIfNeeded
 Start-CoreIfNeeded
 Start-DashboardIfNeeded
 
 Write-Host ""
+Write-Host "Parser:    raw hook bus -> normalized events"
 Write-Host "Dashboard: $DashboardUrl"
 Write-Host "API:       $CoreUrl"
 Write-Host "Logs:      $RuntimeDir"
@@ -175,6 +243,7 @@ Write-Host "Then open Claude Code in a test workspace and trigger Read, Search/G
 Write-Host "Expected logs:"
 Write-Host "  data\hooks\raw\claude-code.jsonl"
 Write-Host "  data\events\events.jsonl"
+Write-Host "  data\hooks\state\parser-state.json"
 
 if (-not $NoBrowser) {
   Start-Process $DashboardUrl | Out-Null

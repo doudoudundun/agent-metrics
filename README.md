@@ -15,10 +15,10 @@ After the one-time hook install, open Claude Code in any workspace and trigger a
 
 ## How Collection Works
 
-- Claude Code hooks call the local collector in `apps/cli`.
-- Raw hook payloads append to `data/hooks/raw/claude-code.jsonl`.
-- Normalized events append to `data/events/events.jsonl`.
-- `apps/core` ingests normalized events into SQLite.
+- Claude Code hooks call the local ingress collector in `apps/cli`.
+- Raw hook envelopes append to `data/hooks/raw/claude-code.jsonl`.
+- `agent-metrics hooks parse --follow` converts raw envelopes into normalized events at `data/events/events.jsonl`.
+- `apps/core` ingests normalized events into SQLite on API requests.
 - `apps/dashboard` renders sessions, tool rankings, edit metrics, and a session timeline.
 
 ## Commands
@@ -33,6 +33,7 @@ After the one-time hook install, open Claude Code in any workspace and trigger a
 
 - Manual sample config: `docs/manual/claude-hooks-global.sample.json`
 - One-click Windows installer: `.\install-claude-hooks.ps1`
+- Parser runtime notes: `docs/manual/phase2-parser-flow.md`
 
 ## Hooks-First Verification
 
@@ -43,5 +44,15 @@ After the one-time hook install, open Claude Code in any workspace and trigger a
 5. Confirm:
    - `data/hooks/raw/claude-code.jsonl` grows
    - `data/events/events.jsonl` grows
+   - `data/hooks/state/parser-state.json` advances
    - the dashboard shows real tool names
    - the session timeline matches the actions you took
+
+## Recovery
+
+If raw hooks are growing but normalized events stop moving:
+
+1. Stop the managed parser process.
+2. Delete `data/hooks/state/parser-state.json`.
+3. Run `node .\apps\cli\dist\index.js hooks parse --repo-root D:\projects\dev\agent-metrics`.
+4. Restart `.\start-agent-metrics.ps1`.
