@@ -1,5 +1,7 @@
 import { resolve } from "node:path";
 import type { Command } from "commander";
+import { followRawHooks } from "./follow.js";
+import { parseRawHooksOnce } from "./parser.js";
 
 export function registerParseCommand(hooks: Command): void {
   hooks
@@ -22,7 +24,17 @@ export async function runParseCommand(input: {
   follow: boolean;
   pollIntervalMs: number;
 }): Promise<void> {
-  void input;
+  if (input.follow) {
+    await followRawHooks({
+      repoRoot: input.repoRoot,
+      pollIntervalMs: input.pollIntervalMs
+    });
+    return;
+  }
+
+  await parseRawHooksOnce({
+    repoRoot: input.repoRoot
+  });
 }
 
 function parsePositiveInteger(value: string, fallback: number): number {
