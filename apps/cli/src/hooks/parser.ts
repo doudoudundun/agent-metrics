@@ -32,6 +32,11 @@ export async function parseRawHooksOnce(input: { repoRoot: string }): Promise<vo
     }
 
     if (payload.hook_event_name === "PostToolUse") {
+      if (typeof payload.tool_use_id !== "string" || payload.tool_use_id.length === 0) {
+        state.seenRawEventIds.push(envelope.raw_event_id);
+        continue;
+      }
+
       const changedFiles = await collectChangedSnapshots({
         snapshotRoot: paths.snapshotRoot,
         toolUseId: payload.tool_use_id
