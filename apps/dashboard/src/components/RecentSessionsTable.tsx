@@ -2,9 +2,15 @@ import type { SessionRow } from "../api";
 
 type RecentSessionsTableProps = {
   rows: SessionRow[];
+  selectedSessionId: string | null;
+  onSelect: (sessionId: string) => void;
 };
 
-export function RecentSessionsTable({ rows }: RecentSessionsTableProps) {
+export function RecentSessionsTable({
+  rows,
+  selectedSessionId,
+  onSelect
+}: RecentSessionsTableProps) {
   return (
     <section className="panel table-panel">
       <div className="panel-heading">
@@ -21,8 +27,16 @@ export function RecentSessionsTable({ rows }: RecentSessionsTableProps) {
           </thead>
           <tbody>
             {rows.map((row) => (
-              <tr key={row.sessionId}>
-                <td>{row.sessionId}</td>
+              <tr data-selected={row.sessionId === selectedSessionId} key={row.sessionId}>
+                <td>
+                  <button
+                    className="session-select"
+                    onClick={() => onSelect(row.sessionId)}
+                    type="button"
+                  >
+                    {row.sessionId}
+                  </button>
+                </td>
                 <td className="workspace-cell">{row.workspacePath}</td>
               </tr>
             ))}

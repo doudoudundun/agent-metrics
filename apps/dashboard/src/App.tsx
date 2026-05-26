@@ -1,8 +1,15 @@
 import { lazy, startTransition, Suspense, useEffect, useEffectEvent, useState } from "react";
-import type { OverviewResponse, SessionRow, ToolRow } from "./api";
-import { buildExportUrl, fetchOverview, fetchSessions, fetchTools } from "./api";
+import type { OverviewResponse, SessionDetailResponse, SessionRow, ToolRow } from "./api";
+import {
+  buildExportUrl,
+  fetchOverview,
+  fetchSessionDetail,
+  fetchSessions,
+  fetchTools
+} from "./api";
 import { KpiGrid } from "./components/KpiGrid";
 import { RecentSessionsTable } from "./components/RecentSessionsTable";
+import { SessionTimelinePanel } from "./components/SessionTimelinePanel";
 import { ToolRankingTable } from "./components/ToolRankingTable";
 import "./styles.css";
 
@@ -27,6 +34,8 @@ const TrendChart = lazy(async () => {
 export function App() {
   const [dashboard, setDashboard] = useState<DashboardState>(INITIAL_STATE);
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
+  const [selectedSession, setSelectedSession] = useState<SessionDetailResponse | null>(null);
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [staleMessage, setStaleMessage] = useState<string | null>(null);
 
   const applyLoadedData = useEffectEvent((nextState: DashboardState) => {
@@ -94,6 +103,57 @@ export function App() {
     };
   }, [applyLoadError, applyLoadedData]);
 
+  useEffect(() => {
+    if (dashboard.sessions.length === 0) {
+      setSelectedSession(null);
+      setSelectedSessionId(null);
+      return;
+    }
+
+    if (!selectedSessionId || !dashboard.sessions.some((row) => row.sessionId === selectedSessionId)) {
+      setSelectedSessionId(dashboard.sessions[0]?.sessionId ?? null);
+    }
+  }, [dashboard.sessions, selectedSessionId]);
+
+  useEffect(() => {
+    if (!selectedSessionId) {
+      return;
+    }
+
+    let active = true;
+
+    void fetchSessionDetail(selectedSessionId)
+      .then((detail) => {
+        if (!active) {
+          return;
+        }
+
+        startTransition(() => {
+          setSelectedSession(detail);
+        });
+      })
+      .catch(() => {
+        if (!active) {
+          return;
+        }
+
+        startTransition(() => {
+          setSelectedSession(null);
+        });
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [selectedSessionId]);
+
+  const handleSelectSession = useEffectEvent((sessionId: string) => {
+    startTransition(() => {
+      setSelectedSessionId(sessionId);
+      setSelectedSession(null);
+    });
+  });
+
   if (!dashboard.overview) {
     return (
       <main className="app-shell">
@@ -112,8 +172,8 @@ export function App() {
         <div className="hero-eyebrow">Local Ops Console</div>
         <h1>Agent Metrics</h1>
         <p className="hero-copy">
-          Overview-first telemetry for local agent sessions, tool usage, and code edit activity.
-          Token figures are estimated and intended for directional usage analysis.
+          Hooks-first telemetry for local agent sessions, real Claude Code tool usage, and code
+          edit activity.
         </p>
         <div className="status-row">
           <div className="status-pill" data-state={staleMessage ? "stale" : "fresh"}>
@@ -150,14 +210,15 @@ export function App() {
             </section>
           }
         >
-          <TrendChart
-            totalToolCalls={dashboard.overview.totalToolCalls}
-            successfulExecutions={dashboard.overview.successfulExecutions}
-            editOperationCount={dashboard.overview.editOperationCount}
-          />
+          <TrendChart rows={dashboard.tools} />
         </Suspense>
         <div className="surface-stack">
-          <RecentSessionsTable rows={dashboard.sessions} />
+          <RecentSessionsTable
+            onSelect={handleSelectSession}
+            rows={dashboard.sessions}
+            selectedSessionId={selectedSessionId}
+          />
+          <SessionTimelinePanel detail={selectedSession} />
         </div>
       </section>
 

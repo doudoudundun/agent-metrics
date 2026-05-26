@@ -7,29 +7,30 @@ import {
   XAxis,
   YAxis
 } from "recharts";
+import type { ToolRow } from "../api";
 
 type TrendChartProps = {
-  totalToolCalls: number;
-  successfulExecutions: number;
-  editOperationCount: number;
+  rows: ToolRow[];
 };
 
-export function TrendChart({
-  totalToolCalls,
-  successfulExecutions,
-  editOperationCount
-}: TrendChartProps) {
-  const data = [
-    { label: "Calls", value: totalToolCalls },
-    { label: "Success", value: successfulExecutions },
-    { label: "Edits", value: editOperationCount }
-  ];
+export function TrendChart({ rows }: TrendChartProps) {
+  const data = [...rows]
+    .sort((left, right) => right.count - left.count || left.toolName.localeCompare(right.toolName))
+    .slice(0, 5)
+    .map((row) => ({
+      label: row.toolName,
+      value: row.count
+    }));
+  const totalCalls = data.reduce((sum, row) => sum + row.value, 0);
 
   return (
     <section className="panel chart-panel">
       <div className="panel-heading">
         <h2>Activity Snapshot</h2>
-        <span>Refreshing every 5s</span>
+        <div className="chart-summary">
+          <span>Top 5 by calls</span>
+          <strong>{totalCalls} calls total</strong>
+        </div>
       </div>
       <div className="chart-frame">
         <ResponsiveContainer width="100%" height={250}>
@@ -44,6 +45,7 @@ export function TrendChart({
                 borderRadius: 14,
                 color: "#edf4ff"
               }}
+              formatter={(value: number) => [`${value} calls`, "Calls"]}
               cursor={{ fill: "rgba(209, 255, 77, 0.08)" }}
             />
             <Bar dataKey="value" fill="url(#activityBars)" radius={[12, 12, 0, 0]} />

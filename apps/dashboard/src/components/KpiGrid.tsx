@@ -19,6 +19,11 @@ export function KpiGrid({ overview }: KpiGridProps) {
       tone: "steady"
     },
     {
+      label: "Failed Runs",
+      value: NUMBER_FORMAT.format(overview.failedExecutions),
+      tone: "calm"
+    },
+    {
       label: "Success Rate",
       value: PERCENT_FORMAT.format(overview.successRate),
       tone: "calm"
@@ -29,9 +34,19 @@ export function KpiGrid({ overview }: KpiGridProps) {
       tone: "steady"
     },
     {
-      label: "Estimated Tokens",
-      value: NUMBER_FORMAT.format(overview.estimatedTokens),
+      label: "Affected Files",
+      value: NUMBER_FORMAT.format(overview.affectedFileCount),
       tone: "signal"
+    },
+    {
+      label: "Insertions",
+      value: NUMBER_FORMAT.format(overview.insertions),
+      tone: "steady"
+    },
+    {
+      label: "Deletions",
+      value: NUMBER_FORMAT.format(overview.deletions),
+      tone: "calm"
     }
   ] as const;
 

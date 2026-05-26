@@ -23,21 +23,49 @@ vi.mock("./api", () => ({
     editOperationCount: 4,
     affectedFileCount: 7,
     insertions: 42,
-    deletions: 8,
-    estimatedTokens: 900
+    deletions: 8
   }),
   fetchTools: async () => [{ toolName: "Read", count: 6, failures: 0, averageDurationMs: 15 }],
   fetchSessions: async () => [{ sessionId: "ses_1", workspacePath: "D:/projects/dev/agent-metrics" }],
+  fetchSessionDetail: async () => ({
+    sessionId: "ses_1",
+    timeline: [
+      {
+        type: "session.started",
+        toolName: "",
+        status: "started",
+        durationMs: 0,
+        filesChanged: [],
+        insertions: 0,
+        deletions: 0
+      },
+      {
+        type: "tool.succeeded",
+        toolName: "Read",
+        status: "succeeded",
+        durationMs: 12,
+        filesChanged: [],
+        insertions: 0,
+        deletions: 0
+      }
+    ]
+  }),
   buildExportUrl: (format: "csv" | "json") => `/api/exports/${format}`
 }));
 
 describe("App", () => {
-  it("renders overview metrics and recent sessions", async () => {
+  it("renders overview metrics, recent sessions, and a session timeline", async () => {
     const view = render(<App />);
 
     expect(await screen.findByText("12")).toBeInTheDocument();
+    expect(await screen.findByText("Affected Files")).toBeInTheDocument();
+    expect(await screen.findByText("Insertions")).toBeInTheDocument();
+    expect(await screen.findByText("Deletions")).toBeInTheDocument();
+    expect(screen.queryByText("Estimated Tokens")).not.toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "Recent Sessions" })).toBeInTheDocument();
     expect(await screen.findByText("ses_1")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Session Timeline" })).toBeInTheDocument();
+    expect(await screen.findByText("session.started")).toBeInTheDocument();
 
     view.unmount();
   });

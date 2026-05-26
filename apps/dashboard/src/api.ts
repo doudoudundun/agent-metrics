@@ -8,7 +8,6 @@ export type OverviewResponse = {
   affectedFileCount: number;
   insertions: number;
   deletions: number;
-  estimatedTokens: number;
 };
 
 export type ToolRow = {
@@ -21,6 +20,19 @@ export type ToolRow = {
 export type SessionRow = {
   sessionId: string;
   workspacePath: string;
+};
+
+export type SessionDetailResponse = {
+  sessionId: string;
+  timeline: Array<{
+    type: string;
+    toolName: string;
+    status: string;
+    durationMs: number;
+    filesChanged: string[];
+    insertions: number;
+    deletions: number;
+  }>;
 };
 
 async function fetchJson<T>(path: string): Promise<T> {
@@ -43,6 +55,10 @@ export async function fetchTools(): Promise<ToolRow[]> {
 
 export async function fetchSessions(): Promise<SessionRow[]> {
   return fetchJson<SessionRow[]>("/api/sessions");
+}
+
+export async function fetchSessionDetail(sessionId: string): Promise<SessionDetailResponse> {
+  return fetchJson<SessionDetailResponse>(`/api/sessions/${sessionId}`);
 }
 
 export function buildExportUrl(format: "csv" | "json"): string {

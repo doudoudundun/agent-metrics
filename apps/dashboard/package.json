@@ -6,7 +6,7 @@
   "scripts": {
     "build": "vite build",
     "dev": "vite",
-    "test": "vitest run src/App.test.tsx"
+    "test": "vitest run src"
   },
   "dependencies": {
     "react": "^19.1.0",
