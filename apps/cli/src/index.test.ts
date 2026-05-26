@@ -11,7 +11,7 @@ describe("buildProgram", () => {
     expect(topLevel).toContain("hooks");
     expect(topLevel).not.toContain("wrap");
     expect(hooks?.commands.map((command) => command.name())).toEqual(
-      expect.arrayContaining(["collect", "install", "print-config"])
+      expect.arrayContaining(["collect", "install", "print-config", "parse"])
     );
   });
 });
