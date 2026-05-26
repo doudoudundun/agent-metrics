@@ -10,13 +10,14 @@
   },
   "scripts": {
     "postinstall": "node scripts/link-bin.mjs",
-    "prebuild": "corepack pnpm --filter @agent-metrics/shared-utils build",
+    "prebuild": "corepack pnpm --filter @agent-metrics/adapters-claude... build",
     "build": "tsc -p tsconfig.json",
-    "pretest": "corepack pnpm --filter @agent-metrics/shared-utils build",
+    "pretest": "corepack pnpm --filter @agent-metrics/adapters-claude... build",
     "dev": "tsx src/index.ts",
-    "test": "vitest run src/index.test.ts"
+    "test": "vitest run src"
   },
   "dependencies": {
+    "@agent-metrics/adapters-claude": "workspace:*",
     "@agent-metrics/event-schema": "workspace:*",
     "@agent-metrics/shared-utils": "workspace:*",
     "commander": "^12.1.0"

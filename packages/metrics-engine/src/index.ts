@@ -24,14 +24,12 @@ export type OverviewMetrics = {
   affectedFileCount: number;
   insertions: number;
   deletions: number;
-  estimatedTokens: number;
 };
 
 export function buildOverviewMetrics(input: {
   sessions: SessionRow[];
   toolEvents: ToolRow[];
   codeEdits: CodeEditRow[];
-  estimatedTokens: number;
 }): OverviewMetrics {
   const successfulExecutions = input.toolEvents.filter((row) => row.status === "succeeded").length;
   const failedExecutions = input.toolEvents.filter((row) => row.status === "failed").length;
@@ -50,7 +48,6 @@ export function buildOverviewMetrics(input: {
     editOperationCount,
     affectedFileCount,
     insertions,
-    deletions,
-    estimatedTokens: input.estimatedTokens
+    deletions
   };
 }

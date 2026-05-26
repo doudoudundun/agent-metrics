@@ -80,7 +80,6 @@ describe("ingestEventLog", () => {
       affectedFileCount: 2,
       deletions: 4,
       editOperationCount: 1,
-      estimatedTokens: 0,
       failedExecutions: 1,
       insertions: 12,
       totalToolCalls: 2,
@@ -141,7 +140,6 @@ describe("ingestEventLog", () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({
-      estimatedTokens: 0,
       sessionCount: 1
     });
 
@@ -150,6 +148,42 @@ describe("ingestEventLog", () => {
 });
 
 describe("core api", () => {
+  it("ingests the configured event log automatically before overview reads", async () => {
+    await appendJsonLine(logPath, {
+      event_id: "evt_runtime_1",
+      session_id: "ses_runtime_1",
+      timestamp: "2026-05-25T08:00:00.000Z",
+      source_vendor: "claude-code",
+      source_adapter: "claude",
+      workspace_path: "D:/projects/dev/agent-metrics",
+      type: "session.started"
+    });
+
+    await appendJsonLine(logPath, {
+      event_id: "evt_runtime_2",
+      session_id: "ses_runtime_1",
+      timestamp: "2026-05-25T08:00:01.000Z",
+      source_vendor: "claude-code",
+      source_adapter: "claude",
+      workspace_path: "D:/projects/dev/agent-metrics",
+      type: "tool.succeeded",
+      tool_name: "Read",
+      status: "succeeded",
+      duration_ms: 14
+    });
+
+    const app = buildApp({ dbPath, eventLogPath: logPath });
+    const response = await app.inject({ method: "GET", url: "/api/overview" });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      sessionCount: 1,
+      totalToolCalls: 1
+    });
+
+    await app.close();
+  });
+
   it("returns tool, session, and export payloads", async () => {
     await appendJsonLine(logPath, {
       event_id: "evt_1",
@@ -218,6 +252,34 @@ describe("core api", () => {
       duration_ms: 14
     });
 
+    await appendJsonLine(logPath, {
+      event_id: "evt_detail_3",
+      session_id: "ses_detail_1",
+      timestamp: "2026-05-25T08:00:02.000Z",
+      source_vendor: "claude-code",
+      source_adapter: "claude",
+      workspace_path: "D:/projects/dev/agent-metrics",
+      type: "code.edit.applied",
+      tool_name: "Edit",
+      files_changed: ["src/app.ts"],
+      file_count: 1,
+      insertions: 3,
+      deletions: 1,
+      edit_operation_count: 1
+    });
+
+    await appendJsonLine(logPath, {
+      event_id: "evt_detail_4",
+      session_id: "ses_detail_1",
+      timestamp: "2026-05-25T08:00:03.000Z",
+      source_vendor: "claude-code",
+      source_adapter: "claude",
+      workspace_path: "D:/projects/dev/agent-metrics",
+      type: "session.ended",
+      exit_code: 0,
+      duration_ms: 42
+    });
+
     const app = buildApp({ dbPath });
     await ingestEventLog({ app, eventLogPath: logPath });
     const response = await app.inject({ method: "GET", url: "/api/sessions/ses_detail_1" });
@@ -227,13 +289,52 @@ describe("core api", () => {
       sessionId: "ses_detail_1",
       timeline: [
         {
+          filesChanged: [],
+          insertions: 0,
+          deletions: 0,
+          type: "session.started",
+          toolName: "",
+          status: "started",
+          durationMs: 0
+        },
+        {
+          filesChanged: [],
+          insertions: 0,
+          deletions: 0,
           type: "tool.succeeded",
           toolName: "Read",
           status: "succeeded",
           durationMs: 14
+        },
+        {
+          filesChanged: ["src/app.ts"],
+          insertions: 3,
+          deletions: 1,
+          type: "code.edit.applied",
+          toolName: "Edit",
+          status: "applied",
+          durationMs: 0
+        },
+        {
+          filesChanged: [],
+          insertions: 0,
+          deletions: 0,
+          type: "session.ended",
+          toolName: "",
+          status: "ended",
+          durationMs: 0
         }
       ]
     });
+
+    await app.close();
+  });
+
+  it("returns 404 for a missing session detail request", async () => {
+    const app = buildApp({ dbPath });
+    const response = await app.inject({ method: "GET", url: "/api/sessions/does-not-exist" });
+
+    expect(response.statusCode).toBe(404);
 
     await app.close();
   });

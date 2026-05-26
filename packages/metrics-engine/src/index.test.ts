@@ -9,8 +9,7 @@ describe("buildOverviewMetrics", () => {
         { status: "succeeded", duration_ms: 10 },
         { status: "failed", duration_ms: 30 }
       ],
-      codeEdits: [{ file_count: 2, insertions: 12, deletions: 4, edit_operation_count: 1 }],
-      estimatedTokens: 1200
+      codeEdits: [{ file_count: 2, insertions: 12, deletions: 4, edit_operation_count: 1 }]
     });
 
     expect(overview).toEqual({
@@ -22,8 +21,7 @@ describe("buildOverviewMetrics", () => {
       editOperationCount: 1,
       affectedFileCount: 2,
       insertions: 12,
-      deletions: 4,
-      estimatedTokens: 1200
+      deletions: 4
     });
   });
 
@@ -31,8 +29,7 @@ describe("buildOverviewMetrics", () => {
     const overview = buildOverviewMetrics({
       sessions: [],
       toolEvents: [],
-      codeEdits: [],
-      estimatedTokens: 0
+      codeEdits: []
     });
 
     expect(overview).toEqual({
@@ -44,8 +41,7 @@ describe("buildOverviewMetrics", () => {
       editOperationCount: 0,
       affectedFileCount: 0,
       insertions: 0,
-      deletions: 0,
-      estimatedTokens: 0
+      deletions: 0
     });
   });
 });

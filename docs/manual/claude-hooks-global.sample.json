@@ -1,0 +1,104 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "D:/projects/dev/agent-metrics/apps/cli/dist/index.js",
+              "hooks",
+              "collect",
+              "--hook-event-name",
+              "SessionStart",
+              "--repo-root",
+              "D:/projects/dev/agent-metrics"
+            ]
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "D:/projects/dev/agent-metrics/apps/cli/dist/index.js",
+              "hooks",
+              "collect",
+              "--hook-event-name",
+              "SessionEnd",
+              "--repo-root",
+              "D:/projects/dev/agent-metrics"
+            ]
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "D:/projects/dev/agent-metrics/apps/cli/dist/index.js",
+              "hooks",
+              "collect",
+              "--hook-event-name",
+              "PreToolUse",
+              "--repo-root",
+              "D:/projects/dev/agent-metrics"
+            ]
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "D:/projects/dev/agent-metrics/apps/cli/dist/index.js",
+              "hooks",
+              "collect",
+              "--hook-event-name",
+              "PostToolUse",
+              "--repo-root",
+              "D:/projects/dev/agent-metrics"
+            ]
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "D:/projects/dev/agent-metrics/apps/cli/dist/index.js",
+              "hooks",
+              "collect",
+              "--hook-event-name",
+              "PostToolUseFailure",
+              "--repo-root",
+              "D:/projects/dev/agent-metrics"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}
