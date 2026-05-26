@@ -1,6 +1,6 @@
 import { AnyEventSchema } from "@agent-metrics/event-schema";
 import { describe, expect, it } from "vitest";
-import { extractMutationTargets, normalizeClaudeHookEvent } from "./hooks.js";
+import { buildClaudeRawEnvelope, extractMutationTargets, normalizeClaudeHookEvent } from "./hooks.js";
 
 describe("normalizeClaudeHookEvent", () => {
   it("maps PreToolUse into a tool.called event", () => {
@@ -95,5 +95,33 @@ describe("extractMutationTargets", () => {
         }
       })
     ).toEqual(["src/app.ts"]);
+  });
+});
+
+describe("buildClaudeRawEnvelope", () => {
+  it("wraps Claude hook payloads in a raw envelope with stable metadata", () => {
+    const envelope = buildClaudeRawEnvelope({
+      session_id: "ses_1",
+      cwd: "D:/projects/dev/agent-metrics",
+      hook_event_name: "PreToolUse",
+      tool_name: "Read",
+      tool_use_id: "tool_1",
+      transcript_path: "C:/Users/test/.claude/projects/demo/session.jsonl"
+    });
+
+    expect(envelope).toMatchObject({
+      hook_event_name: "PreToolUse",
+      session_id: "ses_1",
+      tool_name: "Read",
+      tool_use_id: "tool_1",
+      workspace_path: "D:/projects/dev/agent-metrics",
+      transcript_path: "C:/Users/test/.claude/projects/demo/session.jsonl",
+      payload: {
+        hook_event_name: "PreToolUse",
+        tool_name: "Read"
+      }
+    });
+    expect(envelope.raw_event_id).toEqual(expect.any(String));
+    expect(envelope.captured_at).toEqual(expect.any(String));
   });
 });

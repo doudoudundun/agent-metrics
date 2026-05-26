@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, readdir, unlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
@@ -6,7 +6,7 @@ import { buildHookPayloadFromInput, handleHookEvent } from "./collect.js";
 import { getHookPaths } from "./paths.js";
 
 describe("handleHookEvent", () => {
-  it("writes one raw log line per hook invocation", async () => {
+  it("writes one raw envelope per hook invocation", async () => {
     const repoRoot = await mkdtemp(join(tmpdir(), "agent-metrics-hooks-"));
 
     await handleHookEvent({
@@ -27,12 +27,17 @@ describe("handleHookEvent", () => {
 
     expect(rawLines).toHaveLength(1);
     expect(rawLines[0]).toMatchObject({
+      raw_event_id: expect.any(String),
       hook_event_name: "PreToolUse",
-      tool_name: "Read"
+      tool_name: "Read",
+      payload: {
+        hook_event_name: "PreToolUse",
+        tool_name: "Read"
+      }
     });
   });
 
-  it("writes normalized tool events for a successful tool flow", async () => {
+  it("writes raw envelopes without appending normalized events for a successful tool flow", async () => {
     const repoRoot = await mkdtemp(join(tmpdir(), "agent-metrics-hooks-"));
 
     await handleHookEvent({
@@ -62,68 +67,15 @@ describe("handleHookEvent", () => {
     });
 
     const paths = getHookPaths(repoRoot);
-    const eventLines = await readJsonLines(paths.eventLogPath);
+    const rawLines = await readJsonLines(paths.rawHookLogPath);
+    const eventFile = await tryReadFile(paths.eventLogPath);
 
-    expect(eventLines.map((line) => line.type)).toEqual(["tool.called", "tool.succeeded"]);
+    expect(rawLines).toHaveLength(2);
+    expect(rawLines.map((line) => line.hook_event_name)).toEqual(["PreToolUse", "PostToolUse"]);
+    expect(eventFile).toBeNull();
   });
 
-  it("writes code.edit.applied when an Edit target changes", async () => {
-    const repoRoot = await mkdtemp(join(tmpdir(), "agent-metrics-hooks-"));
-    const filePath = join(repoRoot, "src", "app.ts");
-
-    await mkdir(join(repoRoot, "src"), { recursive: true });
-    await writeFile(filePath, "const answer = 1;\n", "utf8");
-
-    await handleHookEvent({
-      repoRoot,
-      payload: {
-        session_id: "ses_1",
-        cwd: repoRoot,
-        hook_event_name: "PreToolUse",
-        tool_name: "Edit",
-        tool_use_id: "tool_2",
-        tool_input: {
-          file_path: "src/app.ts"
-        }
-      }
-    });
-
-    await writeFile(filePath, "const answer = 2;\n", "utf8");
-
-    await handleHookEvent({
-      repoRoot,
-      payload: {
-        session_id: "ses_1",
-        cwd: repoRoot,
-        hook_event_name: "PostToolUse",
-        tool_name: "Edit",
-        tool_use_id: "tool_2",
-        duration_ms: 25,
-        tool_input: {
-          file_path: "src/app.ts"
-        }
-      }
-    });
-
-    const paths = getHookPaths(repoRoot);
-    const eventLines = await readJsonLines(paths.eventLogPath);
-
-    expect(eventLines.map((line) => line.type)).toEqual([
-      "tool.called",
-      "tool.succeeded",
-      "code.edit.applied"
-    ]);
-    expect(eventLines[2]).toMatchObject({
-      tool_name: "Edit",
-      files_changed: ["src/app.ts"],
-      file_count: 1,
-      insertions: 1,
-      deletions: 1,
-      edit_operation_count: 1
-    });
-  });
-
-  it("writes code.edit.applied when Bash deletes a file with rm", async () => {
+  it("captures snapshot sidecars for Bash rm targets during PreToolUse", async () => {
     const repoRoot = await mkdtemp(join(tmpdir(), "agent-metrics-hooks-"));
     const filePath = join(repoRoot, "src", "app.ts");
 
@@ -144,95 +96,9 @@ describe("handleHookEvent", () => {
       }
     });
 
-    await unlink(filePath);
-
-    await handleHookEvent({
-      repoRoot,
-      payload: {
-        session_id: "ses_1",
-        cwd: repoRoot,
-        hook_event_name: "PostToolUse",
-        tool_name: "Bash",
-        tool_use_id: "tool_bash_rm",
-        duration_ms: 25,
-        tool_input: {
-          command: "rm src/app.ts"
-        }
-      }
-    });
-
     const paths = getHookPaths(repoRoot);
-    const eventLines = await readJsonLines(paths.eventLogPath);
 
-    expect(eventLines.map((line) => line.type)).toEqual([
-      "tool.called",
-      "tool.succeeded",
-      "code.edit.applied"
-    ]);
-    expect(eventLines[2]).toMatchObject({
-      tool_name: "Bash",
-      files_changed: ["src/app.ts"],
-      file_count: 1,
-      insertions: 0,
-      deletions: 1,
-      edit_operation_count: 1
-    });
-  });
-
-  it("writes code.edit.applied when Bash edits a file with sed -i", async () => {
-    const repoRoot = await mkdtemp(join(tmpdir(), "agent-metrics-hooks-"));
-    const filePath = join(repoRoot, "src", "app.ts");
-
-    await mkdir(join(repoRoot, "src"), { recursive: true });
-    await writeFile(filePath, "alpha\nbeta\ngamma\n", "utf8");
-
-    await handleHookEvent({
-      repoRoot,
-      payload: {
-        session_id: "ses_1",
-        cwd: repoRoot,
-        hook_event_name: "PreToolUse",
-        tool_name: "Bash",
-        tool_use_id: "tool_bash_sed",
-        tool_input: {
-          command: "sed -i '2d' src/app.ts"
-        }
-      }
-    });
-
-    await writeFile(filePath, "alpha\ngamma\n", "utf8");
-
-    await handleHookEvent({
-      repoRoot,
-      payload: {
-        session_id: "ses_1",
-        cwd: repoRoot,
-        hook_event_name: "PostToolUse",
-        tool_name: "Bash",
-        tool_use_id: "tool_bash_sed",
-        duration_ms: 25,
-        tool_input: {
-          command: "sed -i '2d' src/app.ts"
-        }
-      }
-    });
-
-    const paths = getHookPaths(repoRoot);
-    const eventLines = await readJsonLines(paths.eventLogPath);
-
-    expect(eventLines.map((line) => line.type)).toEqual([
-      "tool.called",
-      "tool.succeeded",
-      "code.edit.applied"
-    ]);
-    expect(eventLines[2]).toMatchObject({
-      tool_name: "Bash",
-      files_changed: ["src/app.ts"],
-      file_count: 1,
-      insertions: 0,
-      deletions: 1,
-      edit_operation_count: 1
-    });
+    expect(await listDir(paths.snapshotRoot)).toEqual(["tool_bash_rm.json"]);
   });
 
   it("still writes raw logs for unknown hook events", async () => {
@@ -252,6 +118,9 @@ describe("handleHookEvent", () => {
     const eventFile = await tryReadFile(paths.eventLogPath);
 
     expect(rawLines).toHaveLength(1);
+    expect(rawLines[0]).toMatchObject({
+      hook_event_name: "Notification"
+    });
     expect(eventFile).toBeNull();
   });
 
@@ -290,25 +159,21 @@ describe("handleHookEvent", () => {
       }
     });
 
-    const eventLines = await readJsonLines(paths.eventLogPath);
+    const eventFile = await tryReadFile(paths.eventLogPath);
 
-    expect(eventLines.map((line) => line.type)).toEqual(["tool.called", "tool.failed"]);
+    expect(eventFile).toBeNull();
     expect(await listDir(paths.snapshotRoot)).toEqual([]);
   });
 
   it("uses repoRoot as workspace_path fallback when cwd is missing", async () => {
     const repoRoot = await mkdtemp(join(tmpdir(), "agent-metrics-hooks-"));
-    const filePath = join(repoRoot, "src", "app.ts");
-
-    await mkdir(join(repoRoot, "src"), { recursive: true });
-    await writeFile(filePath, "const answer = 1;\n", "utf8");
 
     await handleHookEvent({
       repoRoot,
       payload: {
         session_id: "ses_1",
         hook_event_name: "PreToolUse",
-        tool_name: "Edit",
+        tool_name: "Read",
         tool_use_id: "tool_no_cwd",
         tool_input: {
           file_path: "src/app.ts"
@@ -316,22 +181,13 @@ describe("handleHookEvent", () => {
       }
     });
 
-    await writeFile(filePath, "const answer = 2;\n", "utf8");
-
-    await handleHookEvent({
-      repoRoot,
-      payload: {
-        session_id: "ses_1",
-        hook_event_name: "PostToolUse",
-        tool_name: "Edit",
-        tool_use_id: "tool_no_cwd"
-      }
-    });
-
     const paths = getHookPaths(repoRoot);
-    const eventLines = await readJsonLines(paths.eventLogPath);
+    const rawLines = await readJsonLines(paths.rawHookLogPath);
 
-    expect(eventLines.map((line) => line.workspace_path)).toEqual([repoRoot, repoRoot, repoRoot]);
+    expect(rawLines.map((line) => line.workspace_path)).toEqual([repoRoot]);
+    expect(rawLines[0]?.payload).toMatchObject({
+      cwd: repoRoot
+    });
   });
 
   it("rejects malformed tool_use_id values that would escape the snapshot root", async () => {
@@ -355,24 +211,9 @@ describe("handleHookEvent", () => {
       }
     });
 
-    await writeFile(filePath, "const answer = 2;\n", "utf8");
-
-    await handleHookEvent({
-      repoRoot,
-      payload: {
-        session_id: "ses_1",
-        cwd: repoRoot,
-        hook_event_name: "PostToolUse",
-        tool_name: "Edit",
-        tool_use_id: "../../escaped"
-      }
-    });
-
     const paths = getHookPaths(repoRoot);
-    const eventLines = await readJsonLines(paths.eventLogPath);
     const escapedSnapshotPath = resolve(paths.snapshotRoot, "..", "..", "escaped.json");
 
-    expect(eventLines.map((line) => line.type)).toEqual(["tool.called", "tool.succeeded"]);
     expect(await tryReadFile(escapedSnapshotPath)).toBeNull();
     expect(await listDir(paths.snapshotRoot)).toEqual([]);
   });
@@ -397,23 +238,8 @@ describe("handleHookEvent", () => {
       }
     });
 
-    await writeFile(outsideFilePath, "export const answer = 2;\n", "utf8");
-
-    await handleHookEvent({
-      repoRoot,
-      payload: {
-        session_id: "ses_1",
-        cwd: repoRoot,
-        hook_event_name: "PostToolUse",
-        tool_name: "Edit",
-        tool_use_id: "tool_outside"
-      }
-    });
-
     const paths = getHookPaths(repoRoot);
-    const eventLines = await readJsonLines(paths.eventLogPath);
 
-    expect(eventLines.map((line) => line.type)).toEqual(["tool.called", "tool.succeeded"]);
     expect(await listDir(paths.snapshotRoot)).toEqual([]);
   });
 });

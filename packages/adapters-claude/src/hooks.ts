@@ -15,10 +15,37 @@ export type ClaudeHookPayload = {
   tool_name?: string;
   tool_input?: unknown;
   tool_use_id?: string;
+  transcript_path?: string;
   duration_ms?: number;
   exit_code?: number | null;
   timestamp?: string;
 };
+
+export type ClaudeRawEnvelope = {
+  raw_event_id: string;
+  captured_at: string;
+  hook_event_name: string;
+  session_id?: string;
+  tool_use_id?: string;
+  tool_name?: string;
+  workspace_path?: string;
+  transcript_path?: string;
+  payload: ClaudeHookPayload;
+};
+
+export function buildClaudeRawEnvelope(payload: ClaudeHookPayload): ClaudeRawEnvelope {
+  return {
+    raw_event_id: randomUUID(),
+    captured_at: new Date().toISOString(),
+    hook_event_name: normalizeString(payload.hook_event_name, "unknown"),
+    session_id: normalizeOptionalString(payload.session_id),
+    tool_use_id: normalizeOptionalString(payload.tool_use_id),
+    tool_name: normalizeOptionalString(payload.tool_name),
+    workspace_path: normalizeOptionalString(payload.cwd),
+    transcript_path: normalizeOptionalString(payload.transcript_path),
+    payload
+  };
+}
 
 export function normalizeClaudeHookEvent(payload: ClaudeHookPayload): AnyEvent | null {
   const eventName = payload.hook_event_name as HookEventName | undefined;
@@ -415,6 +442,10 @@ function summarizeToolInput(toolInput: unknown): string {
 
 function normalizeString(value: unknown, fallback: string): string {
   return typeof value === "string" && value.length > 0 ? value : fallback;
+}
+
+function normalizeOptionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
 function normalizeDuration(value: unknown): number {

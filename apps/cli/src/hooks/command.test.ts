@@ -65,7 +65,7 @@ describe("hooks CLI commands", () => {
     expect(installed.hooks?.PostToolUseFailure).toBeDefined();
   });
 
-  it("runs hooks collect through Commander and appends raw and normalized events", async () => {
+  it("runs hooks collect through Commander and appends a raw envelope only", async () => {
     const repoRoot = await mkdtemp(join(tmpdir(), "agent-metrics-cli-"));
     const stdin = Readable.from([
       JSON.stringify({
@@ -102,10 +102,19 @@ describe("hooks CLI commands", () => {
 
     const paths = getHookPaths(repoRoot);
     const rawLog = await readFile(paths.rawHookLogPath, "utf8");
-    const eventLog = await readFile(paths.eventLogPath, "utf8");
+    const eventLog = await tryReadFile(paths.eventLogPath);
 
     expect(rawLog).toContain("\"hook_event_name\":\"PreToolUse\"");
-    expect(eventLog).toContain("\"type\":\"tool.called\"");
-    expect(eventLog).toContain("\"tool_name\":\"Read\"");
+    expect(rawLog).toContain("\"raw_event_id\":");
+    expect(rawLog).toContain("\"payload\":");
+    expect(eventLog).toBeNull();
   });
 });
+
+async function tryReadFile(filePath: string): Promise<string | null> {
+  try {
+    return await readFile(filePath, "utf8");
+  } catch {
+    return null;
+  }
+}

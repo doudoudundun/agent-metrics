@@ -2,12 +2,11 @@ import { resolve } from "node:path";
 import { appendJsonLine } from "@agent-metrics/shared-utils";
 import type { Command } from "commander";
 import {
+  buildClaudeRawEnvelope,
   extractMutationTargets,
-  normalizeClaudeHookEvent,
-  normalizeClaudeObservation,
   type ClaudeHookPayload
 } from "@agent-metrics/adapters-claude";
-import { collectChangedSnapshots, captureBeforeSnapshots, discardSnapshots } from "./snapshots.js";
+import { captureBeforeSnapshots, discardSnapshots } from "./snapshots.js";
 import { getHookPaths } from "./paths.js";
 
 export function registerCollectCommand(hooks: Command): void {
@@ -93,26 +92,12 @@ export async function handleHookEvent(input: {
   const workspacePath = normalizeWorkspacePath(input.payload.cwd, input.repoRoot);
   const normalizedPayload = withWorkspacePath(input.payload, workspacePath);
 
-  await appendJsonLine(paths.rawHookLogPath, input.payload);
-
-  const normalizedEvent = normalizeClaudeHookEvent(normalizedPayload);
-  if (normalizedEvent !== null) {
-    await appendJsonLine(paths.eventLogPath, normalizedEvent);
-  }
+  await appendJsonLine(paths.rawHookLogPath, buildClaudeRawEnvelope(normalizedPayload));
 
   if (normalizedPayload.hook_event_name === "PreToolUse") {
     await maybeCaptureBeforeSnapshots({
       payload: normalizedPayload,
       snapshotRoot: paths.snapshotRoot,
-      workspacePath
-    });
-  }
-
-  if (normalizedPayload.hook_event_name === "PostToolUse") {
-    await maybeWriteEditAppliedEvent({
-      payload: normalizedPayload,
-      snapshotRoot: paths.snapshotRoot,
-      eventLogPath: paths.eventLogPath,
       workspacePath
     });
   }
@@ -149,42 +134,6 @@ async function maybeCaptureBeforeSnapshots(input: {
     workspacePath: input.workspacePath,
     targets
   });
-}
-
-async function maybeWriteEditAppliedEvent(input: {
-  payload: ClaudeHookPayload;
-  snapshotRoot: string;
-  eventLogPath: string;
-  workspacePath: string;
-}): Promise<void> {
-  if (typeof input.payload.tool_use_id !== "string" || input.payload.tool_use_id.length === 0) {
-    return;
-  }
-
-  const changedFiles = await collectChangedSnapshots({
-    snapshotRoot: input.snapshotRoot,
-    toolUseId: input.payload.tool_use_id
-  });
-
-  if (changedFiles.length === 0) {
-    return;
-  }
-
-  const editAppliedEvent = normalizeClaudeObservation({
-    sessionId: typeof input.payload.session_id === "string" && input.payload.session_id.length > 0
-      ? input.payload.session_id
-      : "unknown-session",
-    workspacePath: input.workspacePath,
-    observation: {
-      kind: "edit_applied",
-      toolName: typeof input.payload.tool_name === "string" && input.payload.tool_name.length > 0
-        ? input.payload.tool_name
-        : "unknown",
-      files: changedFiles
-    }
-  });
-
-  await appendJsonLine(input.eventLogPath, editAppliedEvent);
 }
 
 function normalizeWorkspacePath(cwd: unknown, repoRoot: string): string {
