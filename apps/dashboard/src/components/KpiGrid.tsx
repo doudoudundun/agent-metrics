@@ -2,6 +2,7 @@ import type { OverviewResponse } from "../api";
 
 type KpiGridProps = {
   overview: OverviewResponse;
+  scopeLabel: string;
 };
 
 const NUMBER_FORMAT = new Intl.NumberFormat("en-US");
@@ -10,7 +11,7 @@ const PERCENT_FORMAT = new Intl.NumberFormat("en-US", {
   style: "percent"
 });
 
-export function KpiGrid({ overview }: KpiGridProps) {
+export function KpiGrid({ overview, scopeLabel }: KpiGridProps) {
   const items = [
     { label: "Tool Calls", value: NUMBER_FORMAT.format(overview.totalToolCalls), tone: "signal" },
     {
@@ -51,7 +52,7 @@ export function KpiGrid({ overview }: KpiGridProps) {
   ] as const;
 
   return (
-    <section className="kpi-grid" aria-label="Overview metrics">
+    <section className="kpi-grid" aria-label={`Overview metrics for ${scopeLabel}`}>
       {items.map((item) => (
         <article className="kpi-card" data-tone={item.tone} key={item.label}>
           <span className="kpi-label">{item.label}</span>

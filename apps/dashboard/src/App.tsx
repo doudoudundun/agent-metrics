@@ -162,6 +162,8 @@ export function App() {
     });
   });
 
+  const scopeLabel = buildScopeLabel(globalScope);
+
   if (!dashboard.overview) {
     return (
       <main className="app-shell">
@@ -170,12 +172,17 @@ export function App() {
           <h1>Agent Metrics</h1>
           <p className="hero-copy">Loading local activity signals from the metrics core.</p>
           <TimeScopeToolbar selection={globalScope} onChange={handleScopeChange} />
+          <div className="status-row">
+            <div className="status-pill">
+              <strong>Scope</strong>
+              <span>{scopeLabel}</span>
+            </div>
+          </div>
         </section>
       </main>
     );
   }
 
-  const scopeLabel = buildScopeLabel(globalScope);
   const lastUpdated = formatDateTime(dashboard.overview.updatedAt);
 
   return (
@@ -214,7 +221,7 @@ export function App() {
         </div>
       </section>
 
-      <KpiGrid overview={dashboard.overview} />
+      <KpiGrid overview={dashboard.overview} scopeLabel={scopeLabel} />
 
       <section className="surface-grid">
         <Suspense

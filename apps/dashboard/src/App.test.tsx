@@ -81,10 +81,23 @@ vi.mock("./api", () => ({
 }));
 
 describe("App", () => {
+  it("renders the selected scope label while overview data is loading", () => {
+    vi.mocked(fetchOverview).mockImplementationOnce(() => new Promise(() => undefined));
+    const view = render(<App />);
+
+    expect(screen.getByText("Scope")).toBeInTheDocument();
+    expect(screen.getAllByText("Today").length).toBeGreaterThan(0);
+
+    view.unmount();
+  });
+
   it("renders overview metrics, recent sessions, and a session timeline", async () => {
     const view = render(<App />);
 
     expect(await screen.findByText("12")).toBeInTheDocument();
+    expect(
+      await screen.findByRole("region", { name: "Overview metrics for Today" })
+    ).toBeInTheDocument();
     expect(await screen.findByText("Affected Files")).toBeInTheDocument();
     expect(await screen.findByText("Insertions")).toBeInTheDocument();
     expect(await screen.findByText("Deletions")).toBeInTheDocument();
