@@ -7,6 +7,21 @@ type ToolRow = {
   duration_ms: number | null;
 };
 
+type PromptRow = {
+  prompt_id: string;
+};
+
+type ResponseRow = {
+  message_id: string;
+};
+
+type TokenUsageRow = {
+  input_tokens: number;
+  output_tokens: number;
+  cache_creation_input_tokens: number;
+  cache_read_input_tokens: number;
+};
+
 type CodeEditRow = {
   files_changed: string[];
   file_count: number;
@@ -22,6 +37,13 @@ export type OverviewMetrics = {
   failedExecutions: number;
   successRate: number;
   editOperationCount: number;
+  turnCount: number;
+  responseCount: number;
+  totalTokens: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
   affectedFileCount: number;
   insertions: number;
   deletions: number;
@@ -30,12 +52,27 @@ export type OverviewMetrics = {
 export function buildOverviewMetrics(input: {
   sessions: SessionRow[];
   toolEvents: ToolRow[];
+  prompts: PromptRow[];
+  responses: ResponseRow[];
+  tokenUsage: TokenUsageRow[];
   codeEdits: CodeEditRow[];
 }): OverviewMetrics {
   const successfulExecutions = input.toolEvents.filter((row) => row.status === "succeeded").length;
   const failedExecutions = input.toolEvents.filter((row) => row.status === "failed").length;
   const totalToolCalls = input.toolEvents.length;
   const editOperationCount = input.codeEdits.reduce((sum, row) => sum + row.edit_operation_count, 0);
+  const turnCount = input.prompts.length;
+  const responseCount = input.responses.length;
+  const inputTokens = input.tokenUsage.reduce((sum, row) => sum + row.input_tokens, 0);
+  const outputTokens = input.tokenUsage.reduce((sum, row) => sum + row.output_tokens, 0);
+  const cacheReadTokens = input.tokenUsage.reduce(
+    (sum, row) => sum + row.cache_read_input_tokens,
+    0
+  );
+  const cacheCreationTokens = input.tokenUsage.reduce(
+    (sum, row) => sum + row.cache_creation_input_tokens,
+    0
+  );
   const dedupedFiles = new Set<string>();
   let fallbackAffectedFileCount = 0;
 
@@ -61,6 +98,13 @@ export function buildOverviewMetrics(input: {
     failedExecutions,
     successRate: totalToolCalls === 0 ? 0 : successfulExecutions / totalToolCalls,
     editOperationCount,
+    turnCount,
+    responseCount,
+    totalTokens: inputTokens + outputTokens + cacheReadTokens + cacheCreationTokens,
+    inputTokens,
+    outputTokens,
+    cacheReadTokens,
+    cacheCreationTokens,
     affectedFileCount,
     insertions,
     deletions

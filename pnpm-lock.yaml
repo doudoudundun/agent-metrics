@@ -59,6 +59,9 @@ importers:
 
   apps/core:
     dependencies:
+      '@agent-metrics/adapters-claude':
+        specifier: workspace:*
+        version: link:../../packages/adapters-claude
       '@agent-metrics/event-schema':
         specifier: workspace:*
         version: link:../../packages/event-schema

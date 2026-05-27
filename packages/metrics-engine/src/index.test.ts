@@ -9,6 +9,16 @@ describe("buildOverviewMetrics", () => {
         { status: "succeeded", duration_ms: 10 },
         { status: "failed", duration_ms: 30 }
       ],
+      prompts: [{ prompt_id: "prompt_1" }],
+      responses: [{ message_id: "msg_1" }],
+      tokenUsage: [
+        {
+          input_tokens: 10,
+          output_tokens: 4,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 1
+        }
+      ],
       codeEdits: [
         {
           files_changed: ["src/app.ts", "src/index.ts"],
@@ -27,6 +37,13 @@ describe("buildOverviewMetrics", () => {
       failedExecutions: 1,
       successRate: 0.5,
       editOperationCount: 1,
+      turnCount: 1,
+      responseCount: 1,
+      totalTokens: 15,
+      inputTokens: 10,
+      outputTokens: 4,
+      cacheReadTokens: 1,
+      cacheCreationTokens: 0,
       affectedFileCount: 2,
       insertions: 12,
       deletions: 4
@@ -37,6 +54,9 @@ describe("buildOverviewMetrics", () => {
     const overview = buildOverviewMetrics({
       sessions: [],
       toolEvents: [],
+      prompts: [],
+      responses: [],
+      tokenUsage: [],
       codeEdits: []
     });
 
@@ -47,6 +67,13 @@ describe("buildOverviewMetrics", () => {
       failedExecutions: 0,
       successRate: 0,
       editOperationCount: 0,
+      turnCount: 0,
+      responseCount: 0,
+      totalTokens: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
       affectedFileCount: 0,
       insertions: 0,
       deletions: 0
@@ -57,6 +84,9 @@ describe("buildOverviewMetrics", () => {
     const overview = buildOverviewMetrics({
       sessions: [{ session_id: "ses_1" }],
       toolEvents: [],
+      prompts: [],
+      responses: [],
+      tokenUsage: [],
       codeEdits: [
         {
           files_changed: ["src/shared.ts", "src/one.ts"],

@@ -4,9 +4,11 @@ import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 import Fastify from "fastify";
+import { syncKnownClaudeTranscripts } from "@agent-metrics/adapters-claude";
 import { AnyEventSchema } from "@agent-metrics/event-schema";
 import { toCsv, toJson } from "@agent-metrics/export-kit";
 import { buildOverviewMetrics } from "@agent-metrics/metrics-engine";
+import { getAgentMetricsPaths } from "@agent-metrics/shared-utils";
 import { resolveTimeScope, type ResolvedTimeScope } from "./time-scope.js";
 
 type MetricsStatement<Result = unknown> = {
@@ -28,6 +30,7 @@ type MetricsApp = ReturnType<typeof Fastify> & {
 type BuildAppInput = {
   dbPath: string;
   eventLogPath?: string;
+  repoRoot?: string;
   now?: () => Date;
   timezone?: string;
   offsetMinutes?: number;
@@ -50,6 +53,21 @@ type CodeEditOverviewRow = {
   edit_operation_count: number;
 };
 
+type PromptOverviewRow = {
+  prompt_id: string;
+};
+
+type AssistantResponseOverviewRow = {
+  message_id: string;
+};
+
+type TokenUsageOverviewRow = {
+  input_tokens: number;
+  output_tokens: number;
+  cache_creation_input_tokens: number;
+  cache_read_input_tokens: number;
+};
+
 type ToolRankingRow = {
   toolName: string;
   count: number;
@@ -60,6 +78,9 @@ type ToolRankingRow = {
 type SessionListRow = {
   sessionId: string;
   workspacePath: string;
+  turnCount: number;
+  totalTokens: number;
+  lastModel: string | null;
 };
 
 type SessionRow = {
@@ -136,10 +157,16 @@ function selectOverviewRows(
 ): {
   sessions: SessionOverviewRow[];
   toolEvents: ToolEventOverviewRow[];
+  prompts: PromptOverviewRow[];
+  responses: AssistantResponseOverviewRow[];
+  tokenUsage: TokenUsageOverviewRow[];
   codeEdits: CodeEditOverviewRow[];
 } {
   const sessionWindow = buildTimeWindow("started_at", scope);
   const toolWindow = buildTimeWindow("created_at", scope);
+  const promptWindow = buildTimeWindow("created_at", scope);
+  const responseWindow = buildTimeWindow("created_at", scope);
+  const tokenUsageWindow = buildTimeWindow("created_at", scope);
   const codeEditWindow = buildTimeWindow("created_at", scope);
   const sessions = db
     .prepare<SessionOverviewRow>(`SELECT session_id FROM sessions${sessionWindow.whereSql}`)
@@ -147,6 +174,19 @@ function selectOverviewRows(
   const toolEvents = db
     .prepare<ToolEventOverviewRow>(`SELECT status, duration_ms FROM tool_events${toolWindow.whereSql}`)
     .all(...toolWindow.params);
+  const prompts = db
+    .prepare<PromptOverviewRow>(`SELECT prompt_id FROM prompt_events${promptWindow.whereSql}`)
+    .all(...promptWindow.params);
+  const responses = db
+    .prepare<AssistantResponseOverviewRow>(
+      `SELECT message_id FROM assistant_responses${responseWindow.whereSql}`
+    )
+    .all(...responseWindow.params);
+  const tokenUsage = db
+    .prepare<TokenUsageOverviewRow>(
+      `SELECT input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens FROM token_usage_events${tokenUsageWindow.whereSql}`
+    )
+    .all(...tokenUsageWindow.params);
   const codeEdits = db
     .prepare<{
       filesChanged: string;
@@ -169,6 +209,9 @@ function selectOverviewRows(
   return {
     sessions,
     toolEvents,
+    prompts,
+    responses,
+    tokenUsage,
     codeEdits
   };
 }
@@ -196,7 +239,49 @@ function selectSessions(db: MetricsDatabase, scope?: ResolvedTimeScope): Session
 
   return db
     .prepare<SessionListRow>(
-      `SELECT session_id AS sessionId, workspace_path AS workspacePath FROM sessions${window.whereSql} ORDER BY started_at DESC`
+      `
+        SELECT
+          sessions.session_id AS sessionId,
+          sessions.workspace_path AS workspacePath,
+          COALESCE(prompt_counts.turnCount, 0) AS turnCount,
+          COALESCE(token_totals.totalTokens, 0) AS totalTokens,
+          (
+            SELECT combined.model
+            FROM (
+              SELECT model, created_at, event_id
+              FROM assistant_responses
+              WHERE session_id = sessions.session_id AND model IS NOT NULL
+              UNION ALL
+              SELECT model, created_at, event_id
+              FROM token_usage_events
+              WHERE session_id = sessions.session_id AND model IS NOT NULL
+            ) AS combined
+            ORDER BY combined.created_at DESC, combined.event_id DESC
+            LIMIT 1
+          ) AS lastModel
+        FROM sessions
+        LEFT JOIN (
+          SELECT session_id, COUNT(*) AS turnCount
+          FROM prompt_events
+          GROUP BY session_id
+        ) AS prompt_counts
+          ON prompt_counts.session_id = sessions.session_id
+        LEFT JOIN (
+          SELECT
+            session_id,
+            SUM(
+              input_tokens +
+              output_tokens +
+              cache_creation_input_tokens +
+              cache_read_input_tokens
+            ) AS totalTokens
+          FROM token_usage_events
+          GROUP BY session_id
+        ) AS token_totals
+          ON token_totals.session_id = sessions.session_id
+        ${window.whereSql}
+        ORDER BY sessions.started_at DESC
+      `
     )
     .all(...window.params);
 }
@@ -290,6 +375,7 @@ export function buildApp(input: BuildAppInput): MetricsApp {
   mkdirSync(dirname(input.dbPath), { recursive: true });
 
   const db = new Database(input.dbPath) as MetricsDatabase;
+  const agentPaths = input.repoRoot ? getAgentMetricsPaths(input.repoRoot) : null;
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS sessions (
@@ -306,6 +392,38 @@ export function buildApp(input: BuildAppInput): MetricsApp {
       tool_name TEXT NOT NULL,
       status TEXT NOT NULL,
       duration_ms INTEGER,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS prompt_events (
+      event_id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      prompt_id TEXT NOT NULL,
+      prompt_chars INTEGER NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS assistant_responses (
+      event_id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      message_id TEXT NOT NULL,
+      model TEXT,
+      stop_reason TEXT,
+      response_chars INTEGER NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS token_usage_events (
+      event_id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      message_id TEXT NOT NULL,
+      model TEXT,
+      input_tokens INTEGER NOT NULL,
+      output_tokens INTEGER NOT NULL,
+      cache_creation_input_tokens INTEGER NOT NULL,
+      cache_read_input_tokens INTEGER NOT NULL,
+      server_tool_use TEXT NOT NULL DEFAULT '{}',
+      usage_source TEXT NOT NULL,
       created_at TEXT NOT NULL
     );
 
@@ -343,6 +461,15 @@ export function buildApp(input: BuildAppInput): MetricsApp {
   });
 
   app.addHook("onRequest", async () => {
+    if (agentPaths) {
+      await syncKnownClaudeTranscripts({
+        manifestPath: agentPaths.transcriptManifestPath,
+        eventLogPath: input.eventLogPath ?? agentPaths.eventLogPath,
+        transcriptCursorPath: agentPaths.transcriptCursorPath,
+        transcriptLedgerPath: agentPaths.transcriptLedgerPath
+      });
+    }
+
     if (!syncEventLog) {
       return;
     }
@@ -358,6 +485,9 @@ export function buildApp(input: BuildAppInput): MetricsApp {
       buildOverviewMetrics({
         sessions: overviewRows.sessions,
         toolEvents: overviewRows.toolEvents,
+        prompts: overviewRows.prompts,
+        responses: overviewRows.responses,
+        tokenUsage: overviewRows.tokenUsage,
         codeEdits: overviewRows.codeEdits
       }),
       scope
@@ -492,11 +622,18 @@ export async function ingestEventLog(input: {
 
     if (parsed.type === "session.started") {
       db.prepare(
-        "INSERT OR REPLACE INTO sessions (session_id, started_at, workspace_path, ended_at, exit_code) VALUES (?, ?, ?, NULL, NULL)"
+        `
+          INSERT INTO sessions (session_id, started_at, workspace_path, ended_at, exit_code)
+          VALUES (?, ?, ?, NULL, NULL)
+          ON CONFLICT(session_id) DO UPDATE SET
+            started_at = excluded.started_at,
+            workspace_path = excluded.workspace_path
+        `
       ).run(parsed.session_id, parsed.timestamp, parsed.workspace_path);
     }
 
     if (parsed.type === "session.ended") {
+      ensureSessionExists(db, parsed.session_id, parsed.timestamp, parsed.workspace_path);
       db.prepare(
         "UPDATE sessions SET ended_at = ?, exit_code = ?, workspace_path = ? WHERE session_id = ?"
       ).run(parsed.timestamp, parsed.exit_code ?? null, parsed.workspace_path, parsed.session_id);
@@ -506,6 +643,47 @@ export async function ingestEventLog(input: {
       db.prepare(
         "INSERT OR REPLACE INTO tool_events (event_id, session_id, tool_name, status, duration_ms, created_at) VALUES (?, ?, ?, ?, ?, ?)"
       ).run(parsed.event_id, parsed.session_id, parsed.tool_name, parsed.status, parsed.duration_ms, parsed.timestamp);
+    }
+
+    if (parsed.type === "prompt.submitted") {
+      ensureSessionExists(db, parsed.session_id, parsed.timestamp, parsed.workspace_path);
+      db.prepare(
+        "INSERT OR REPLACE INTO prompt_events (event_id, session_id, prompt_id, prompt_chars, created_at) VALUES (?, ?, ?, ?, ?)"
+      ).run(parsed.event_id, parsed.session_id, parsed.prompt_id, parsed.prompt_chars, parsed.timestamp);
+    }
+
+    if (parsed.type === "assistant.responded") {
+      ensureSessionExists(db, parsed.session_id, parsed.timestamp, parsed.workspace_path);
+      db.prepare(
+        "INSERT OR REPLACE INTO assistant_responses (event_id, session_id, message_id, model, stop_reason, response_chars, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+      ).run(
+        parsed.event_id,
+        parsed.session_id,
+        parsed.message_id,
+        parsed.model ?? null,
+        parsed.stop_reason ?? null,
+        parsed.response_chars,
+        parsed.timestamp
+      );
+    }
+
+    if (parsed.type === "token.usage.recorded") {
+      ensureSessionExists(db, parsed.session_id, parsed.timestamp, parsed.workspace_path);
+      db.prepare(
+        "INSERT OR REPLACE INTO token_usage_events (event_id, session_id, message_id, model, input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens, server_tool_use, usage_source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+      ).run(
+        parsed.event_id,
+        parsed.session_id,
+        parsed.message_id,
+        parsed.model ?? null,
+        parsed.input_tokens,
+        parsed.output_tokens,
+        parsed.cache_creation_input_tokens,
+        parsed.cache_read_input_tokens,
+        parsed.server_tool_use,
+        parsed.usage_source,
+        parsed.timestamp
+      );
     }
 
     if (parsed.type === "code.edit.applied") {
@@ -524,6 +702,17 @@ export async function ingestEventLog(input: {
       );
     }
   }
+}
+
+function ensureSessionExists(
+  db: MetricsDatabase,
+  sessionId: string,
+  startedAt: string,
+  workspacePath: string
+): void {
+  db.prepare(
+    "INSERT OR IGNORE INTO sessions (session_id, started_at, workspace_path, ended_at, exit_code) VALUES (?, ?, ?, NULL, NULL)"
+  ).run(sessionId, startedAt, workspacePath);
 }
 
 function parseFilesChanged(value: string): string[] {

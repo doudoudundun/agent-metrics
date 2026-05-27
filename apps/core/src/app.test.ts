@@ -1,11 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { beforeEach, describe, expect, it } from "vitest";
+import { recordClaudeTranscriptReference } from "@agent-metrics/adapters-claude";
+import { getAgentMetricsPaths } from "@agent-metrics/shared-utils";
 import { appendJsonLine } from "@agent-metrics/shared-utils";
 import {
   buildApp,
@@ -21,6 +23,13 @@ const may25AppInput = {
   now: () => new Date("2026-05-25T09:00:00.000Z"),
   timezone: "UTC",
   offsetMinutes: 0
+};
+
+const scopedNow = new Date("2026-05-27T10:30:00.000Z");
+const scopedAppInput = {
+  now: () => scopedNow,
+  timezone: "Asia/Shanghai",
+  offsetMinutes: 480
 };
 
 beforeEach(async () => {
@@ -210,16 +219,154 @@ describe("ingestEventLog", () => {
     await syncEventLog();
     expect(ingestCount).toBe(2);
   });
+
+  it("returns token and turn totals for a session with no tool events", async () => {
+    await appendJsonLine(logPath, {
+      event_id: "evt_prompt",
+      session_id: "ses_chat",
+      timestamp: "2026-05-27T10:00:00.000Z",
+      source_vendor: "claude-code",
+      source_adapter: "claude",
+      workspace_path: "D:/projects/dev/agent-metrics",
+      type: "prompt.submitted",
+      prompt_id: "prompt_1",
+      prompt_chars: 5
+    });
+    await appendJsonLine(logPath, {
+      event_id: "evt_resp",
+      session_id: "ses_chat",
+      timestamp: "2026-05-27T10:00:01.000Z",
+      source_vendor: "claude-code",
+      source_adapter: "claude",
+      workspace_path: "D:/projects/dev/agent-metrics",
+      type: "assistant.responded",
+      message_id: "msg_1",
+      model: "sonnet-test",
+      stop_reason: "end_turn",
+      response_chars: 5
+    });
+    await appendJsonLine(logPath, {
+      event_id: "evt_usage",
+      session_id: "ses_chat",
+      timestamp: "2026-05-27T10:00:01.000Z",
+      source_vendor: "claude-code",
+      source_adapter: "claude",
+      workspace_path: "D:/projects/dev/agent-metrics",
+      type: "token.usage.recorded",
+      message_id: "msg_1",
+      model: "sonnet-test",
+      input_tokens: 10,
+      output_tokens: 4,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 1,
+      server_tool_use: "{}",
+      usage_source: "claude-transcript"
+    });
+
+    const app = buildApp({ dbPath, ...scopedAppInput });
+    await ingestEventLog({ app, eventLogPath: logPath });
+
+    const overview = await app.inject({ method: "GET", url: "/api/overview?mode=calendar&range=day" });
+    const sessions = await app.inject({ method: "GET", url: "/api/sessions?mode=calendar&range=day" });
+
+    expect(overview.json()).toMatchObject({
+      totalToolCalls: 0,
+      turnCount: 1,
+      responseCount: 1,
+      totalTokens: 15,
+      inputTokens: 10,
+      outputTokens: 4,
+      cacheReadTokens: 1,
+      cacheCreationTokens: 0
+    });
+    expect(sessions.json()).toMatchObject({
+      rows: [
+        {
+          sessionId: "ses_chat",
+          workspacePath: "D:/projects/dev/agent-metrics",
+          turnCount: 1,
+          totalTokens: 15,
+          lastModel: "sonnet-test"
+        }
+      ]
+    });
+
+    await app.close();
+  });
+
+  it("syncs known Claude transcripts before overview reads when repoRoot is provided", async () => {
+    const repoRoot = await mkdtemp(join(tmpdir(), "agent-metrics-transcript-core-"));
+    const paths = getAgentMetricsPaths(repoRoot);
+    const transcriptPath = join(repoRoot, "claude-session.jsonl");
+    const transcriptDbPath = join(repoRoot, "metrics.sqlite");
+
+    await writeFile(
+      transcriptPath,
+      [
+        JSON.stringify({
+          type: "user",
+          sessionId: "ses_transcript",
+          cwd: repoRoot,
+          promptId: "prompt_1",
+          timestamp: "2026-05-27T10:00:00.000Z",
+          message: {
+            role: "user",
+            content: "Ship it."
+          }
+        }),
+        JSON.stringify({
+          type: "assistant",
+          sessionId: "ses_transcript",
+          cwd: repoRoot,
+          timestamp: "2026-05-27T10:00:01.000Z",
+          message: {
+            id: "msg_1",
+            role: "assistant",
+            model: "sonnet-test",
+            stop_reason: "end_turn",
+            content: [{ type: "text", text: "Done." }],
+            usage: {
+              input_tokens: 10,
+              output_tokens: 4,
+              cache_creation_input_tokens: 0,
+              cache_read_input_tokens: 1,
+              server_tool_use: { web_search_requests: 0 }
+            }
+          }
+        })
+      ].join("\n") + "\n",
+      "utf8"
+    );
+
+    await recordClaudeTranscriptReference({
+      manifestPath: paths.transcriptManifestPath,
+      transcriptPath,
+      workspacePath: repoRoot,
+      sessionId: "ses_transcript"
+    });
+
+    const app = buildApp({
+      dbPath: transcriptDbPath,
+      eventLogPath: paths.eventLogPath,
+      repoRoot,
+      ...scopedAppInput
+    });
+
+    const response = await app.inject({ method: "GET", url: "/api/overview?mode=calendar&range=day" });
+
+    expect(response.json()).toMatchObject({
+      sessionCount: 1,
+      totalToolCalls: 0,
+      turnCount: 1,
+      responseCount: 1,
+      totalTokens: 15
+    });
+
+    await app.close();
+  });
 });
 
 describe("core api", () => {
-  const scopedNow = new Date("2026-05-27T10:30:00.000Z");
-  const scopedAppInput = {
-    now: () => scopedNow,
-    timezone: "Asia/Shanghai",
-    offsetMinutes: 480
-  };
-
   async function seedScopedAggregateDataset(): Promise<void> {
     const workspacePath = "D:/projects/dev/agent-metrics";
 
@@ -391,6 +538,13 @@ describe("core api", () => {
       failedExecutions: 1,
       successRate: 0.5,
       editOperationCount: 2,
+      turnCount: 0,
+      responseCount: 0,
+      totalTokens: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
       affectedFileCount: 4,
       insertions: 5,
       deletions: 3,
@@ -476,7 +630,15 @@ describe("core api", () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({
-      rows: [{ sessionId: "ses_today", workspacePath: "D:/projects/dev/agent-metrics" }],
+      rows: [
+        {
+          sessionId: "ses_today",
+          workspacePath: "D:/projects/dev/agent-metrics",
+          turnCount: 0,
+          totalTokens: 0,
+          lastModel: null
+        }
+      ],
       mode: "calendar",
       range: "day",
       timezone: "Asia/Shanghai",
@@ -487,9 +649,27 @@ describe("core api", () => {
     expect(month.statusCode).toBe(200);
     expect(month.json()).toEqual({
       rows: [
-        { sessionId: "ses_today", workspacePath: "D:/projects/dev/agent-metrics" },
-        { sessionId: "ses_week", workspacePath: "D:/projects/dev/agent-metrics" },
-        { sessionId: "ses_old", workspacePath: "D:/projects/dev/agent-metrics" }
+        {
+          sessionId: "ses_today",
+          workspacePath: "D:/projects/dev/agent-metrics",
+          turnCount: 0,
+          totalTokens: 0,
+          lastModel: null
+        },
+        {
+          sessionId: "ses_week",
+          workspacePath: "D:/projects/dev/agent-metrics",
+          turnCount: 0,
+          totalTokens: 0,
+          lastModel: null
+        },
+        {
+          sessionId: "ses_old",
+          workspacePath: "D:/projects/dev/agent-metrics",
+          turnCount: 0,
+          totalTokens: 0,
+          lastModel: null
+        }
       ],
       mode: "calendar",
       range: "month",
