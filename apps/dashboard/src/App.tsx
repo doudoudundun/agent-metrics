@@ -43,17 +43,22 @@ export function App() {
   const [globalScope, setGlobalScope] = useState<TimeScopeSelection>(DEFAULT_TIME_SCOPE);
   const [selectedSession, setSelectedSession] = useState<SessionDetailResponse | null>(null);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  const [loadErrorMessage, setLoadErrorMessage] = useState<string | null>(null);
   const [staleMessage, setStaleMessage] = useState<string | null>(null);
 
   const applyLoadedData = useEffectEvent((nextState: DashboardState) => {
     startTransition(() => {
       setDashboard(nextState);
+      setLoadErrorMessage(null);
       setStaleMessage(null);
     });
   });
 
   const applyLoadError = useEffectEvent((message: string) => {
     if (dashboard.overview === null) {
+      startTransition(() => {
+        setLoadErrorMessage(message);
+      });
       return;
     }
 
@@ -163,6 +168,7 @@ export function App() {
     setDashboard(INITIAL_STATE);
     setSelectedSession(null);
     setSelectedSessionId(null);
+    setLoadErrorMessage(null);
     setStaleMessage(null);
   });
 
@@ -174,7 +180,13 @@ export function App() {
         <section className="hero-panel">
           <div className="hero-eyebrow">Local Ops Console</div>
           <h1>Agent Metrics</h1>
-          <p className="hero-copy">Loading local activity signals from the metrics core.</p>
+          {loadErrorMessage ? (
+            <p className="hero-copy">
+              <strong>Failed to load dashboard metrics.</strong> {loadErrorMessage}
+            </p>
+          ) : (
+            <p className="hero-copy">Loading local activity signals from the metrics core.</p>
+          )}
           <TimeScopeToolbar selection={globalScope} onChange={handleScopeChange} />
           <div className="status-row">
             <div className="status-pill">

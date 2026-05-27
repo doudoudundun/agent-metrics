@@ -97,6 +97,27 @@ describe("App", () => {
     view.unmount();
   });
 
+  it("shows an explicit scoped failure after switching scope when aggregate loading fails", async () => {
+    const view = render(<App />);
+
+    expect(await screen.findByText("12")).toBeInTheDocument();
+    vi.mocked(fetchOverview).mockRejectedValueOnce(new Error("Metrics core unavailable"));
+
+    fireEvent.click(
+      within(screen.getByRole("toolbar", { name: "Dashboard time scope" })).getByRole("button", {
+        name: "This Week"
+      })
+    );
+
+    expect(await screen.findByText("Failed to load dashboard metrics.")).toBeInTheDocument();
+    expect(await screen.findByText("Metrics core unavailable")).toBeInTheDocument();
+    expect(screen.getByText("Scope")).toBeInTheDocument();
+    expect(screen.getAllByText("This Week").length).toBeGreaterThan(0);
+    expect(screen.queryByText("12")).not.toBeInTheDocument();
+
+    view.unmount();
+  });
+
   it("renders overview metrics, recent sessions, and a session timeline", async () => {
     const view = render(<App />);
 
