@@ -8,6 +8,7 @@ describe("ToolRankingTable", () => {
     render(
       <ToolRankingTable
         rows={[{ toolName: "Read", count: 6, failures: 0, averageDurationMs: 15 }]}
+        scope={{ mode: "calendar", range: "day" }}
         scopeLabel="Today"
         override={null}
         onOverrideChange={vi.fn()}

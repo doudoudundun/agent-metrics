@@ -1,7 +1,8 @@
-import { buildScopeLabel, DEFAULT_TIME_SCOPE, type TimeScopeSelection } from "../time-scope";
+import { buildScopeLabel, type TimeScopeSelection } from "../time-scope";
 
 type PanelScopeControlsProps = {
   panelName: string;
+  scope: TimeScopeSelection;
   scopeLabel: string;
   override: TimeScopeSelection | null;
   onOverrideChange: (next: TimeScopeSelection | null) => void;
@@ -9,11 +10,12 @@ type PanelScopeControlsProps = {
 
 export function PanelScopeControls({
   panelName,
+  scope,
   scopeLabel,
   override,
   onOverrideChange
 }: PanelScopeControlsProps) {
-  const range = override?.range ?? DEFAULT_TIME_SCOPE.range;
+  const value = override ?? scope;
 
   return (
     <div className="panel-scope-controls">
@@ -33,8 +35,8 @@ export function PanelScopeControls({
             }
 
             onOverrideChange({
+              ...value,
               mode: mode as TimeScopeSelection["mode"],
-              range
             });
           }}
         >
@@ -46,7 +48,7 @@ export function PanelScopeControls({
         <select
           aria-label={`${panelName} range`}
           disabled={!override || override.mode === "lifetime"}
-          value={range}
+          value={value.range}
           onChange={(event) => {
             if (!override) {
               return;

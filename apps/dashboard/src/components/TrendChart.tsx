@@ -13,12 +13,21 @@ import { PanelScopeControls } from "./PanelScopeControls";
 
 type TrendChartProps = {
   rows: ToolRow[];
+  scope: TimeScopeSelection;
   scopeLabel: string;
   override: TimeScopeSelection | null;
   onOverrideChange: (next: TimeScopeSelection | null) => void;
+  statusMessage?: string | null;
 };
 
-export function TrendChart({ rows, scopeLabel, override, onOverrideChange }: TrendChartProps) {
+export function TrendChart({
+  rows,
+  scope,
+  scopeLabel,
+  override,
+  onOverrideChange,
+  statusMessage
+}: TrendChartProps) {
   const data = [...rows]
     .sort((left, right) => right.count - left.count || left.toolName.localeCompare(right.toolName))
     .slice(0, 5)
@@ -35,6 +44,7 @@ export function TrendChart({ rows, scopeLabel, override, onOverrideChange }: Tre
           <h2>Activity Snapshot</h2>
           <PanelScopeControls
             panelName="Activity Snapshot"
+            scope={scope}
             scopeLabel={scopeLabel}
             override={override}
             onOverrideChange={onOverrideChange}
@@ -45,6 +55,7 @@ export function TrendChart({ rows, scopeLabel, override, onOverrideChange }: Tre
           <strong>{totalCalls} calls total</strong>
         </div>
       </div>
+      {statusMessage ? <p className="panel-scope-message">{statusMessage}</p> : null}
       <div className="chart-frame">
         <ResponsiveContainer width="100%" height={250}>
           <BarChart data={data} barCategoryGap={28}>

@@ -17,6 +17,7 @@ describe("TrendChart", () => {
   it("shows the total calls across the top five tools", () => {
     render(
       <TrendChart
+        scope={{ mode: "calendar", range: "day" }}
         scopeLabel="Today"
         override={null}
         onOverrideChange={vi.fn()}

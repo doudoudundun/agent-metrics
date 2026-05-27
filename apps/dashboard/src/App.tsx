@@ -26,10 +26,22 @@ type DashboardState = {
   tools: ToolRow[];
 };
 
+type PanelToolsState = {
+  rows: ToolRow[] | null;
+  loading: boolean;
+  errorMessage: string | null;
+};
+
 const INITIAL_STATE: DashboardState = {
   overview: null,
   sessions: [],
   tools: []
+};
+
+const INITIAL_PANEL_TOOLS_STATE: PanelToolsState = {
+  rows: null,
+  loading: false,
+  errorMessage: null
 };
 
 const TrendChart = lazy(async () => {
@@ -43,8 +55,8 @@ export function App() {
   const [globalScope, setGlobalScope] = useState<TimeScopeSelection>(DEFAULT_TIME_SCOPE);
   const [trendOverride, setTrendOverride] = useState<TimeScopeSelection | null>(null);
   const [rankingOverride, setRankingOverride] = useState<TimeScopeSelection | null>(null);
-  const [trendTools, setTrendTools] = useState<ToolRow[] | null>(null);
-  const [rankingTools, setRankingTools] = useState<ToolRow[] | null>(null);
+  const [trendTools, setTrendTools] = useState<PanelToolsState>(INITIAL_PANEL_TOOLS_STATE);
+  const [rankingTools, setRankingTools] = useState<PanelToolsState>(INITIAL_PANEL_TOOLS_STATE);
   const [selectedSession, setSelectedSession] = useState<SessionDetailResponse | null>(null);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [loadErrorMessage, setLoadErrorMessage] = useState<string | null>(null);
@@ -114,12 +126,16 @@ export function App() {
 
   useEffect(() => {
     if (!trendOverride) {
-      setTrendTools(null);
+      setTrendTools(INITIAL_PANEL_TOOLS_STATE);
       return;
     }
 
     let active = true;
-    setTrendTools([]);
+    setTrendTools((current) => ({
+      ...current,
+      loading: true,
+      errorMessage: null
+    }));
 
     const loadTools = async () => {
       try {
@@ -130,15 +146,23 @@ export function App() {
         }
 
         startTransition(() => {
-          setTrendTools(tools.rows);
+          setTrendTools({
+            rows: tools.rows,
+            loading: false,
+            errorMessage: null
+          });
         });
-      } catch {
+      } catch (error) {
         if (!active) {
           return;
         }
 
         startTransition(() => {
-          setTrendTools([]);
+          setTrendTools((current) => ({
+            ...current,
+            loading: false,
+            errorMessage: messageFromError(error)
+          }));
         });
       }
     };
@@ -156,12 +180,16 @@ export function App() {
 
   useEffect(() => {
     if (!rankingOverride) {
-      setRankingTools(null);
+      setRankingTools(INITIAL_PANEL_TOOLS_STATE);
       return;
     }
 
     let active = true;
-    setRankingTools([]);
+    setRankingTools((current) => ({
+      ...current,
+      loading: true,
+      errorMessage: null
+    }));
 
     const loadTools = async () => {
       try {
@@ -172,15 +200,23 @@ export function App() {
         }
 
         startTransition(() => {
-          setRankingTools(tools.rows);
+          setRankingTools({
+            rows: tools.rows,
+            loading: false,
+            errorMessage: null
+          });
         });
-      } catch {
+      } catch (error) {
         if (!active) {
           return;
         }
 
         startTransition(() => {
-          setRankingTools([]);
+          setRankingTools((current) => ({
+            ...current,
+            loading: false,
+            errorMessage: messageFromError(error)
+          }));
         });
       }
     };
@@ -288,6 +324,18 @@ export function App() {
   }
 
   const lastUpdated = formatDateTime(dashboard.overview.updatedAt);
+  const trendRows = trendOverride ? (trendTools.rows ?? dashboard.tools) : dashboard.tools;
+  const rankingRows = rankingOverride ? (rankingTools.rows ?? dashboard.tools) : dashboard.tools;
+  const trendStatusMessage = buildPanelStatusMessage(
+    "Activity Snapshot",
+    trendOverride,
+    trendTools
+  );
+  const rankingStatusMessage = buildPanelStatusMessage(
+    "Tool Rankings",
+    rankingOverride,
+    rankingTools
+  );
 
   return (
     <main className="app-shell">
@@ -339,10 +387,12 @@ export function App() {
           }
         >
           <TrendChart
-            rows={trendOverride ? (trendTools ?? []) : dashboard.tools}
+            rows={trendRows}
+            scope={globalScope}
             scopeLabel={scopeLabel}
             override={trendOverride}
             onOverrideChange={setTrendOverride}
+            statusMessage={trendStatusMessage}
           />
         </Suspense>
         <div className="surface-stack">
@@ -357,14 +407,42 @@ export function App() {
 
       <section className="surface-stack">
         <ToolRankingTable
-          rows={rankingOverride ? (rankingTools ?? []) : dashboard.tools}
+          rows={rankingRows}
+          scope={globalScope}
           scopeLabel={scopeLabel}
           override={rankingOverride}
           onOverrideChange={setRankingOverride}
+          statusMessage={rankingStatusMessage}
         />
       </section>
     </main>
   );
+}
+
+function buildPanelStatusMessage(
+  panelName: string,
+  override: TimeScopeSelection | null,
+  state: PanelToolsState
+): string | null {
+  if (!override) {
+    return null;
+  }
+
+  if (state.errorMessage) {
+    return `${panelName} override failed: ${state.errorMessage}`;
+  }
+
+  if (state.loading) {
+    return state.rows
+      ? `Refreshing ${panelName} override...`
+      : `Loading ${panelName} override...`;
+  }
+
+  return null;
+}
+
+function messageFromError(error: unknown): string {
+  return error instanceof Error ? error.message : "Failed to refresh scoped tool data.";
 }
 
 function formatDateTime(value: string): string | null {

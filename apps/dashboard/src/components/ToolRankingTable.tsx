@@ -4,16 +4,20 @@ import { PanelScopeControls } from "./PanelScopeControls";
 
 type ToolRankingTableProps = {
   rows: ToolRow[];
+  scope: TimeScopeSelection;
   scopeLabel: string;
   override: TimeScopeSelection | null;
   onOverrideChange: (next: TimeScopeSelection | null) => void;
+  statusMessage?: string | null;
 };
 
 export function ToolRankingTable({
   rows,
+  scope,
   scopeLabel,
   override,
-  onOverrideChange
+  onOverrideChange,
+  statusMessage
 }: ToolRankingTableProps) {
   return (
     <section className="panel table-panel">
@@ -22,6 +26,7 @@ export function ToolRankingTable({
           <h2>Tool Rankings</h2>
           <PanelScopeControls
             panelName="Tool Rankings"
+            scope={scope}
             scopeLabel={scopeLabel}
             override={override}
             onOverrideChange={onOverrideChange}
@@ -29,6 +34,7 @@ export function ToolRankingTable({
         </div>
         <span>{rows.length} tracked</span>
       </div>
+      {statusMessage ? <p className="panel-scope-message">{statusMessage}</p> : null}
       <div className="table-shell">
         <table>
           <thead>

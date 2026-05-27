@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { fetchOverview, fetchSessions, fetchTools } from "./api";
@@ -205,6 +205,156 @@ describe("App", () => {
     expect(fetchTools).toHaveBeenCalledWith({ mode: "rolling", range: "week" });
     expect(fetchOverview).not.toHaveBeenCalled();
     expect(fetchSessions).not.toHaveBeenCalled();
+
+    view.unmount();
+  });
+
+  it("inherits the current global range when enabling an activity snapshot override", async () => {
+    vi.mocked(fetchOverview).mockImplementation(async (scope) => ({
+      mode: scope?.mode ?? "calendar",
+      range: scope?.range ?? "day",
+      timezone: "Asia/Shanghai",
+      windowStart: "2026-05-26T16:00:00.000Z",
+      windowEnd: "2026-05-27T10:30:00.000Z",
+      updatedAt: "2026-05-27T10:30:00.000Z",
+      sessionCount: 3,
+      totalToolCalls: 12,
+      successfulExecutions: 10,
+      failedExecutions: 2,
+      successRate: 0.8333,
+      editOperationCount: 4,
+      affectedFileCount: 7,
+      insertions: 42,
+      deletions: 8
+    }));
+    vi.mocked(fetchTools).mockImplementation(async (scope) => ({
+      mode: scope?.mode ?? "calendar",
+      range: scope?.range ?? "day",
+      timezone: "Asia/Shanghai",
+      windowStart: "2026-05-26T16:00:00.000Z",
+      windowEnd: "2026-05-27T10:30:00.000Z",
+      updatedAt: "2026-05-27T10:30:00.000Z",
+      rows: [{ toolName: "Read", count: scope?.range === "week" ? 8 : 6, failures: 0, averageDurationMs: 15 }]
+    }));
+
+    const view = render(<App />);
+
+    expect(await screen.findByRole("region", { name: "Overview metrics for Today" })).toBeInTheDocument();
+    fireEvent.click(
+      within(screen.getByRole("toolbar", { name: "Dashboard time scope" })).getByRole("button", {
+        name: "This Week"
+      })
+    );
+    expect(await screen.findByRole("region", { name: "Overview metrics for This Week" })).toBeInTheDocument();
+    vi.mocked(fetchTools).mockClear();
+
+    fireEvent.change(await screen.findByLabelText("Activity Snapshot mode"), {
+      target: { value: "rolling" }
+    });
+
+    await waitFor(() => {
+      expect(fetchTools).toHaveBeenCalledWith({ mode: "rolling", range: "week" });
+    });
+
+    view.unmount();
+  });
+
+  it("keeps global activity snapshot data visible when the first override fetch fails", async () => {
+    vi.mocked(fetchOverview).mockImplementation(async (scope) => ({
+      mode: scope?.mode ?? "calendar",
+      range: scope?.range ?? "day",
+      timezone: "Asia/Shanghai",
+      windowStart: "2026-05-26T16:00:00.000Z",
+      windowEnd: "2026-05-27T10:30:00.000Z",
+      updatedAt: "2026-05-27T10:30:00.000Z",
+      sessionCount: 3,
+      totalToolCalls: 12,
+      successfulExecutions: 10,
+      failedExecutions: 2,
+      successRate: 0.8333,
+      editOperationCount: 4,
+      affectedFileCount: 7,
+      insertions: 42,
+      deletions: 8
+    }));
+    vi.mocked(fetchTools).mockImplementation(async (scope) => {
+      if (scope?.mode === "rolling" && scope.range === "week") {
+        throw new Error("Tool scope unavailable");
+      }
+
+      return {
+        mode: scope?.mode ?? "calendar",
+        range: scope?.range ?? "day",
+        timezone: "Asia/Shanghai",
+        windowStart: "2026-05-26T16:00:00.000Z",
+        windowEnd: "2026-05-27T10:30:00.000Z",
+        updatedAt: "2026-05-27T10:30:00.000Z",
+        rows: [{ toolName: "Read", count: scope?.range === "week" ? 8 : 6, failures: 0, averageDurationMs: 15 }]
+      };
+    });
+
+    const view = render(<App />);
+
+    expect(await screen.findByText("6 calls total")).toBeInTheDocument();
+    fireEvent.click(
+      within(screen.getByRole("toolbar", { name: "Dashboard time scope" })).getByRole("button", {
+        name: "This Week"
+      })
+    );
+    expect(await screen.findByText("8 calls total")).toBeInTheDocument();
+
+    fireEvent.change(await screen.findByLabelText("Activity Snapshot mode"), {
+      target: { value: "rolling" }
+    });
+
+    expect(await screen.findByText("Activity Snapshot override failed: Tool scope unavailable")).toBeInTheDocument();
+    expect(screen.getByText("8 calls total")).toBeInTheDocument();
+    expect(screen.queryByText("0 calls total")).not.toBeInTheDocument();
+
+    view.unmount();
+  });
+
+  it("lets tool rankings override the global scope without changing the activity snapshot", async () => {
+    vi.mocked(fetchTools).mockImplementation(async (scope) => {
+      if (scope?.mode === "rolling" && scope.range === "month") {
+        return {
+          mode: "rolling",
+          range: "month",
+          timezone: "Asia/Shanghai",
+          windowStart: "2026-04-27T10:30:00.000Z",
+          windowEnd: "2026-05-27T10:30:00.000Z",
+          updatedAt: "2026-05-27T10:30:00.000Z",
+          rows: [
+            { toolName: "Read", count: 9, failures: 0, averageDurationMs: 15 },
+            { toolName: "Edit", count: 4, failures: 0, averageDurationMs: 12 }
+          ]
+        };
+      }
+
+      return {
+        mode: "calendar",
+        range: "day",
+        timezone: "Asia/Shanghai",
+        windowStart: "2026-05-26T16:00:00.000Z",
+        windowEnd: "2026-05-27T10:30:00.000Z",
+        updatedAt: "2026-05-27T10:30:00.000Z",
+        rows: [{ toolName: "Read", count: 6, failures: 0, averageDurationMs: 15 }]
+      };
+    });
+
+    const view = render(<App />);
+
+    expect(await screen.findByText("6 calls total")).toBeInTheDocument();
+
+    fireEvent.change(await screen.findByLabelText("Tool Rankings mode"), {
+      target: { value: "rolling" }
+    });
+    fireEvent.change(screen.getByLabelText("Tool Rankings range"), {
+      target: { value: "month" }
+    });
+
+    expect(await screen.findByText("2 tracked")).toBeInTheDocument();
+    expect(screen.getByText("6 calls total")).toBeInTheDocument();
 
     view.unmount();
   });

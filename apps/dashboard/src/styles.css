@@ -382,6 +382,15 @@ body::before {
   background: rgba(209, 255, 77, 0.1);
 }
 
+.panel-scope-message {
+  position: relative;
+  z-index: 1;
+  margin: -4px 0 14px;
+  color: #ffbd7a;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 12px;
+}
+
 .chart-summary {
   display: grid;
   justify-items: end;
