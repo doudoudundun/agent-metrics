@@ -15,6 +15,13 @@ export type AggregateMeta = {
 
 export type OverviewResponse = {
   sessionCount: number;
+  turnCount: number;
+  responseCount: number;
+  totalTokens: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
   totalToolCalls: number;
   successfulExecutions: number;
   failedExecutions: number;
@@ -35,6 +42,9 @@ export type ToolRow = {
 export type SessionRow = {
   sessionId: string;
   workspacePath: string;
+  turnCount: number;
+  totalTokens: number;
+  lastModel: string | null;
 };
 
 export type SessionDetailResponse = {

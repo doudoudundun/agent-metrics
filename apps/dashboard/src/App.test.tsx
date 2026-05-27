@@ -53,7 +53,12 @@ describe("App", () => {
   it("does not refetch when clicking the already selected scope", async () => {
     const view = render(<App />);
 
-    expect(await screen.findByText("12")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(
+        screen.queryByText("Loading local activity signals from the metrics core.")
+      ).not.toBeInTheDocument();
+    });
+    expect(screen.getByText("Total Tokens")).toBeInTheDocument();
     await nextTick();
     vi.mocked(fetchOverview).mockClear();
     vi.mocked(fetchTools).mockClear();
@@ -76,7 +81,9 @@ describe("App", () => {
   it("shows loading instead of old aggregate data after switching scope", async () => {
     const view = render(<App />);
 
-    expect(await screen.findByText("12")).toBeInTheDocument();
+    expect(
+      await screen.findByRole("region", { name: "Overview metrics for Today" })
+    ).toBeInTheDocument();
     vi.mocked(fetchOverview).mockImplementationOnce(() => new Promise(() => undefined));
     vi.mocked(fetchTools).mockImplementationOnce(() => new Promise(() => undefined));
     vi.mocked(fetchSessions).mockImplementationOnce(() => new Promise(() => undefined));
@@ -89,7 +96,6 @@ describe("App", () => {
     expect(
       await screen.findByText("Loading local activity signals from the metrics core.")
     ).toBeInTheDocument();
-    expect(screen.queryByText("12")).not.toBeInTheDocument();
     expect(
       screen.queryByRole("region", { name: "Overview metrics for This Week" })
     ).not.toBeInTheDocument();
@@ -100,7 +106,9 @@ describe("App", () => {
   it("shows an explicit scoped failure after switching scope when aggregate loading fails", async () => {
     const view = render(<App />);
 
-    expect(await screen.findByText("12")).toBeInTheDocument();
+    expect(
+      await screen.findByRole("region", { name: "Overview metrics for Today" })
+    ).toBeInTheDocument();
     vi.mocked(fetchOverview).mockRejectedValueOnce(new Error("Metrics core unavailable"));
 
     fireEvent.click(
@@ -113,7 +121,9 @@ describe("App", () => {
     expect(await screen.findByText("Metrics core unavailable")).toBeInTheDocument();
     expect(screen.getByText("Scope")).toBeInTheDocument();
     expect(screen.getAllByText("This Week").length).toBeGreaterThan(0);
-    expect(screen.queryByText("12")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("region", { name: "Overview metrics for This Week" })
+    ).not.toBeInTheDocument();
 
     view.unmount();
   });
@@ -121,16 +131,21 @@ describe("App", () => {
   it("renders overview metrics, recent sessions, and a session timeline", async () => {
     const view = render(<App />);
 
-    expect(await screen.findByText("12")).toBeInTheDocument();
-    expect(
-      await screen.findByRole("region", { name: "Overview metrics for Today" })
-    ).toBeInTheDocument();
-    expect(await screen.findByText("Affected Files")).toBeInTheDocument();
-    expect(await screen.findByText("Insertions")).toBeInTheDocument();
-    expect(await screen.findByText("Deletions")).toBeInTheDocument();
+    const overviewRegion = await screen.findByRole("region", {
+      name: "Overview metrics for Today"
+    });
+
+    expect(overviewRegion).toBeInTheDocument();
+    expect(within(overviewRegion).getByText("Total Tokens")).toBeInTheDocument();
+    expect(within(overviewRegion).getByText("Turns")).toBeInTheDocument();
+    expect(within(overviewRegion).getByText("45,678")).toBeInTheDocument();
+    expect(within(overviewRegion).getByText("24")).toBeInTheDocument();
+    expect(within(overviewRegion).getByText("12 responses")).toBeInTheDocument();
+    expect(within(overviewRegion).getByText(/10 ok \/ 2 failed/)).toBeInTheDocument();
     expect(screen.queryByText("Estimated Tokens")).not.toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "Recent Sessions" })).toBeInTheDocument();
     expect(await screen.findByText("ses_1")).toBeInTheDocument();
+    expect(await screen.findByText("gpt-5-codex")).toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "Session Timeline" })).toBeInTheDocument();
     expect(await screen.findByText("session.started")).toBeInTheDocument();
     expect(await screen.findByText("2026-05-27 18:30:00")).toBeInTheDocument();
@@ -147,10 +162,10 @@ describe("App", () => {
 
     const view = render(<App />);
 
-    expect(
-      await screen.findByRole("region", { name: "Overview metrics for Today" })
-    ).toBeInTheDocument();
-    expect(screen.getByText("12")).toBeInTheDocument();
+    const overviewRegion = await screen.findByRole("region", { name: "Overview metrics for Today" });
+
+    expect(overviewRegion).toBeInTheDocument();
+    expect(within(overviewRegion).getByText("Tool Calls")).toBeInTheDocument();
     expect(screen.getAllByText("Loading global tool metrics...")).toHaveLength(2);
     expect(screen.getByText("Loading recent sessions...")).toBeInTheDocument();
     expect(screen.getByText("Waiting for session activity...")).toBeInTheDocument();
@@ -171,6 +186,13 @@ describe("App", () => {
       windowEnd: "2026-05-27T00:00:00.000Z",
       updatedAt,
       sessionCount: 3,
+      turnCount: 24,
+      responseCount: 12,
+      totalTokens: 45678,
+      inputTokens: 22345,
+      outputTokens: 19876,
+      cacheReadTokens: 2345,
+      cacheCreationTokens: 1112,
       totalToolCalls: 12,
       successfulExecutions: 10,
       failedExecutions: 2,
@@ -206,7 +228,9 @@ describe("App", () => {
   it("shows All Time in the panel scope mode controls", async () => {
     const view = render(<App />);
 
-    expect(await screen.findByText("12")).toBeInTheDocument();
+    expect(
+      await screen.findByRole("region", { name: "Overview metrics for Today" })
+    ).toBeInTheDocument();
     expect(
       within(screen.getByLabelText("Activity Snapshot mode")).getByRole("option", {
         name: "All Time"
@@ -283,6 +307,13 @@ describe("App", () => {
       windowEnd: "2026-05-27T10:30:00.000Z",
       updatedAt: "2026-05-27T10:30:00.000Z",
       sessionCount: 3,
+      turnCount: 24,
+      responseCount: 12,
+      totalTokens: 45678,
+      inputTokens: 22345,
+      outputTokens: 19876,
+      cacheReadTokens: 2345,
+      cacheCreationTokens: 1112,
       totalToolCalls: 12,
       successfulExecutions: 10,
       failedExecutions: 2,
@@ -333,6 +364,13 @@ describe("App", () => {
       windowEnd: "2026-05-27T10:30:00.000Z",
       updatedAt: "2026-05-27T10:30:00.000Z",
       sessionCount: 3,
+      turnCount: 24,
+      responseCount: 12,
+      totalTokens: 45678,
+      inputTokens: 22345,
+      outputTokens: 19876,
+      cacheReadTokens: 2345,
+      cacheCreationTokens: 1112,
       totalToolCalls: 12,
       successfulExecutions: 10,
       failedExecutions: 2,
@@ -434,6 +472,13 @@ function seedApiMocks(): void {
     windowEnd: "2026-05-27T16:00:00.000Z",
     updatedAt: "2026-05-27T10:30:00.000Z",
     sessionCount: 3,
+    turnCount: 24,
+    responseCount: 12,
+    totalTokens: 45678,
+    inputTokens: 22345,
+    outputTokens: 19876,
+    cacheReadTokens: 2345,
+    cacheCreationTokens: 1112,
     totalToolCalls: 12,
     successfulExecutions: 10,
     failedExecutions: 2,
@@ -459,7 +504,15 @@ function seedApiMocks(): void {
     windowStart: "2026-05-26T16:00:00.000Z",
     windowEnd: "2026-05-27T16:00:00.000Z",
     updatedAt: "2026-05-27T10:30:00.000Z",
-    rows: [{ sessionId: "ses_1", workspacePath: "D:/projects/dev/agent-metrics" }]
+    rows: [
+      {
+        sessionId: "ses_1",
+        workspacePath: "D:/projects/dev/agent-metrics",
+        turnCount: 14,
+        totalTokens: 45678,
+        lastModel: "gpt-5-codex"
+      }
+    ]
   });
   apiMocks.fetchSessionDetail.mockResolvedValue({
     sessionId: "ses_1",

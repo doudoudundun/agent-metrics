@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type { OverviewResponse } from "../api";
 
 type KpiGridProps = {
@@ -6,55 +7,61 @@ type KpiGridProps = {
 };
 
 const NUMBER_FORMAT = new Intl.NumberFormat("en-US");
-const PERCENT_FORMAT = new Intl.NumberFormat("en-US", {
-  maximumFractionDigits: 1,
-  style: "percent"
-});
 
 export function KpiGrid({ overview, scopeLabel }: KpiGridProps) {
-  const primaryItems = [
+  const primaryItems: Array<{
+    label: string;
+    value: string;
+    tone: string;
+    meta: ReactNode;
+  }> = [
+    {
+      label: "Total Tokens",
+      value: NUMBER_FORMAT.format(overview.totalTokens),
+      tone: "signal",
+      meta: `${NUMBER_FORMAT.format(overview.inputTokens)} in / ${NUMBER_FORMAT.format(overview.outputTokens)} out`
+    },
+    {
+      label: "Turns",
+      value: NUMBER_FORMAT.format(overview.turnCount),
+      tone: "calm",
+      meta: `${NUMBER_FORMAT.format(overview.responseCount)} responses`
+    },
     {
       label: "Tool Calls",
       value: NUMBER_FORMAT.format(overview.totalToolCalls),
-      tone: "signal",
-      meta: `${NUMBER_FORMAT.format(overview.successfulExecutions)} ok / ${NUMBER_FORMAT.format(overview.failedExecutions)} failed`
-    },
-    {
-      label: "Success Rate",
-      value: PERCENT_FORMAT.format(overview.successRate),
-      tone: "calm",
-      meta: `${NUMBER_FORMAT.format(overview.successfulExecutions)} successful runs`
+      tone: "steady",
+      meta: (
+        <>
+          {NUMBER_FORMAT.format(overview.successfulExecutions)} ok /{" "}
+          {NUMBER_FORMAT.format(overview.failedExecutions)} failed
+        </>
+      )
     },
     {
       label: "Edit Operations",
       value: NUMBER_FORMAT.format(overview.editOperationCount),
-      tone: "steady",
-      meta: `+${NUMBER_FORMAT.format(overview.insertions)} / -${NUMBER_FORMAT.format(overview.deletions)}`
-    },
-    {
-      label: "Affected Files",
-      value: NUMBER_FORMAT.format(overview.affectedFileCount),
       tone: "signal",
-      meta: `${scopeLabel} footprint`
+      meta: `${NUMBER_FORMAT.format(overview.affectedFileCount)} files, +${NUMBER_FORMAT.format(overview.insertions)} / -${NUMBER_FORMAT.format(overview.deletions)}`
     }
   ] as const;
 
   const secondaryItems = [
     {
+      label: "Cache Read",
+      value: NUMBER_FORMAT.format(overview.cacheReadTokens)
+    },
+    {
+      label: "Cache Creation",
+      value: NUMBER_FORMAT.format(overview.cacheCreationTokens)
+    },
+    {
       label: "Successful Runs",
       value: NUMBER_FORMAT.format(overview.successfulExecutions)
     },
     {
-      label: "Failed Runs",
-      value: NUMBER_FORMAT.format(overview.failedExecutions)
-    },
-    {
-      label: "Insertions",
-      value: NUMBER_FORMAT.format(overview.insertions)
-    },
-    {
-      label: "Deletions",
-      value: NUMBER_FORMAT.format(overview.deletions)
+      label: "Scope",
+      value: scopeLabel
     }
   ] as const;
 

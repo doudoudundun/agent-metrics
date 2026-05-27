@@ -8,6 +8,8 @@ type RecentSessionsTableProps = {
   onSelect: (sessionId: string) => void;
 };
 
+const NUMBER_FORMAT = new Intl.NumberFormat("en-US");
+
 export function RecentSessionsTable({
   errorMessage,
   loading = false,
@@ -28,6 +30,9 @@ export function RecentSessionsTable({
               <tr>
                 <th>Session</th>
                 <th>Workspace</th>
+                <th>Turns</th>
+                <th>Tokens</th>
+                <th>Model</th>
               </tr>
             </thead>
             <tbody>
@@ -43,6 +48,9 @@ export function RecentSessionsTable({
                     </button>
                   </td>
                   <td className="workspace-cell">{row.workspacePath}</td>
+                  <td>{NUMBER_FORMAT.format(row.turnCount)}</td>
+                  <td>{NUMBER_FORMAT.format(row.totalTokens)}</td>
+                  <td>{row.lastModel ?? "unknown"}</td>
                 </tr>
               ))}
             </tbody>

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fetchOverview, fetchSessions, fetchTools } from "./api";
+import { fetchOverview, fetchSessions, fetchTools, type OverviewResponse } from "./api";
 
 function stubFetchJson(payload: unknown): void {
   vi.stubGlobal(
@@ -25,6 +25,13 @@ describe("api client", () => {
       windowEnd: "2026-05-27T10:30:00.000Z",
       updatedAt: "2026-05-27T10:30:00.000Z",
       sessionCount: 0,
+      turnCount: 0,
+      responseCount: 0,
+      totalTokens: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
       totalToolCalls: 0,
       successfulExecutions: 0,
       failedExecutions: 0,
@@ -38,6 +45,36 @@ describe("api client", () => {
     await fetchOverview({ mode: "rolling", range: "week" });
 
     expect(fetch).toHaveBeenCalledWith("/api/overview?mode=rolling&range=week");
+  });
+
+  it("accepts token-aware overview payloads", async () => {
+    const payload: OverviewResponse = {
+      mode: "calendar",
+      range: "day",
+      timezone: "Asia/Shanghai",
+      windowStart: "2026-05-26T16:00:00.000Z",
+      windowEnd: "2026-05-27T10:30:00.000Z",
+      updatedAt: "2026-05-27T10:30:00.000Z",
+      sessionCount: 3,
+      turnCount: 24,
+      responseCount: 12,
+      totalTokens: 45678,
+      inputTokens: 22345,
+      outputTokens: 19876,
+      cacheReadTokens: 2345,
+      cacheCreationTokens: 1112,
+      totalToolCalls: 12,
+      successfulExecutions: 10,
+      failedExecutions: 2,
+      successRate: 0.8333,
+      editOperationCount: 4,
+      affectedFileCount: 7,
+      insertions: 42,
+      deletions: 8
+    };
+
+    stubFetchJson(payload);
+    await expect(fetchOverview()).resolves.toEqual(payload);
   });
 
   it("returns scoped tool envelopes", async () => {
@@ -97,7 +134,15 @@ describe("api client", () => {
   });
 
   it("returns scoped session envelopes", async () => {
-    const rows = [{ sessionId: "ses_1", workspacePath: "D:/projects/dev/agent-metrics" }];
+    const rows = [
+      {
+        sessionId: "ses_1",
+        workspacePath: "D:/projects/dev/agent-metrics",
+        turnCount: 9,
+        totalTokens: 3210,
+        lastModel: null
+      }
+    ];
     const scopeMeta = {
       mode: "calendar" as const,
       range: "day" as const,
@@ -112,7 +157,15 @@ describe("api client", () => {
   });
 
   it("rejects legacy session arrays that omit scoped metadata", async () => {
-    const rows = [{ sessionId: "ses_1", workspacePath: "D:/projects/dev/agent-metrics" }];
+    const rows = [
+      {
+        sessionId: "ses_1",
+        workspacePath: "D:/projects/dev/agent-metrics",
+        turnCount: 9,
+        totalTokens: 3210,
+        lastModel: null
+      }
+    ];
 
     stubFetchJson(rows);
     await expect(fetchSessions()).rejects.toThrow(
@@ -122,7 +175,15 @@ describe("api client", () => {
 
   it("rejects malformed session envelopes with invalid scope values", async () => {
     stubFetchJson({
-      rows: [{ sessionId: "ses_1", workspacePath: "D:/projects/dev/agent-metrics" }],
+      rows: [
+        {
+          sessionId: "ses_1",
+          workspacePath: "D:/projects/dev/agent-metrics",
+          turnCount: 9,
+          totalTokens: 3210,
+          lastModel: null
+        }
+      ],
       mode: "custom",
       range: "year",
       timezone: "Asia/Shanghai",
@@ -138,7 +199,15 @@ describe("api client", () => {
 
   it("rejects session envelopes with invalid timestamp strings", async () => {
     stubFetchJson({
-      rows: [{ sessionId: "ses_1", workspacePath: "D:/projects/dev/agent-metrics" }],
+      rows: [
+        {
+          sessionId: "ses_1",
+          workspacePath: "D:/projects/dev/agent-metrics",
+          turnCount: 9,
+          totalTokens: 3210,
+          lastModel: null
+        }
+      ],
       mode: "calendar",
       range: "day",
       timezone: "Asia/Shanghai",
