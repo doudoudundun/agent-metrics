@@ -43,6 +43,7 @@ type ToolEventOverviewRow = {
 };
 
 type CodeEditOverviewRow = {
+  files_changed: string[];
   file_count: number;
   insertions: number;
   deletions: number;
@@ -147,10 +148,23 @@ function selectOverviewRows(
     .prepare<ToolEventOverviewRow>(`SELECT status, duration_ms FROM tool_events${toolWindow.whereSql}`)
     .all(...toolWindow.params);
   const codeEdits = db
-    .prepare<CodeEditOverviewRow>(
-      `SELECT file_count, insertions, deletions, edit_operation_count FROM code_edits${codeEditWindow.whereSql}`
+    .prepare<{
+      filesChanged: string;
+      file_count: number;
+      insertions: number;
+      deletions: number;
+      edit_operation_count: number;
+    }>(
+      `SELECT files_changed AS filesChanged, file_count, insertions, deletions, edit_operation_count FROM code_edits${codeEditWindow.whereSql}`
     )
-    .all(...codeEditWindow.params);
+    .all(...codeEditWindow.params)
+    .map((row) => ({
+      files_changed: parseFilesChanged(row.filesChanged),
+      file_count: row.file_count,
+      insertions: row.insertions,
+      deletions: row.deletions,
+      edit_operation_count: row.edit_operation_count
+    }));
 
   return {
     sessions,

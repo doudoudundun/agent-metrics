@@ -391,7 +391,7 @@ describe("core api", () => {
       failedExecutions: 1,
       successRate: 0.5,
       editOperationCount: 2,
-      affectedFileCount: 5,
+      affectedFileCount: 4,
       insertions: 5,
       deletions: 3,
       mode: "calendar",
@@ -416,7 +416,7 @@ describe("core api", () => {
     expect(lifetime.json()).toMatchObject({
       sessionCount: 3,
       totalToolCalls: 3,
-      affectedFileCount: 6,
+      affectedFileCount: 5,
       mode: "lifetime",
       range: "week",
       windowStart: null,

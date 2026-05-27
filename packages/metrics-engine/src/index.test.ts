@@ -9,7 +9,15 @@ describe("buildOverviewMetrics", () => {
         { status: "succeeded", duration_ms: 10 },
         { status: "failed", duration_ms: 30 }
       ],
-      codeEdits: [{ file_count: 2, insertions: 12, deletions: 4, edit_operation_count: 1 }]
+      codeEdits: [
+        {
+          files_changed: ["src/app.ts", "src/index.ts"],
+          file_count: 2,
+          insertions: 12,
+          deletions: 4,
+          edit_operation_count: 1
+        }
+      ]
     });
 
     expect(overview).toEqual({
@@ -43,5 +51,33 @@ describe("buildOverviewMetrics", () => {
       insertions: 0,
       deletions: 0
     });
+  });
+
+  it("dedupes repeated files across multiple edit events", () => {
+    const overview = buildOverviewMetrics({
+      sessions: [{ session_id: "ses_1" }],
+      toolEvents: [],
+      codeEdits: [
+        {
+          files_changed: ["src/shared.ts", "src/one.ts"],
+          file_count: 2,
+          insertions: 3,
+          deletions: 1,
+          edit_operation_count: 1
+        },
+        {
+          files_changed: ["src/shared.ts", "src/two.ts"],
+          file_count: 2,
+          insertions: 5,
+          deletions: 2,
+          edit_operation_count: 1
+        }
+      ]
+    });
+
+    expect(overview.affectedFileCount).toBe(3);
+    expect(overview.editOperationCount).toBe(2);
+    expect(overview.insertions).toBe(8);
+    expect(overview.deletions).toBe(3);
   });
 });
