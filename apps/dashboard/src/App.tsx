@@ -10,7 +10,13 @@ import {
 import { KpiGrid } from "./components/KpiGrid";
 import { RecentSessionsTable } from "./components/RecentSessionsTable";
 import { SessionTimelinePanel } from "./components/SessionTimelinePanel";
+import { TimeScopeToolbar } from "./components/TimeScopeToolbar";
 import { ToolRankingTable } from "./components/ToolRankingTable";
+import {
+  buildScopeLabel,
+  DEFAULT_TIME_SCOPE,
+  type TimeScopeSelection
+} from "./time-scope";
 import "./styles.css";
 
 type DashboardState = {
@@ -33,7 +39,7 @@ const TrendChart = lazy(async () => {
 
 export function App() {
   const [dashboard, setDashboard] = useState<DashboardState>(INITIAL_STATE);
-  const [lastUpdated, setLastUpdated] = useState<string | null>(null);
+  const [globalScope, setGlobalScope] = useState<TimeScopeSelection>(DEFAULT_TIME_SCOPE);
   const [selectedSession, setSelectedSession] = useState<SessionDetailResponse | null>(null);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [staleMessage, setStaleMessage] = useState<string | null>(null);
@@ -41,13 +47,6 @@ export function App() {
   const applyLoadedData = useEffectEvent((nextState: DashboardState) => {
     startTransition(() => {
       setDashboard(nextState);
-      setLastUpdated(
-        new Intl.DateTimeFormat("en-GB", {
-          hour: "2-digit",
-          minute: "2-digit",
-          second: "2-digit"
-        }).format(new Date())
-      );
       setStaleMessage(null);
     });
   });
@@ -68,9 +67,9 @@ export function App() {
     const loadDashboard = async () => {
       try {
         const [overview, tools, sessions] = await Promise.all([
-          fetchOverview(),
-          fetchTools(),
-          fetchSessions()
+          fetchOverview(globalScope),
+          fetchTools(globalScope),
+          fetchSessions(globalScope)
         ]);
 
         if (!active) {
@@ -79,8 +78,8 @@ export function App() {
 
         applyLoadedData({
           overview,
-          sessions,
-          tools
+          sessions: sessions.rows,
+          tools: tools.rows
         });
       } catch (error) {
         if (!active) {
@@ -101,7 +100,7 @@ export function App() {
       active = false;
       window.clearInterval(timer);
     };
-  }, [applyLoadError, applyLoadedData]);
+  }, [applyLoadError, applyLoadedData, globalScope]);
 
   useEffect(() => {
     if (dashboard.sessions.length === 0) {
@@ -154,6 +153,15 @@ export function App() {
     });
   });
 
+  const handleScopeChange = useEffectEvent((selection: TimeScopeSelection) => {
+    startTransition(() => {
+      setGlobalScope(selection);
+      setSelectedSession(null);
+      setSelectedSessionId(null);
+      setStaleMessage(null);
+    });
+  });
+
   if (!dashboard.overview) {
     return (
       <main className="app-shell">
@@ -161,10 +169,14 @@ export function App() {
           <div className="hero-eyebrow">Local Ops Console</div>
           <h1>Agent Metrics</h1>
           <p className="hero-copy">Loading local activity signals from the metrics core.</p>
+          <TimeScopeToolbar selection={globalScope} onChange={handleScopeChange} />
         </section>
       </main>
     );
   }
+
+  const scopeLabel = buildScopeLabel(globalScope);
+  const lastUpdated = formatDateTime(dashboard.overview.updatedAt);
 
   return (
     <main className="app-shell">
@@ -175,10 +187,15 @@ export function App() {
           Hooks-first telemetry for local agent sessions, real Claude Code tool usage, and code
           edit activity.
         </p>
+        <TimeScopeToolbar selection={globalScope} onChange={handleScopeChange} />
         <div className="status-row">
           <div className="status-pill" data-state={staleMessage ? "stale" : "fresh"}>
             <strong>Status</strong>
             <span>{staleMessage ? "Showing stale local data" : "Polling live local data"}</span>
+          </div>
+          <div className="status-pill">
+            <strong>Scope</strong>
+            <span>{scopeLabel}</span>
           </div>
           {lastUpdated ? (
             <div className="status-pill">
@@ -227,4 +244,23 @@ export function App() {
       </section>
     </main>
   );
+}
+
+function formatDateTime(value: string): string | null {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  const parts = [
+    date.getFullYear(),
+    date.getMonth() + 1,
+    date.getDate(),
+    date.getHours(),
+    date.getMinutes(),
+    date.getSeconds()
+  ].map((part) => String(part).padStart(2, "0"));
+
+  return `${parts[0]}-${parts[1]}-${parts[2]} ${parts[3]}:${parts[4]}:${parts[5]}`;
 }

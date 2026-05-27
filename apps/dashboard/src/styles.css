@@ -110,6 +110,47 @@ body::before {
   margin-top: 18px;
 }
 
+.time-scope-toolbar {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.time-scope-button {
+  min-height: 38px;
+  padding: 0 13px;
+  border: 1px solid rgba(16, 32, 48, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.5);
+  color: var(--ink);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition:
+    transform 160ms ease,
+    background 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.time-scope-button:hover {
+  transform: translateY(-1px);
+  border-color: rgba(16, 32, 48, 0.2);
+}
+
+.time-scope-button[data-selected="true"] {
+  border-color: rgba(209, 255, 77, 0.64);
+  background: var(--panel);
+  box-shadow: 0 12px 28px rgba(15, 31, 47, 0.18);
+  color: var(--signal);
+}
+
 .hero-actions {
   display: flex;
   flex-wrap: wrap;

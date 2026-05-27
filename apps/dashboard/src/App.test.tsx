@@ -2,6 +2,7 @@ import "@testing-library/jest-dom/vitest";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { App } from "./App";
+import { fetchOverview, fetchSessions, fetchTools } from "./api";
 
 class ResizeObserverMock {
   observe(): void {}
@@ -13,8 +14,14 @@ class ResizeObserverMock {
 
 vi.stubGlobal("ResizeObserver", ResizeObserverMock);
 
-vi.mock("./api", () => ({
-  fetchOverview: async () => ({
+const apiMocks = vi.hoisted(() => ({
+  fetchOverview: vi.fn(async () => ({
+    mode: "calendar",
+    range: "day",
+    timezone: "Asia/Shanghai",
+    windowStart: "2026-05-27T00:00:00",
+    windowEnd: "2026-05-28T00:00:00",
+    updatedAt: "2026-05-27T18:30:00",
     sessionCount: 3,
     totalToolCalls: 12,
     successfulExecutions: 10,
@@ -24,10 +31,26 @@ vi.mock("./api", () => ({
     affectedFileCount: 7,
     insertions: 42,
     deletions: 8
-  }),
-  fetchTools: async () => [{ toolName: "Read", count: 6, failures: 0, averageDurationMs: 15 }],
-  fetchSessions: async () => [{ sessionId: "ses_1", workspacePath: "D:/projects/dev/agent-metrics" }],
-  fetchSessionDetail: async () => ({
+  })),
+  fetchTools: vi.fn(async () => ({
+    mode: "calendar",
+    range: "day",
+    timezone: "Asia/Shanghai",
+    windowStart: "2026-05-27T00:00:00",
+    windowEnd: "2026-05-28T00:00:00",
+    updatedAt: "2026-05-27T18:30:00",
+    rows: [{ toolName: "Read", count: 6, failures: 0, averageDurationMs: 15 }]
+  })),
+  fetchSessions: vi.fn(async () => ({
+    mode: "calendar",
+    range: "day",
+    timezone: "Asia/Shanghai",
+    windowStart: "2026-05-27T00:00:00",
+    windowEnd: "2026-05-28T00:00:00",
+    updatedAt: "2026-05-27T18:30:00",
+    rows: [{ sessionId: "ses_1", workspacePath: "D:/projects/dev/agent-metrics" }]
+  })),
+  fetchSessionDetail: vi.fn(async () => ({
     sessionId: "ses_1",
     timeline: [
       {
@@ -49,8 +72,12 @@ vi.mock("./api", () => ({
         deletions: 0
       }
     ]
-  }),
-  buildExportUrl: (format: "csv" | "json") => `/api/exports/${format}`
+  })),
+  buildExportUrl: vi.fn((format: "csv" | "json") => `/api/exports/${format}`)
+}));
+
+vi.mock("./api", () => ({
+  ...apiMocks
 }));
 
 describe("App", () => {
@@ -66,6 +93,10 @@ describe("App", () => {
     expect(await screen.findByText("ses_1")).toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "Session Timeline" })).toBeInTheDocument();
     expect(await screen.findByText("session.started")).toBeInTheDocument();
+    expect(await screen.findByText("2026-05-27 18:30:00")).toBeInTheDocument();
+    expect(fetchOverview).toHaveBeenCalledWith({ mode: "calendar", range: "day" });
+    expect(fetchTools).toHaveBeenCalledWith({ mode: "calendar", range: "day" });
+    expect(fetchSessions).toHaveBeenCalledWith({ mode: "calendar", range: "day" });
 
     view.unmount();
   });
