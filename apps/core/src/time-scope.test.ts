@@ -31,6 +31,21 @@ describe("resolveTimeScope", () => {
     });
   });
 
+  it("uses the first day of the month for calendar month", () => {
+    const scope = resolveTimeScope(
+      { mode: "calendar", range: "month" },
+      { now, timezone: "Asia/Shanghai", offsetMinutes: 480 }
+    );
+
+    expect(scope).toMatchObject({
+      mode: "calendar",
+      range: "month",
+      timezone: "Asia/Shanghai",
+      windowStart: "2026-04-30T16:00:00.000Z",
+      windowEnd: "2026-05-27T10:30:00.000Z"
+    });
+  });
+
   it("treats rolling month as the last 30 days", () => {
     const scope = resolveTimeScope(
       { mode: "rolling", range: "month" },
