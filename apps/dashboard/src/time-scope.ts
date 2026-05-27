@@ -40,3 +40,7 @@ export function buildScopeSearchParams(selection: TimeScopeSelection): URLSearch
 
   return params;
 }
+
+export function isSameScope(left: TimeScopeSelection, right: TimeScopeSelection): boolean {
+  return left.mode === right.mode && left.range === right.range;
+}

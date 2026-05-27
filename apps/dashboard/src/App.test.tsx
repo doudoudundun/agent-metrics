@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom/vitest";
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { fetchOverview, fetchSessions, fetchTools } from "./api";
 
@@ -15,65 +15,11 @@ class ResizeObserverMock {
 vi.stubGlobal("ResizeObserver", ResizeObserverMock);
 
 const apiMocks = vi.hoisted(() => ({
-  fetchOverview: vi.fn(async () => ({
-    mode: "calendar",
-    range: "day",
-    timezone: "Asia/Shanghai",
-    windowStart: "2026-05-27T00:00:00",
-    windowEnd: "2026-05-28T00:00:00",
-    updatedAt: "2026-05-27T18:30:00",
-    sessionCount: 3,
-    totalToolCalls: 12,
-    successfulExecutions: 10,
-    failedExecutions: 2,
-    successRate: 0.8333,
-    editOperationCount: 4,
-    affectedFileCount: 7,
-    insertions: 42,
-    deletions: 8
-  })),
-  fetchTools: vi.fn(async () => ({
-    mode: "calendar",
-    range: "day",
-    timezone: "Asia/Shanghai",
-    windowStart: "2026-05-27T00:00:00",
-    windowEnd: "2026-05-28T00:00:00",
-    updatedAt: "2026-05-27T18:30:00",
-    rows: [{ toolName: "Read", count: 6, failures: 0, averageDurationMs: 15 }]
-  })),
-  fetchSessions: vi.fn(async () => ({
-    mode: "calendar",
-    range: "day",
-    timezone: "Asia/Shanghai",
-    windowStart: "2026-05-27T00:00:00",
-    windowEnd: "2026-05-28T00:00:00",
-    updatedAt: "2026-05-27T18:30:00",
-    rows: [{ sessionId: "ses_1", workspacePath: "D:/projects/dev/agent-metrics" }]
-  })),
-  fetchSessionDetail: vi.fn(async () => ({
-    sessionId: "ses_1",
-    timeline: [
-      {
-        type: "session.started",
-        toolName: "",
-        status: "started",
-        durationMs: 0,
-        filesChanged: [],
-        insertions: 0,
-        deletions: 0
-      },
-      {
-        type: "tool.succeeded",
-        toolName: "Read",
-        status: "succeeded",
-        durationMs: 12,
-        filesChanged: [],
-        insertions: 0,
-        deletions: 0
-      }
-    ]
-  })),
-  buildExportUrl: vi.fn((format: "csv" | "json") => `/api/exports/${format}`)
+  fetchOverview: vi.fn(),
+  fetchTools: vi.fn(),
+  fetchSessions: vi.fn(),
+  fetchSessionDetail: vi.fn(),
+  buildExportUrl: vi.fn()
 }));
 
 vi.mock("./api", () => ({
@@ -81,12 +27,72 @@ vi.mock("./api", () => ({
 }));
 
 describe("App", () => {
+  beforeEach(() => {
+    vi.mocked(fetchOverview).mockReset();
+    vi.mocked(fetchTools).mockReset();
+    vi.mocked(fetchSessions).mockReset();
+    apiMocks.fetchSessionDetail.mockReset();
+    apiMocks.buildExportUrl.mockReset();
+    seedApiMocks();
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
   it("renders the selected scope label while overview data is loading", () => {
     vi.mocked(fetchOverview).mockImplementationOnce(() => new Promise(() => undefined));
     const view = render(<App />);
 
     expect(screen.getByText("Scope")).toBeInTheDocument();
     expect(screen.getAllByText("Today").length).toBeGreaterThan(0);
+
+    view.unmount();
+  });
+
+  it("does not refetch when clicking the already selected scope", async () => {
+    const view = render(<App />);
+
+    expect(await screen.findByText("12")).toBeInTheDocument();
+    await nextTick();
+    vi.mocked(fetchOverview).mockClear();
+    vi.mocked(fetchTools).mockClear();
+    vi.mocked(fetchSessions).mockClear();
+
+    fireEvent.click(
+      within(screen.getByRole("toolbar", { name: "Dashboard time scope" })).getByRole("button", {
+        name: "Today"
+      })
+    );
+    await nextTick();
+
+    expect(fetchOverview).not.toHaveBeenCalled();
+    expect(fetchTools).not.toHaveBeenCalled();
+    expect(fetchSessions).not.toHaveBeenCalled();
+
+    view.unmount();
+  });
+
+  it("shows loading instead of old aggregate data after switching scope", async () => {
+    const view = render(<App />);
+
+    expect(await screen.findByText("12")).toBeInTheDocument();
+    vi.mocked(fetchOverview).mockImplementationOnce(() => new Promise(() => undefined));
+    vi.mocked(fetchTools).mockImplementationOnce(() => new Promise(() => undefined));
+    vi.mocked(fetchSessions).mockImplementationOnce(() => new Promise(() => undefined));
+
+    fireEvent.click(
+      within(screen.getByRole("toolbar", { name: "Dashboard time scope" })).getByRole("button", {
+        name: "This Week"
+      })
+    );
+    expect(
+      await screen.findByText("Loading local activity signals from the metrics core.")
+    ).toBeInTheDocument();
+    expect(screen.queryByText("12")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("region", { name: "Overview metrics for This Week" })
+    ).not.toBeInTheDocument();
 
     view.unmount();
   });
@@ -129,3 +135,71 @@ describe("App", () => {
     view.unmount();
   });
 });
+
+function seedApiMocks(): void {
+  vi.mocked(fetchOverview).mockResolvedValue({
+    mode: "calendar",
+    range: "day",
+    timezone: "Asia/Shanghai",
+    windowStart: "2026-05-27T00:00:00",
+    windowEnd: "2026-05-28T00:00:00",
+    updatedAt: "2026-05-27T18:30:00",
+    sessionCount: 3,
+    totalToolCalls: 12,
+    successfulExecutions: 10,
+    failedExecutions: 2,
+    successRate: 0.8333,
+    editOperationCount: 4,
+    affectedFileCount: 7,
+    insertions: 42,
+    deletions: 8
+  });
+  vi.mocked(fetchTools).mockResolvedValue({
+    mode: "calendar",
+    range: "day",
+    timezone: "Asia/Shanghai",
+    windowStart: "2026-05-27T00:00:00",
+    windowEnd: "2026-05-28T00:00:00",
+    updatedAt: "2026-05-27T18:30:00",
+    rows: [{ toolName: "Read", count: 6, failures: 0, averageDurationMs: 15 }]
+  });
+  vi.mocked(fetchSessions).mockResolvedValue({
+    mode: "calendar",
+    range: "day",
+    timezone: "Asia/Shanghai",
+    windowStart: "2026-05-27T00:00:00",
+    windowEnd: "2026-05-28T00:00:00",
+    updatedAt: "2026-05-27T18:30:00",
+    rows: [{ sessionId: "ses_1", workspacePath: "D:/projects/dev/agent-metrics" }]
+  });
+  apiMocks.fetchSessionDetail.mockResolvedValue({
+    sessionId: "ses_1",
+    timeline: [
+      {
+        type: "session.started",
+        toolName: "",
+        status: "started",
+        durationMs: 0,
+        filesChanged: [],
+        insertions: 0,
+        deletions: 0
+      },
+      {
+        type: "tool.succeeded",
+        toolName: "Read",
+        status: "succeeded",
+        durationMs: 12,
+        filesChanged: [],
+        insertions: 0,
+        deletions: 0
+      }
+    ]
+  });
+  apiMocks.buildExportUrl.mockImplementation(
+    (format: "csv" | "json") => `/api/exports/${format}`
+  );
+}
+
+async function nextTick(): Promise<void> {
+  await new Promise((resolve) => window.setTimeout(resolve, 0));
+}

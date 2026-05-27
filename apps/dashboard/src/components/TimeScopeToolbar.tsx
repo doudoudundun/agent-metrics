@@ -1,4 +1,4 @@
-import { buildScopeLabel, type TimeScopeSelection } from "../time-scope";
+import { buildScopeLabel, isSameScope, type TimeScopeSelection } from "../time-scope";
 
 type TimeScopeToolbarProps = {
   selection: TimeScopeSelection;
@@ -17,9 +17,9 @@ const SCOPE_OPTIONS = [
 
 export function TimeScopeToolbar({ selection, onChange }: TimeScopeToolbarProps) {
   return (
-    <div className="time-scope-toolbar" aria-label="Dashboard time scope">
+    <div className="time-scope-toolbar" aria-label="Dashboard time scope" role="toolbar">
       {SCOPE_OPTIONS.map((option) => {
-        const selected = option.mode === selection.mode && option.range === selection.range;
+        const selected = isSameScope(option, selection);
 
         return (
           <button
@@ -27,7 +27,11 @@ export function TimeScopeToolbar({ selection, onChange }: TimeScopeToolbarProps)
             className="time-scope-button"
             data-selected={selected}
             key={`${option.mode}-${option.range}`}
-            onClick={() => onChange(option)}
+            onClick={() => {
+              if (!selected) {
+                onChange(option);
+              }
+            }}
             type="button"
           >
             {buildScopeLabel(option)}

@@ -15,6 +15,7 @@ import { ToolRankingTable } from "./components/ToolRankingTable";
 import {
   buildScopeLabel,
   DEFAULT_TIME_SCOPE,
+  isSameScope,
   type TimeScopeSelection
 } from "./time-scope";
 import "./styles.css";
@@ -100,7 +101,7 @@ export function App() {
       active = false;
       window.clearInterval(timer);
     };
-  }, [applyLoadError, applyLoadedData, globalScope]);
+  }, [globalScope]);
 
   useEffect(() => {
     if (dashboard.sessions.length === 0) {
@@ -154,12 +155,15 @@ export function App() {
   });
 
   const handleScopeChange = useEffectEvent((selection: TimeScopeSelection) => {
-    startTransition(() => {
-      setGlobalScope(selection);
-      setSelectedSession(null);
-      setSelectedSessionId(null);
-      setStaleMessage(null);
-    });
+    if (isSameScope(globalScope, selection)) {
+      return;
+    }
+
+    setGlobalScope(selection);
+    setDashboard(INITIAL_STATE);
+    setSelectedSession(null);
+    setSelectedSessionId(null);
+    setStaleMessage(null);
   });
 
   const scopeLabel = buildScopeLabel(globalScope);

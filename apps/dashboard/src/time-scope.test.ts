@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildScopeLabel, buildScopeSearchParams } from "./time-scope";
+import { buildScopeLabel, buildScopeSearchParams, isSameScope } from "./time-scope";
 
 describe("time scope helpers", () => {
   it("labels the default calendar day scope as Today", () => {
@@ -10,5 +10,14 @@ describe("time scope helpers", () => {
     expect(buildScopeSearchParams({ mode: "rolling", range: "week" }).toString()).toBe(
       "mode=rolling&range=week"
     );
+  });
+
+  it("matches scopes by mode and range", () => {
+    expect(
+      isSameScope({ mode: "calendar", range: "day" }, { mode: "calendar", range: "day" })
+    ).toBe(true);
+    expect(
+      isSameScope({ mode: "calendar", range: "day" }, { mode: "calendar", range: "week" })
+    ).toBe(false);
   });
 });
