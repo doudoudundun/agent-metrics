@@ -21,6 +21,13 @@ After the one-time hook install, open Claude Code in any workspace and trigger a
 - `apps/core` ingests normalized events into SQLite on API requests.
 - `apps/dashboard` renders sessions, tool rankings, edit metrics, and a session timeline.
 
+## Dashboard Behavior
+
+- The dashboard defaults to the current calendar day (`Today`) when it first loads.
+- The hero toolbar switches the global dashboard scope between natural calendar views, rolling window views, and lifetime.
+- Selected aggregate panels can override the global scope without changing the rest of the dashboard.
+- `Updated` shows the backend `updatedAt` value formatted as a full local date-time.
+
 ## Commands
 
 - `corepack pnpm test`
@@ -42,6 +49,12 @@ After the one-time hook install, open Claude Code in any workspace and trigger a
 3. Open Claude Code in a test workspace
 4. Trigger `Read`, `Search/Grep`, `Edit`, and `Bash`
 5. Confirm:
+   - the app starts and the dashboard is serving
+   - the default dashboard view is the current calendar day
+   - switching the hero toolbar to calendar week updates the global scope
+   - switching the hero toolbar to rolling week updates the global scope
+   - switching the hero toolbar to lifetime updates the global scope
+   - one aggregate panel can override the global scope without changing the other panels
    - `data/hooks/raw/claude-code.jsonl` grows
    - `data/events/events.jsonl` grows
    - `data/hooks/state/parser-state.json` advances
