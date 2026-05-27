@@ -4,6 +4,7 @@ import type { Command } from "commander";
 import {
   buildClaudeRawEnvelope,
   extractMutationTargets,
+  recordClaudeTranscriptReference,
   type ClaudeHookPayload
 } from "@agent-metrics/adapters-claude";
 import { captureBeforeSnapshots, discardSnapshots } from "./snapshots.js";
@@ -94,6 +95,16 @@ export async function handleHookEvent(input: {
 
   await appendJsonLine(paths.rawHookLogPath, buildClaudeRawEnvelope(normalizedPayload));
 
+  const transcriptPath = normalizeTranscriptPath(normalizedPayload.transcript_path, workspacePath);
+  if (transcriptPath) {
+    await recordClaudeTranscriptReference({
+      manifestPath: paths.transcriptManifestPath,
+      transcriptPath,
+      workspacePath,
+      sessionId: normalizeOptionalString(normalizedPayload.session_id)
+    });
+  }
+
   if (normalizedPayload.hook_event_name === "PreToolUse") {
     await maybeCaptureBeforeSnapshots({
       payload: normalizedPayload,
@@ -137,7 +148,22 @@ async function maybeCaptureBeforeSnapshots(input: {
 }
 
 function normalizeWorkspacePath(cwd: unknown, repoRoot: string): string {
-  return typeof cwd === "string" && cwd.length > 0 ? cwd : repoRoot;
+  return typeof cwd === "string" && cwd.length > 0 ? resolve(repoRoot, cwd) : repoRoot;
+}
+
+function normalizeTranscriptPath(
+  transcriptPath: unknown,
+  workspacePath: string
+): string | undefined {
+  if (typeof transcriptPath !== "string" || transcriptPath.length === 0) {
+    return undefined;
+  }
+
+  return resolve(workspacePath, transcriptPath);
+}
+
+function normalizeOptionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
 function withWorkspacePath(payload: ClaudeHookPayload, workspacePath: string): ClaudeHookPayload {

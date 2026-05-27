@@ -190,6 +190,64 @@ describe("handleHookEvent", () => {
     });
   });
 
+  it("registers transcript_path into the transcript manifest", async () => {
+    const repoRoot = await mkdtemp(join(tmpdir(), "agent-metrics-hooks-"));
+    const transcriptPath = join(repoRoot, "claude-session.jsonl");
+
+    await handleHookEvent({
+      repoRoot,
+      payload: {
+        session_id: "ses_transcript",
+        cwd: repoRoot,
+        hook_event_name: "PreToolUse",
+        transcript_path: transcriptPath
+      }
+    });
+
+    const paths = getHookPaths(repoRoot);
+    const manifest = JSON.parse(await readFile(paths.transcriptManifestPath, "utf8")) as unknown[];
+
+    expect(manifest).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          transcriptPath,
+          workspacePath: repoRoot,
+          sessionId: "ses_transcript"
+        })
+      ])
+    );
+  });
+
+  it("normalizes a relative cwd against repoRoot before recording transcript metadata", async () => {
+    const repoRoot = await mkdtemp(join(tmpdir(), "agent-metrics-hooks-"));
+    const transcriptPath = "transcripts/session.jsonl";
+
+    await handleHookEvent({
+      repoRoot,
+      payload: {
+        session_id: "ses_relative",
+        cwd: "workspace",
+        hook_event_name: "PreToolUse",
+        transcript_path: transcriptPath
+      }
+    });
+
+    const paths = getHookPaths(repoRoot);
+    const manifest = JSON.parse(await readFile(paths.transcriptManifestPath, "utf8")) as Array<{
+      transcriptPath: string;
+      workspacePath: string;
+      sessionId?: string;
+    }>;
+
+    expect(manifest).toEqual([
+      {
+        transcriptPath: join(repoRoot, "workspace", "transcripts", "session.jsonl"),
+        workspacePath: join(repoRoot, "workspace"),
+        sessionId: "ses_relative"
+      }
+    ]);
+  });
+
   it("rejects malformed tool_use_id values that would escape the snapshot root", async () => {
     const repoRoot = await mkdtemp(join(tmpdir(), "agent-metrics-hooks-"));
     const filePath = join(repoRoot, "src", "app.ts");
