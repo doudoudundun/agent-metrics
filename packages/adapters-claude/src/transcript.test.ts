@@ -56,6 +56,31 @@ describe("extractClaudeTranscriptObservations", () => {
     ]);
   });
 
+  it("does not emit assistant observations when only a transcript row id exists", () => {
+    const observations = extractClaudeTranscriptObservations({
+      type: "assistant",
+      id: "row_1",
+      sessionId: "ses_1",
+      cwd: "D:/projects/dev/agent-metrics",
+      timestamp: "2026-05-27T10:00:10.000Z",
+      message: {
+        role: "assistant",
+        model: "sonnet-test",
+        stop_reason: "end_turn",
+        content: [{ type: "text", text: "Here is the fix." }],
+        usage: {
+          input_tokens: 120,
+          output_tokens: 48,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 16,
+          server_tool_use: { web_search_requests: 0 }
+        }
+      }
+    });
+
+    expect(observations).toEqual([]);
+  });
+
   it("normalizes transcript observations into AnyEvent-compatible payloads", () => {
     const [promptObservation] = extractClaudeTranscriptObservations({
       type: "user",

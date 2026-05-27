@@ -73,7 +73,7 @@ export function extractClaudeTranscriptObservations(record: unknown): ClaudeTran
   }
 
   const observations: ClaudeTranscriptObservation[] = [];
-  const messageId = normalizeOptionalString(message.id ?? row.message_id ?? row.id);
+  const messageId = normalizeOptionalString(message.id ?? row.message_id);
   const model = normalizeNullableString(message.model ?? row.model);
 
   if (messageId !== undefined && isTerminalAssistantMessage(message)) {
