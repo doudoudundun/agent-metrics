@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { AnyEvent } from "@agent-metrics/event-schema";
+import type { AnyEvent, SourceAdapter, SourceVendor } from "@agent-metrics/event-schema";
 import { diffTextStats } from "@agent-metrics/shared-utils";
 
 type ToolStartObservation = {
@@ -27,6 +27,9 @@ type EditAppliedObservation = {
 
 type ClaudeObservation = ToolStartObservation | ToolFinishObservation | EditAppliedObservation;
 
+const CLAUDE_SOURCE_VENDOR: SourceVendor = "claude-code";
+const CLAUDE_HOOK_ADAPTER: SourceAdapter = "claude-hook";
+
 export function normalizeClaudeObservation(input: {
   sessionId: string;
   workspacePath: string;
@@ -36,8 +39,8 @@ export function normalizeClaudeObservation(input: {
     event_id: randomUUID(),
     session_id: input.sessionId,
     timestamp: new Date().toISOString(),
-    source_vendor: "claude-code",
-    source_adapter: "claude",
+    source_vendor: CLAUDE_SOURCE_VENDOR,
+    source_adapter: CLAUDE_HOOK_ADAPTER,
     workspace_path: input.workspacePath
   };
 

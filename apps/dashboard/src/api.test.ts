@@ -47,12 +47,48 @@ describe("api client", () => {
       editOperationCount: 0,
       affectedFileCount: 0,
       insertions: 0,
-      deletions: 0
+      deletions: 0,
+      sourceBreakdown: [],
+      providerBreakdown: []
     });
 
     await fetchOverview({ mode: "rolling", range: "week" });
 
-    expect(fetch).toHaveBeenCalledWith("/api/overview?mode=rolling&range=week");
+    expect(fetch).toHaveBeenCalledWith("/api/overview?mode=rolling&range=week&sourceVendor=all");
+  });
+
+  it("appends sourceVendor to aggregate requests", async () => {
+    stubFetchJson({
+      mode: "rolling",
+      range: "week",
+      timezone: "Asia/Shanghai",
+      windowStart: "2026-05-20T10:30:00.000Z",
+      windowEnd: "2026-05-27T10:30:00.000Z",
+      updatedAt: "2026-05-27T10:30:00.000Z",
+      sessionCount: 0,
+      turnCount: 0,
+      responseCount: 0,
+      totalTokens: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+      tokensByModel: [],
+      totalToolCalls: 0,
+      successfulExecutions: 0,
+      failedExecutions: 0,
+      successRate: 0,
+      editOperationCount: 0,
+      affectedFileCount: 0,
+      insertions: 0,
+      deletions: 0,
+      sourceBreakdown: [],
+      providerBreakdown: []
+    });
+
+    await fetchOverview({ mode: "rolling", range: "week" }, "codex");
+
+    expect(fetch).toHaveBeenCalledWith("/api/overview?mode=rolling&range=week&sourceVendor=codex");
   });
 
   it("accepts token-aware overview payloads", async () => {
@@ -88,11 +124,77 @@ describe("api client", () => {
       editOperationCount: 4,
       affectedFileCount: 7,
       insertions: 42,
-      deletions: 8
+      deletions: 8,
+      sourceBreakdown: [
+        {
+          sourceVendor: "claude-code",
+          sessionCount: 3,
+          turnCount: 24,
+          totalTokens: 45678,
+          toolCalls: 12
+        }
+      ],
+      providerBreakdown: [
+        {
+          providerHost: null,
+          providerId: null,
+          totalTokens: 45678
+        }
+      ]
     };
 
     stubFetchJson(payload);
     await expect(fetchOverview()).resolves.toEqual(payload);
+  });
+
+  it("normalizes legacy overview payloads that omit token metrics", async () => {
+    stubFetchJson({
+      mode: "calendar",
+      range: "day",
+      timezone: "Asia/Shanghai",
+      windowStart: "2026-05-26T16:00:00.000Z",
+      windowEnd: "2026-05-27T10:30:00.000Z",
+      updatedAt: "2026-05-27T10:30:00.000Z",
+      sessionCount: 3,
+      totalToolCalls: 12,
+      successfulExecutions: 10,
+      failedExecutions: 2,
+      successRate: 0.8333,
+      editOperationCount: 4,
+      affectedFileCount: 7,
+      insertions: 42,
+      deletions: 8,
+      sourceBreakdown: [],
+      providerBreakdown: []
+    });
+
+    await expect(fetchOverview()).resolves.toEqual({
+      mode: "calendar",
+      range: "day",
+      timezone: "Asia/Shanghai",
+      windowStart: "2026-05-26T16:00:00.000Z",
+      windowEnd: "2026-05-27T10:30:00.000Z",
+      updatedAt: "2026-05-27T10:30:00.000Z",
+      sessionCount: 3,
+      turnCount: 0,
+      responseCount: 0,
+      totalTokens: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+      tokensByModel: [],
+      totalToolCalls: 12,
+      successfulExecutions: 10,
+      failedExecutions: 2,
+      successRate: 0.8333,
+      editOperationCount: 4,
+      affectedFileCount: 7,
+      insertions: 42,
+      deletions: 8,
+      sourceBreakdown: [],
+      providerBreakdown: []
+    });
   });
 
   it("returns scoped tool envelopes", async () => {
@@ -156,6 +258,10 @@ describe("api client", () => {
       {
         sessionId: "ses_1",
         workspacePath: "D:/projects/dev/agent-metrics",
+        sourceVendor: "claude-code",
+        sourceAdapter: "claude-transcript",
+        providerId: null,
+        providerHost: null,
         turnCount: 9,
         totalTokens: 3210,
         lastModel: null
@@ -179,6 +285,10 @@ describe("api client", () => {
       {
         sessionId: "ses_1",
         workspacePath: "D:/projects/dev/agent-metrics",
+        sourceVendor: "claude-code",
+        sourceAdapter: "claude-transcript",
+        providerId: null,
+        providerHost: null,
         turnCount: 9,
         totalTokens: 3210,
         lastModel: null
@@ -197,6 +307,10 @@ describe("api client", () => {
         {
           sessionId: "ses_1",
           workspacePath: "D:/projects/dev/agent-metrics",
+          sourceVendor: "claude-code",
+          sourceAdapter: "claude-transcript",
+          providerId: null,
+          providerHost: null,
           turnCount: 9,
           totalTokens: 3210,
           lastModel: null
@@ -249,6 +363,10 @@ describe("api client", () => {
           toolName: "",
           status: "submitted",
           durationMs: 0,
+          sourceVendor: "claude-code",
+          sourceAdapter: "claude-transcript",
+          providerId: null,
+          providerHost: null,
           filesChanged: [],
           insertions: 0,
           deletions: 0,
@@ -271,6 +389,10 @@ describe("api client", () => {
           toolName: "",
           status: "recorded",
           durationMs: 0,
+          sourceVendor: "claude-code",
+          sourceAdapter: "claude-transcript",
+          providerId: null,
+          providerHost: null,
           filesChanged: [],
           insertions: 0,
           deletions: 0,

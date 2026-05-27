@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { AnyEvent } from "@agent-metrics/event-schema";
+import type { AnyEvent, SourceAdapter, SourceVendor } from "@agent-metrics/event-schema";
 
 export type ClaudeTranscriptObservation =
   | {
@@ -19,6 +19,9 @@ export type ClaudeTranscriptObservation =
       model: string | null;
       stopReason: string | null;
       responseChars: number;
+      providerId: string | null;
+      providerBaseUrl: string | null;
+      providerHost: string | null;
     }
   | {
       kind: "token_usage_recorded";
@@ -32,7 +35,13 @@ export type ClaudeTranscriptObservation =
       cacheCreationInputTokens: number;
       cacheReadInputTokens: number;
       serverToolUse: string;
+      providerId: string | null;
+      providerBaseUrl: string | null;
+      providerHost: string | null;
     };
+
+const CLAUDE_SOURCE_VENDOR: SourceVendor = "claude-code";
+const CLAUDE_TRANSCRIPT_ADAPTER: SourceAdapter = "claude-transcript";
 
 export function extractClaudeTranscriptObservations(record: unknown): ClaudeTranscriptObservation[] {
   const row = asRecord(record);
@@ -82,6 +91,12 @@ export function extractClaudeTranscriptObservations(record: unknown): ClaudeTran
   const messageId = normalizeOptionalString(message.id ?? row.message_id);
   const model = normalizeNullableString(message.model ?? row.model);
   const responseText = flattenClaudeContent(message.content);
+  const providerMetadata = normalizeProviderMetadata(
+    asRecord(message.metadata) ??
+      asRecord(message.provider) ??
+      asRecord(row.metadata) ??
+      asRecord(row.provider)
+  );
 
   if (messageId !== undefined && isTerminalAssistantMessage(message, responseText)) {
     observations.push({
@@ -92,7 +107,10 @@ export function extractClaudeTranscriptObservations(record: unknown): ClaudeTran
       messageId,
       model,
       stopReason: normalizeNullableString(message.stop_reason),
-      responseChars: responseText.length
+      responseChars: responseText.length,
+      providerId: providerMetadata.providerId,
+      providerBaseUrl: providerMetadata.providerBaseUrl,
+      providerHost: providerMetadata.providerHost
     });
   }
 
@@ -110,7 +128,10 @@ export function extractClaudeTranscriptObservations(record: unknown): ClaudeTran
       outputTokens: usageCounts.outputTokens,
       cacheCreationInputTokens: usageCounts.cacheCreationInputTokens,
       cacheReadInputTokens: usageCounts.cacheReadInputTokens,
-      serverToolUse: usageCounts.serverToolUse
+      serverToolUse: usageCounts.serverToolUse,
+      providerId: providerMetadata.providerId,
+      providerBaseUrl: providerMetadata.providerBaseUrl,
+      providerHost: providerMetadata.providerHost
     });
   }
 
@@ -124,8 +145,8 @@ export function normalizeClaudeTranscriptObservation(
     event_id: randomUUID(),
     session_id: observation.sessionId,
     timestamp: observation.timestamp,
-    source_vendor: "claude-code",
-    source_adapter: "claude",
+    source_vendor: CLAUDE_SOURCE_VENDOR,
+    source_adapter: CLAUDE_TRANSCRIPT_ADAPTER,
     workspace_path: observation.workspacePath
   };
 
@@ -145,7 +166,10 @@ export function normalizeClaudeTranscriptObservation(
       message_id: observation.messageId,
       model: observation.model,
       stop_reason: observation.stopReason,
-      response_chars: observation.responseChars
+      response_chars: observation.responseChars,
+      provider_id: observation.providerId,
+      provider_base_url: observation.providerBaseUrl,
+      provider_host: observation.providerHost
     };
   }
 
@@ -159,7 +183,29 @@ export function normalizeClaudeTranscriptObservation(
     cache_creation_input_tokens: observation.cacheCreationInputTokens,
     cache_read_input_tokens: observation.cacheReadInputTokens,
     server_tool_use: observation.serverToolUse,
-    usage_source: "claude-transcript"
+    usage_source: "claude-transcript",
+    provider_id: observation.providerId,
+    provider_base_url: observation.providerBaseUrl,
+    provider_host: observation.providerHost
+  };
+}
+
+function normalizeProviderMetadata(provider: Record<string, unknown> | null): {
+  providerId: string | null;
+  providerBaseUrl: string | null;
+  providerHost: string | null;
+} {
+  const providerId = normalizeNullableString(provider?.id ?? provider?.provider_id ?? provider?.name);
+  const providerBaseUrl = normalizeNullableUrl(
+    provider?.base_url ?? provider?.baseUrl ?? provider?.url ?? provider?.endpoint
+  );
+  const providerHost =
+    providerBaseUrl === null ? normalizeNullableString(provider?.host ?? provider?.provider_host) : extractHost(providerBaseUrl);
+
+  return {
+    providerId,
+    providerBaseUrl,
+    providerHost
   };
 }
 
@@ -245,6 +291,26 @@ function normalizeValidTimestamp(value: unknown): string | undefined {
   }
 
   return undefined;
+}
+
+function normalizeNullableUrl(value: unknown): string | null {
+  if (typeof value !== "string" || value.length === 0) {
+    return null;
+  }
+
+  try {
+    return new URL(value).toString();
+  } catch {
+    return null;
+  }
+}
+
+function extractHost(value: string): string | null {
+  try {
+    return new URL(value).host || null;
+  } catch {
+    return null;
+  }
 }
 
 function isTerminalStopReason(stopReason: string): boolean {

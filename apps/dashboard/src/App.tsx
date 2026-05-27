@@ -1,5 +1,11 @@
 import { lazy, startTransition, Suspense, useEffect, useEffectEvent, useState } from "react";
-import type { OverviewResponse, SessionDetailResponse, SessionRow, ToolRow } from "./api";
+import type {
+  OverviewResponse,
+  SessionDetailResponse,
+  SessionRow,
+  SourceVendor,
+  ToolRow
+} from "./api";
 import {
   buildExportUrl,
   fetchOverview,
@@ -53,12 +59,27 @@ const TrendChart = lazy(async () => {
 });
 
 const DEFAULT_TOOL_EMPTY_MESSAGE = "No tool activity in this scope.";
+const SOURCE_UNAVAILABLE_MESSAGE = "Not available for this source yet.";
+const SOURCE_OPTIONS: Array<{ value: SourceVendor; label: string }> = [
+  { value: "all", label: "All" },
+  { value: "claude-code", label: "Claude Code" },
+  { value: "opencode", label: "OpenCode" },
+  { value: "codex", label: "Codex" }
+];
+
+const SOURCE_LABELS: Record<SourceVendor, string> = {
+  all: "All Sources",
+  "claude-code": "Claude Code",
+  opencode: "OpenCode",
+  codex: "Codex"
+};
 
 export function App() {
   const [overview, setOverview] = useState<OverviewResponse | null>(null);
   const [baseTools, setBaseTools] = useState<PanelToolsState>(INITIAL_PANEL_TOOLS_STATE);
   const [baseSessions, setBaseSessions] = useState<SessionsState>(INITIAL_SESSIONS_STATE);
   const [globalScope, setGlobalScope] = useState<TimeScopeSelection>(DEFAULT_TIME_SCOPE);
+  const [selectedSourceVendor, setSelectedSourceVendor] = useState<SourceVendor>("all");
   const [trendOverride, setTrendOverride] = useState<TimeScopeSelection | null>(null);
   const [rankingOverride, setRankingOverride] = useState<TimeScopeSelection | null>(null);
   const [trendTools, setTrendTools] = useState<PanelToolsState>(INITIAL_PANEL_TOOLS_STATE);
@@ -95,7 +116,7 @@ export function App() {
 
     const loadOverview = async () => {
       try {
-        const nextOverview = await fetchOverview(globalScope);
+        const nextOverview = await fetchOverview(globalScope, selectedSourceVendor);
 
         if (!active) {
           return;
@@ -121,7 +142,7 @@ export function App() {
       active = false;
       window.clearInterval(timer);
     };
-  }, [globalScope]);
+  }, [globalScope, selectedSourceVendor]);
 
   useEffect(() => {
     let active = true;
@@ -133,7 +154,7 @@ export function App() {
 
     const loadTools = async () => {
       try {
-        const nextTools = await fetchTools(globalScope);
+        const nextTools = await fetchTools(globalScope, selectedSourceVendor);
 
         if (!active) {
           return;
@@ -170,7 +191,7 @@ export function App() {
       active = false;
       window.clearInterval(timer);
     };
-  }, [globalScope]);
+  }, [globalScope, selectedSourceVendor]);
 
   useEffect(() => {
     let active = true;
@@ -182,7 +203,7 @@ export function App() {
 
     const loadSessions = async () => {
       try {
-        const nextSessions = await fetchSessions(globalScope);
+        const nextSessions = await fetchSessions(globalScope, selectedSourceVendor);
 
         if (!active) {
           return;
@@ -219,7 +240,7 @@ export function App() {
       active = false;
       window.clearInterval(timer);
     };
-  }, [globalScope]);
+  }, [globalScope, selectedSourceVendor]);
 
   useEffect(() => {
     if (!trendOverride) {
@@ -236,7 +257,7 @@ export function App() {
 
     const loadTools = async () => {
       try {
-        const tools = await fetchTools(trendOverride);
+        const tools = await fetchTools(trendOverride, selectedSourceVendor);
 
         if (!active) {
           return;
@@ -273,7 +294,7 @@ export function App() {
       active = false;
       window.clearInterval(timer);
     };
-  }, [trendOverride]);
+  }, [trendOverride, selectedSourceVendor]);
 
   useEffect(() => {
     if (!rankingOverride) {
@@ -290,7 +311,7 @@ export function App() {
 
     const loadTools = async () => {
       try {
-        const tools = await fetchTools(rankingOverride);
+        const tools = await fetchTools(rankingOverride, selectedSourceVendor);
 
         if (!active) {
           return;
@@ -327,7 +348,7 @@ export function App() {
       active = false;
       window.clearInterval(timer);
     };
-  }, [rankingOverride]);
+  }, [rankingOverride, selectedSourceVendor]);
 
   useEffect(() => {
     const sessionRows = baseSessions.rows ?? [];
@@ -378,7 +399,7 @@ export function App() {
     return () => {
       active = false;
     };
-  }, [selectedSessionId]);
+  }, [globalScope, selectedSessionId]);
 
   const handleSelectSession = useEffectEvent((sessionId: string) => {
     startTransition(() => {
@@ -394,17 +415,30 @@ export function App() {
     }
 
     setGlobalScope(selection);
-    setOverview(null);
-    setBaseTools(INITIAL_PANEL_TOOLS_STATE);
-    setBaseSessions(INITIAL_SESSIONS_STATE);
-    setSelectedSession(null);
-    setSelectedSessionId(null);
-    setSessionDetailLoading(false);
     setLoadErrorMessage(null);
     setStaleMessage(null);
+
+    if (selectedSessionId) {
+      setSessionDetailLoading(true);
+    }
+  });
+
+  const handleSourceVendorChange = useEffectEvent((sourceVendor: SourceVendor) => {
+    if (selectedSourceVendor === sourceVendor) {
+      return;
+    }
+
+    setSelectedSourceVendor(sourceVendor);
+    setLoadErrorMessage(null);
+    setStaleMessage(null);
+
+    if (selectedSessionId) {
+      setSessionDetailLoading(true);
+    }
   });
 
   const scopeLabel = buildScopeLabel(globalScope);
+  const sourceLabel = SOURCE_LABELS[selectedSourceVendor];
 
   if (!overview) {
     return (
@@ -420,10 +454,27 @@ export function App() {
             <p className="hero-copy">Loading local activity signals from the metrics core.</p>
           )}
           <TimeScopeToolbar selection={globalScope} onChange={handleScopeChange} />
+          <div className="time-scope-toolbar" role="toolbar" aria-label="Dashboard source filter">
+            {SOURCE_OPTIONS.map((option) => (
+              <button
+                type="button"
+                className="time-scope-button"
+                data-selected={selectedSourceVendor === option.value}
+                key={option.value}
+                onClick={() => handleSourceVendorChange(option.value)}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
           <div className="status-row">
             <div className="status-pill">
               <strong>Scope</strong>
               <span>{scopeLabel}</span>
+            </div>
+            <div className="status-pill">
+              <strong>Source</strong>
+              <span>{sourceLabel}</span>
             </div>
           </div>
         </section>
@@ -436,7 +487,12 @@ export function App() {
   const lastUpdated = formatScopeDateTime(overview.updatedAt, overview.timezone);
   const trendRows = trendOverride ? (trendTools.rows ?? baseToolRows) : baseToolRows;
   const rankingRows = rankingOverride ? (rankingTools.rows ?? baseToolRows) : baseToolRows;
-  const baseToolEmptyMessage = buildToolEmptyMessage(baseTools);
+  const sourceBreakdownRows = overview.sourceBreakdown ?? [];
+  const baseToolEmptyMessage = buildToolEmptyMessage(
+    baseTools,
+    baseToolRows,
+    selectedSourceVendor
+  );
   const trendStatusMessage = buildPanelStatusMessage(
     "Activity Snapshot",
     trendOverride,
@@ -465,6 +521,19 @@ export function App() {
           </div>
           <div className="hero-side">
             <TimeScopeToolbar selection={globalScope} onChange={handleScopeChange} />
+            <div className="time-scope-toolbar" role="toolbar" aria-label="Dashboard source filter">
+              {SOURCE_OPTIONS.map((option) => (
+                <button
+                  type="button"
+                  className="time-scope-button"
+                  data-selected={selectedSourceVendor === option.value}
+                  key={option.value}
+                  onClick={() => handleSourceVendorChange(option.value)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
             <div className="status-row">
               <div className="status-pill" data-state={staleMessage ? "stale" : "fresh"}>
                 <strong>Status</strong>
@@ -474,6 +543,10 @@ export function App() {
                 <strong>Scope</strong>
                 <span>{scopeLabel}</span>
               </div>
+              <div className="status-pill">
+                <strong>Source</strong>
+                <span>{sourceLabel}</span>
+              </div>
               {lastUpdated ? (
                 <div className="status-pill">
                   <strong>Updated</strong>
@@ -481,6 +554,7 @@ export function App() {
                 </div>
               ) : null}
             </div>
+            {staleMessage ? <p className="hero-copy">{staleMessage}</p> : null}
             <div className="hero-actions">
               <a className="hero-link" href={buildExportUrl("csv")}>
                 Export CSV
@@ -494,6 +568,30 @@ export function App() {
       </section>
 
       <KpiGrid overview={overview} scopeLabel={scopeLabel} />
+      <section className="panel compact-breakdown-panel" aria-label="Source Breakdown">
+        <div className="panel-heading">
+          <h2>Source Breakdown</h2>
+          <span>Following global: {sourceLabel}</span>
+        </div>
+        <div className="kpi-secondary-row">
+          {sourceBreakdownRows.length > 0 ? (
+            sourceBreakdownRows.map((row) => (
+              <article className="kpi-chip" key={row.sourceVendor}>
+                <span className="kpi-chip-label">{SOURCE_LABELS[row.sourceVendor]}</span>
+                <strong className="kpi-chip-value">{row.totalTokens.toLocaleString()} tokens</strong>
+                <span className="kpi-meta">
+                  {row.sessionCount} sessions / {row.turnCount} turns / {row.toolCalls} calls
+                </span>
+              </article>
+            ))
+          ) : (
+            <article className="kpi-chip">
+              <span className="kpi-chip-label">No source data</span>
+              <strong className="kpi-chip-value">0</strong>
+            </article>
+          )}
+        </div>
+      </section>
 
       <section className="surface-grid surface-grid-dense">
         <div className="surface-stack">
@@ -582,13 +680,21 @@ function messageFromError(error: unknown): string {
   return error instanceof Error ? error.message : "Failed to refresh scoped tool data.";
 }
 
-function buildToolEmptyMessage(state: PanelToolsState): string {
+function buildToolEmptyMessage(
+  state: PanelToolsState,
+  rows: ToolRow[],
+  selectedSourceVendor: SourceVendor
+): string {
   if (state.loading) {
     return "Loading global tool metrics...";
   }
 
   if (state.errorMessage) {
     return `Global tool metrics unavailable: ${state.errorMessage}`;
+  }
+
+  if (rows.length === 0 && selectedSourceVendor !== "all") {
+    return SOURCE_UNAVAILABLE_MESSAGE;
   }
 
   return DEFAULT_TOOL_EMPTY_MESSAGE;

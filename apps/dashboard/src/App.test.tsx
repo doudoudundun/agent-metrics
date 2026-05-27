@@ -53,10 +53,7 @@ describe("App", () => {
   it("does not refetch when clicking the already selected scope", async () => {
     const view = render(<App />);
 
-    expect(
-      await screen.findByRole("region", { name: "Overview metrics for Today" })
-    ).toBeInTheDocument();
-    expect(screen.getByText("Total Tokens")).toBeInTheDocument();
+    expect(await screen.findByText("Total Tokens", {}, { timeout: 3000 })).toBeInTheDocument();
     await nextTick();
     vi.mocked(fetchOverview).mockClear();
     vi.mocked(fetchTools).mockClear();
@@ -76,12 +73,14 @@ describe("App", () => {
     view.unmount();
   });
 
-  it("shows loading instead of old aggregate data after switching scope", async () => {
+  it("keeps the existing dashboard visible while switching scope and refreshes scoped panels", async () => {
     const view = render(<App />);
 
-    expect(
-      await screen.findByRole("region", { name: "Overview metrics for Today" })
-    ).toBeInTheDocument();
+    const overviewRegion = await screen.findByRole("region", {
+      name: "Overview metrics for Today"
+    });
+
+    expect(within(overviewRegion).getByText("45,678")).toBeInTheDocument();
     vi.mocked(fetchOverview).mockImplementationOnce(() => new Promise(() => undefined));
     vi.mocked(fetchTools).mockImplementationOnce(() => new Promise(() => undefined));
     vi.mocked(fetchSessions).mockImplementationOnce(() => new Promise(() => undefined));
@@ -91,22 +90,26 @@ describe("App", () => {
         name: "This Week"
       })
     );
+    expect(screen.getAllByText("This Week").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("45,678").length).toBeGreaterThan(0);
+    expect(screen.getByText("ses_1")).toBeInTheDocument();
+    expect(screen.getAllByText("Refreshing global tool metrics...")).toHaveLength(2);
+    expect(screen.getByText("Loading session activity...")).toBeInTheDocument();
     expect(
-      await screen.findByText("Loading local activity signals from the metrics core.")
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("region", { name: "Overview metrics for This Week" })
+      screen.queryByText("Loading local activity signals from the metrics core.")
     ).not.toBeInTheDocument();
 
     view.unmount();
   });
 
-  it("shows an explicit scoped failure after switching scope when aggregate loading fails", async () => {
+  it("keeps stale overview data visible after switching scope when aggregate loading fails", async () => {
     const view = render(<App />);
 
-    expect(
-      await screen.findByRole("region", { name: "Overview metrics for Today" })
-    ).toBeInTheDocument();
+    const overviewRegion = await screen.findByRole("region", {
+      name: "Overview metrics for Today"
+    });
+
+    expect(within(overviewRegion).getByText("45,678")).toBeInTheDocument();
     vi.mocked(fetchOverview).mockRejectedValueOnce(new Error("Metrics core unavailable"));
 
     fireEvent.click(
@@ -115,13 +118,11 @@ describe("App", () => {
       })
     );
 
-    expect(await screen.findByText("Failed to load dashboard metrics.")).toBeInTheDocument();
-    expect(await screen.findByText("Metrics core unavailable")).toBeInTheDocument();
-    expect(screen.getByText("Scope")).toBeInTheDocument();
     expect(screen.getAllByText("This Week").length).toBeGreaterThan(0);
-    expect(
-      screen.queryByRole("region", { name: "Overview metrics for This Week" })
-    ).not.toBeInTheDocument();
+    expect(await screen.findByText("Showing stale local data")).toBeInTheDocument();
+    expect(await screen.findByText("Metrics core unavailable")).toBeInTheDocument();
+    expect(screen.getAllByText("45,678").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Failed to load dashboard metrics.")).not.toBeInTheDocument();
 
     view.unmount();
   });
@@ -137,6 +138,9 @@ describe("App", () => {
     expect(within(overviewRegion).getByText("Total Tokens")).toBeInTheDocument();
     expect(within(overviewRegion).getByText("Turns")).toBeInTheDocument();
     expect(within(overviewRegion).getByText("45,678")).toBeInTheDocument();
+    expect(
+      within(overviewRegion).getByText("22,345 in / 19,876 out / 3,457 cache")
+    ).toBeInTheDocument();
     expect(within(overviewRegion).getByText("24")).toBeInTheDocument();
     expect(within(overviewRegion).getByText("12 responses")).toBeInTheDocument();
     expect(within(overviewRegion).getByText(/10 ok \/ 2 failed/)).toBeInTheDocument();
@@ -164,9 +168,101 @@ describe("App", () => {
     expect(within(timelinePanel!).getByText("Assistant")).toBeInTheDocument();
     expect(within(timelinePanel!).getByText("Token")).toBeInTheDocument();
     expect(within(timelinePanel!).getAllByText("2026-05-25 08:00:01").length).toBeGreaterThan(0);
-    expect(fetchOverview).toHaveBeenCalledWith({ mode: "calendar", range: "day" });
-    expect(fetchTools).toHaveBeenCalledWith({ mode: "calendar", range: "day" });
-    expect(fetchSessions).toHaveBeenCalledWith({ mode: "calendar", range: "day" });
+    expect(fetchOverview).toHaveBeenCalledWith({ mode: "calendar", range: "day" }, "all");
+    expect(fetchTools).toHaveBeenCalledWith({ mode: "calendar", range: "day" }, "all");
+    expect(fetchSessions).toHaveBeenCalledWith({ mode: "calendar", range: "day" }, "all");
+
+    view.unmount();
+  });
+
+  it("filters dashboard requests by source without falling back to a full-page error state", async () => {
+    vi.mocked(fetchOverview).mockImplementation(async (_, sourceVendor) => ({
+      mode: "calendar",
+      range: "day",
+      timezone: "Asia/Shanghai",
+      windowStart: "2026-05-26T16:00:00.000Z",
+      windowEnd: "2026-05-27T16:00:00.000Z",
+      updatedAt: "2026-05-27T10:30:00.000Z",
+      sessionCount: sourceVendor === "codex" ? 1 : 3,
+      turnCount: sourceVendor === "codex" ? 0 : 24,
+      responseCount: sourceVendor === "codex" ? 0 : 12,
+      totalTokens: sourceVendor === "codex" ? 150 : 45678,
+      inputTokens: sourceVendor === "codex" ? 100 : 22345,
+      outputTokens: sourceVendor === "codex" ? 40 : 19876,
+      cacheReadTokens: sourceVendor === "codex" ? 10 : 2345,
+      cacheCreationTokens: sourceVendor === "codex" ? 0 : 1112,
+      tokensByModel: [],
+      totalToolCalls: 0,
+      successfulExecutions: 0,
+      failedExecutions: 0,
+      successRate: 0,
+      editOperationCount: 0,
+      affectedFileCount: 0,
+      insertions: 0,
+      deletions: 0,
+      sourceBreakdown:
+        sourceVendor === "codex"
+          ? [{ sourceVendor: "codex", sessionCount: 1, turnCount: 0, totalTokens: 150, toolCalls: 0 }]
+          : [{ sourceVendor: "claude-code", sessionCount: 3, turnCount: 24, totalTokens: 45678, toolCalls: 12 }],
+      providerBreakdown: []
+    }));
+    vi.mocked(fetchTools).mockImplementation(async (_, sourceVendor) => ({
+      mode: "calendar",
+      range: "day",
+      timezone: "Asia/Shanghai",
+      windowStart: "2026-05-26T16:00:00.000Z",
+      windowEnd: "2026-05-27T16:00:00.000Z",
+      updatedAt: "2026-05-27T10:30:00.000Z",
+      rows: sourceVendor === "codex" ? [] : [{ toolName: "Read", count: 6, failures: 0, averageDurationMs: 15 }]
+    }));
+    vi.mocked(fetchSessions).mockImplementation(async (_, sourceVendor) => ({
+      mode: "calendar",
+      range: "day",
+      timezone: "Asia/Shanghai",
+      windowStart: "2026-05-26T16:00:00.000Z",
+      windowEnd: "2026-05-27T16:00:00.000Z",
+      updatedAt: "2026-05-27T10:30:00.000Z",
+      rows:
+        sourceVendor === "codex"
+          ? [
+              {
+                sessionId: "ses_codex_1",
+                workspacePath: "D:/projects/dev/agent-metrics",
+                sourceVendor: "codex",
+                sourceAdapter: "codex-rollout",
+                providerId: "ai",
+                providerHost: "api.psydo.top",
+                turnCount: 0,
+                totalTokens: 150,
+                lastModel: "gpt-5-codex"
+              }
+            ]
+          : [
+              {
+                sessionId: "ses_1",
+                workspacePath: "D:/projects/dev/agent-metrics",
+                sourceVendor: "claude-code",
+                sourceAdapter: "claude-transcript",
+                providerId: null,
+                providerHost: null,
+                turnCount: 14,
+                totalTokens: 45678,
+                lastModel: "gpt-5-codex"
+              }
+            ]
+    }));
+
+    const view = render(<App />);
+
+    expect(await screen.findByRole("region", { name: "Overview metrics for Today" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Codex" }));
+
+    expect(await screen.findByText("150 tokens")).toBeInTheDocument();
+    expect((await screen.findAllByText("Not available for this source yet.")).length).toBeGreaterThan(0);
+    expect(fetchOverview).toHaveBeenLastCalledWith({ mode: "calendar", range: "day" }, "codex");
+    expect(fetchTools).toHaveBeenLastCalledWith({ mode: "calendar", range: "day" }, "codex");
+    expect(fetchSessions).toHaveBeenLastCalledWith({ mode: "calendar", range: "day" }, "codex");
+    expect(screen.queryByText("Failed to load dashboard metrics.")).not.toBeInTheDocument();
 
     view.unmount();
   });
@@ -215,7 +311,9 @@ describe("App", () => {
       editOperationCount: 4,
       affectedFileCount: 7,
       insertions: 42,
-      deletions: 8
+      deletions: 8,
+      sourceBreakdown: [],
+      providerBreakdown: []
     });
 
     const view = render(<App />);
@@ -306,7 +404,7 @@ describe("App", () => {
 
     expect(await screen.findByText("13 calls total")).toBeInTheDocument();
     expect(screen.getByText("1 tracked")).toBeInTheDocument();
-    expect(fetchTools).toHaveBeenCalledWith({ mode: "rolling", range: "week" });
+    expect(fetchTools).toHaveBeenCalledWith({ mode: "rolling", range: "week" }, "all");
     expect(fetchOverview).not.toHaveBeenCalled();
     expect(fetchSessions).not.toHaveBeenCalled();
 
@@ -336,7 +434,9 @@ describe("App", () => {
       editOperationCount: 4,
       affectedFileCount: 7,
       insertions: 42,
-      deletions: 8
+      deletions: 8,
+      sourceBreakdown: [],
+      providerBreakdown: []
     }));
     vi.mocked(fetchTools).mockImplementation(async (scope) => ({
       mode: scope?.mode ?? "calendar",
@@ -364,7 +464,7 @@ describe("App", () => {
     });
 
     await waitFor(() => {
-      expect(fetchTools).toHaveBeenCalledWith({ mode: "rolling", range: "week" });
+      expect(fetchTools).toHaveBeenCalledWith({ mode: "rolling", range: "week" }, "all");
     });
 
     view.unmount();
@@ -393,7 +493,9 @@ describe("App", () => {
       editOperationCount: 4,
       affectedFileCount: 7,
       insertions: 42,
-      deletions: 8
+      deletions: 8,
+      sourceBreakdown: [],
+      providerBreakdown: []
     }));
     vi.mocked(fetchTools).mockImplementation(async (scope) => {
       if (scope?.mode === "rolling" && scope.range === "week") {
@@ -519,7 +621,17 @@ function seedApiMocks(): void {
     editOperationCount: 4,
     affectedFileCount: 7,
     insertions: 42,
-    deletions: 8
+    deletions: 8,
+    sourceBreakdown: [
+      {
+        sourceVendor: "claude-code",
+        sessionCount: 3,
+        turnCount: 24,
+        totalTokens: 45678,
+        toolCalls: 12
+      }
+    ],
+    providerBreakdown: []
   });
   vi.mocked(fetchTools).mockResolvedValue({
     mode: "calendar",
@@ -541,6 +653,10 @@ function seedApiMocks(): void {
       {
         sessionId: "ses_1",
         workspacePath: "D:/projects/dev/agent-metrics",
+        sourceVendor: "claude-code",
+        sourceAdapter: "claude-transcript",
+        providerId: null,
+        providerHost: null,
         turnCount: 14,
         totalTokens: 45678,
         lastModel: "gpt-5-codex"
@@ -556,6 +672,10 @@ function seedApiMocks(): void {
         toolName: "",
         status: "started",
         durationMs: 0,
+        sourceVendor: "claude-code",
+        sourceAdapter: "claude-hook",
+        providerId: null,
+        providerHost: null,
         filesChanged: [],
         insertions: 0,
         deletions: 0,
@@ -578,6 +698,10 @@ function seedApiMocks(): void {
         toolName: "",
         status: "submitted",
         durationMs: 0,
+        sourceVendor: "claude-code",
+        sourceAdapter: "claude-transcript",
+        providerId: null,
+        providerHost: null,
         filesChanged: [],
         insertions: 0,
         deletions: 0,
@@ -600,6 +724,10 @@ function seedApiMocks(): void {
         toolName: "Read",
         status: "succeeded",
         durationMs: 12,
+        sourceVendor: "claude-code",
+        sourceAdapter: "claude-hook",
+        providerId: null,
+        providerHost: null,
         filesChanged: [],
         insertions: 0,
         deletions: 0,
@@ -622,6 +750,10 @@ function seedApiMocks(): void {
         toolName: "",
         status: "responded",
         durationMs: 0,
+        sourceVendor: "claude-code",
+        sourceAdapter: "claude-transcript",
+        providerId: null,
+        providerHost: null,
         filesChanged: [],
         insertions: 0,
         deletions: 0,
@@ -644,6 +776,10 @@ function seedApiMocks(): void {
         toolName: "",
         status: "recorded",
         durationMs: 0,
+        sourceVendor: "claude-code",
+        sourceAdapter: "claude-transcript",
+        providerId: null,
+        providerHost: null,
         filesChanged: [],
         insertions: 0,
         deletions: 0,

@@ -5,7 +5,8 @@ import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import * as claudeAdapter from "@agent-metrics/adapters-claude";
 import { recordClaudeTranscriptReference } from "@agent-metrics/adapters-claude";
 import { getAgentMetricsPaths } from "@agent-metrics/shared-utils";
 import { appendJsonLine } from "@agent-metrics/shared-utils";
@@ -33,6 +34,7 @@ const scopedAppInput = {
 };
 
 beforeEach(async () => {
+  vi.restoreAllMocks();
   const root = await mkdtemp(join(tmpdir(), "agent-metrics-core-"));
   dbPath = join(root, "metrics.sqlite");
   logPath = join(root, "events.jsonl");
@@ -380,6 +382,83 @@ describe("ingestEventLog", () => {
 
     await app.close();
   });
+
+  it("coalesces concurrent transcript sync requests across API calls", async () => {
+    const repoRoot = await mkdtemp(join(tmpdir(), "agent-metrics-transcript-coalesce-"));
+    let syncCount = 0;
+    let releaseSync: (() => void) | null = null;
+    const waitForRelease = new Promise<void>((resolve) => {
+      releaseSync = resolve;
+    });
+
+    vi.spyOn(claudeAdapter, "syncKnownClaudeTranscripts").mockImplementation(async () => {
+      syncCount += 1;
+      await waitForRelease;
+    });
+
+    const app = buildApp({
+      dbPath,
+      eventLogPath: logPath,
+      repoRoot,
+      ...scopedAppInput
+    });
+
+    const firstRequest = app.inject({ method: "GET", url: "/api/overview?mode=calendar&range=day" });
+    const secondRequest = app.inject({ method: "GET", url: "/api/tools?mode=calendar&range=day" });
+
+    await waitForCondition(() => syncCount >= 1);
+    releaseSync?.();
+
+    const [firstResponse, secondResponse] = await Promise.all([firstRequest, secondRequest]);
+
+    expect(syncCount).toBe(1);
+    expect(firstResponse.statusCode).toBe(200);
+    expect(secondResponse.statusCode).toBe(200);
+
+    await app.close();
+  });
+
+  it("serves stale API data when transcript sync throws", async () => {
+    const repoRoot = await mkdtemp(join(tmpdir(), "agent-metrics-transcript-failure-"));
+
+    await appendJsonLine(logPath, {
+      event_id: "evt_runtime_1",
+      session_id: "ses_runtime_1",
+      timestamp: "2026-05-27T10:00:00.000Z",
+      source_vendor: "claude-code",
+      source_adapter: "claude",
+      workspace_path: "D:/projects/dev/agent-metrics",
+      type: "tool.succeeded",
+      tool_name: "Read",
+      status: "succeeded",
+      duration_ms: 14
+    });
+
+    vi.spyOn(claudeAdapter, "syncKnownClaudeTranscripts").mockRejectedValue(
+      new Error("transcript lock timeout")
+    );
+
+    const app = buildApp({
+      dbPath,
+      eventLogPath: logPath,
+      repoRoot,
+      ...scopedAppInput
+    });
+
+    const response = await app.inject({ method: "GET", url: "/api/tools?mode=calendar&range=day" });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      rows: [
+        {
+          toolName: "Read",
+          count: 1
+        }
+      ]
+    });
+
+    await app.close();
+  });
 });
 
 describe("core api", () => {
@@ -565,6 +644,16 @@ describe("core api", () => {
       affectedFileCount: 4,
       insertions: 5,
       deletions: 3,
+      sourceBreakdown: [
+        {
+          sourceVendor: "claude-code",
+          sessionCount: 2,
+          turnCount: 0,
+          totalTokens: 0,
+          toolCalls: 2
+        }
+      ],
+      providerBreakdown: [],
       mode: "calendar",
       range: "week",
       timezone: "Asia/Shanghai",
@@ -592,6 +681,114 @@ describe("core api", () => {
       range: "week",
       windowStart: null,
       windowEnd: null
+    });
+
+    await app.close();
+  });
+
+  it("filters overview metrics by sourceVendor and returns source and provider breakdowns", async () => {
+    for (const event of [
+      {
+        event_id: "evt_source_claude_started",
+        session_id: "ses_source_claude",
+        timestamp: "2026-05-27T01:00:00.000Z",
+        source_vendor: "claude-code",
+        source_adapter: "claude-transcript",
+        workspace_path: "D:/projects/dev/agent-metrics",
+        type: "session.started"
+      },
+      {
+        event_id: "evt_source_codex_started",
+        session_id: "ses_source_codex",
+        timestamp: "2026-05-27T02:00:00.000Z",
+        source_vendor: "codex",
+        source_adapter: "codex-rollout",
+        workspace_path: "D:/projects/dev/agent-metrics",
+        type: "session.started"
+      },
+      {
+        event_id: "evt_source_codex_usage",
+        session_id: "ses_source_codex",
+        timestamp: "2026-05-27T02:00:05.000Z",
+        source_vendor: "codex",
+        source_adapter: "codex-rollout",
+        workspace_path: "D:/projects/dev/agent-metrics",
+        type: "token.usage.recorded",
+        message_id: "msg_source_codex",
+        model: "gpt-5-codex",
+        provider_id: "ai",
+        provider_base_url: "https://api.psydo.top",
+        provider_host: "api.psydo.top",
+        input_tokens: 100,
+        output_tokens: 40,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 10,
+        server_tool_use: "{}",
+        usage_source: "codex-rollout"
+      }
+    ]) {
+      await appendJsonLine(logPath, event);
+    }
+
+    const app = buildApp({ dbPath, ...scopedAppInput });
+    await ingestEventLog({ app, eventLogPath: logPath });
+
+    const allResponse = await app.inject({
+      method: "GET",
+      url: "/api/overview?mode=calendar&range=day&sourceVendor=all"
+    });
+    const codexResponse = await app.inject({
+      method: "GET",
+      url: "/api/overview?mode=calendar&range=day&sourceVendor=codex"
+    });
+
+    expect(allResponse.statusCode).toBe(200);
+    expect(allResponse.json()).toMatchObject({
+      sessionCount: 2,
+      sourceBreakdown: [
+        {
+          sourceVendor: "claude-code",
+          sessionCount: 1,
+          turnCount: 0,
+          totalTokens: 0,
+          toolCalls: 0
+        },
+        {
+          sourceVendor: "codex",
+          sessionCount: 1,
+          turnCount: 0,
+          totalTokens: 150,
+          toolCalls: 0
+        }
+      ],
+      providerBreakdown: [
+        {
+          providerHost: "api.psydo.top",
+          providerId: "ai",
+          totalTokens: 150
+        }
+      ]
+    });
+    expect(codexResponse.statusCode).toBe(200);
+    expect(codexResponse.json()).toMatchObject({
+      sessionCount: 1,
+      totalTokens: 150,
+      sourceBreakdown: [
+        {
+          sourceVendor: "codex",
+          sessionCount: 1,
+          turnCount: 0,
+          totalTokens: 150,
+          toolCalls: 0
+        }
+      ],
+      providerBreakdown: [
+        {
+          providerHost: "api.psydo.top",
+          providerId: "ai",
+          totalTokens: 150
+        }
+      ]
     });
 
     await app.close();
@@ -651,6 +848,10 @@ describe("core api", () => {
         {
           sessionId: "ses_today",
           workspacePath: "D:/projects/dev/agent-metrics",
+          sourceVendor: "claude-code",
+          sourceAdapter: "claude-hook",
+          providerId: null,
+          providerHost: null,
           turnCount: 0,
           totalTokens: 0,
           lastModel: null
@@ -669,6 +870,10 @@ describe("core api", () => {
         {
           sessionId: "ses_today",
           workspacePath: "D:/projects/dev/agent-metrics",
+          sourceVendor: "claude-code",
+          sourceAdapter: "claude-hook",
+          providerId: null,
+          providerHost: null,
           turnCount: 0,
           totalTokens: 0,
           lastModel: null
@@ -676,6 +881,10 @@ describe("core api", () => {
         {
           sessionId: "ses_week",
           workspacePath: "D:/projects/dev/agent-metrics",
+          sourceVendor: "claude-code",
+          sourceAdapter: "claude-hook",
+          providerId: null,
+          providerHost: null,
           turnCount: 0,
           totalTokens: 0,
           lastModel: null
@@ -683,6 +892,10 @@ describe("core api", () => {
         {
           sessionId: "ses_old",
           workspacePath: "D:/projects/dev/agent-metrics",
+          sourceVendor: "claude-code",
+          sourceAdapter: "claude-hook",
+          providerId: null,
+          providerHost: null,
           turnCount: 0,
           totalTokens: 0,
           lastModel: null
@@ -854,6 +1067,10 @@ describe("core api", () => {
       timeline: [
         {
           createdAt: "2026-05-25T08:00:00.000Z",
+          sourceVendor: "claude-code",
+          sourceAdapter: "claude-hook",
+          providerId: null,
+          providerHost: null,
           filesChanged: [],
           insertions: 0,
           deletions: 0,
@@ -876,6 +1093,10 @@ describe("core api", () => {
         },
         {
           createdAt: "2026-05-25T08:00:00.500Z",
+          sourceVendor: "claude-code",
+          sourceAdapter: "claude-transcript",
+          providerId: null,
+          providerHost: null,
           filesChanged: [],
           insertions: 0,
           deletions: 0,
@@ -898,6 +1119,10 @@ describe("core api", () => {
         },
         {
           createdAt: "2026-05-25T08:00:01.000Z",
+          sourceVendor: "claude-code",
+          sourceAdapter: "claude-hook",
+          providerId: null,
+          providerHost: null,
           filesChanged: [],
           insertions: 0,
           deletions: 0,
@@ -920,6 +1145,10 @@ describe("core api", () => {
         },
         {
           createdAt: "2026-05-25T08:00:01.500Z",
+          sourceVendor: "claude-code",
+          sourceAdapter: "claude-transcript",
+          providerId: null,
+          providerHost: null,
           filesChanged: [],
           insertions: 0,
           deletions: 0,
@@ -942,6 +1171,10 @@ describe("core api", () => {
         },
         {
           createdAt: "2026-05-25T08:00:01.750Z",
+          sourceVendor: "claude-code",
+          sourceAdapter: "claude-transcript",
+          providerId: null,
+          providerHost: null,
           filesChanged: [],
           insertions: 0,
           deletions: 0,
@@ -964,6 +1197,10 @@ describe("core api", () => {
         },
         {
           createdAt: "2026-05-25T08:00:02.000Z",
+          sourceVendor: "claude-code",
+          sourceAdapter: "claude-hook",
+          providerId: null,
+          providerHost: null,
           filesChanged: ["src/app.ts"],
           insertions: 3,
           deletions: 1,
@@ -986,6 +1223,10 @@ describe("core api", () => {
         },
         {
           createdAt: "2026-05-25T08:00:03.000Z",
+          sourceVendor: "claude-code",
+          sourceAdapter: "claude-hook",
+          providerId: null,
+          providerHost: null,
           filesChanged: [],
           insertions: 0,
           deletions: 0,

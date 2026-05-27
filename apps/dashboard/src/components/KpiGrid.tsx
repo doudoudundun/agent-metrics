@@ -9,6 +9,7 @@ type KpiGridProps = {
 const NUMBER_FORMAT = new Intl.NumberFormat("en-US");
 
 export function KpiGrid({ overview, scopeLabel }: KpiGridProps) {
+  const cacheTokens = overview.cacheReadTokens + overview.cacheCreationTokens;
   const primaryItems: Array<{
     label: string;
     value: string;
@@ -19,7 +20,7 @@ export function KpiGrid({ overview, scopeLabel }: KpiGridProps) {
       label: "Total Tokens",
       value: NUMBER_FORMAT.format(overview.totalTokens),
       tone: "signal",
-      meta: `${NUMBER_FORMAT.format(overview.inputTokens)} in / ${NUMBER_FORMAT.format(overview.outputTokens)} out`
+      meta: `${NUMBER_FORMAT.format(overview.inputTokens)} in / ${NUMBER_FORMAT.format(overview.outputTokens)} out / ${NUMBER_FORMAT.format(cacheTokens)} cache`
     },
     {
       label: "Turns",

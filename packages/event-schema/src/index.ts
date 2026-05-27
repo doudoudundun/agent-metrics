@@ -1,12 +1,37 @@
 import { z } from "zod";
 
+export const SourceVendorSchema = z.enum(["claude-code", "opencode", "codex"]);
+
+export const SourceAdapterSchema = z.enum([
+  "claude",
+  "claude-hook",
+  "claude-transcript",
+  "opencode-db",
+  "codex-rollout",
+  "codex-history",
+  "codex-logs"
+]);
+
+export const UsageSourceSchema = z.enum([
+  "claude-transcript",
+  "opencode-message",
+  "codex-rollout",
+  "codex-logs"
+]);
+
 const BaseEventSchema = z.object({
   event_id: z.string().min(1),
   session_id: z.string().min(1),
   timestamp: z.string().datetime(),
-  source_vendor: z.string().min(1),
-  source_adapter: z.string().min(1),
+  source_vendor: SourceVendorSchema,
+  source_adapter: SourceAdapterSchema,
   workspace_path: z.string().min(1)
+});
+
+const ProviderMetadataSchema = z.object({
+  provider_id: z.string().min(1).nullable().optional(),
+  provider_base_url: z.string().min(1).nullable().optional(),
+  provider_host: z.string().min(1).nullable().optional()
 });
 
 export const SessionStartedEventSchema = BaseEventSchema.extend({
@@ -72,7 +97,7 @@ export const AssistantRespondedEventSchema = BaseEventSchema.extend({
   model: z.string().min(1).nullable().optional(),
   stop_reason: z.string().min(1).nullable().optional(),
   response_chars: z.number().int().nonnegative()
-});
+}).merge(ProviderMetadataSchema);
 
 export const TokenUsageRecordedEventSchema = BaseEventSchema.extend({
   type: z.literal("token.usage.recorded"),
@@ -83,8 +108,8 @@ export const TokenUsageRecordedEventSchema = BaseEventSchema.extend({
   cache_creation_input_tokens: z.number().int().nonnegative(),
   cache_read_input_tokens: z.number().int().nonnegative(),
   server_tool_use: z.string().default("{}"),
-  usage_source: z.literal("claude-transcript")
-});
+  usage_source: UsageSourceSchema
+}).merge(ProviderMetadataSchema);
 
 export const SnapshotCreatedEventSchema = BaseEventSchema.extend({
   type: z.literal("snapshot.created"),
@@ -123,3 +148,5 @@ export type AssistantRespondedEvent = z.infer<typeof AssistantRespondedEventSche
 export type TokenUsageRecordedEvent = z.infer<typeof TokenUsageRecordedEventSchema>;
 export type SnapshotCreatedEvent = z.infer<typeof SnapshotCreatedEventSchema>;
 export type IngestErrorEvent = z.infer<typeof IngestErrorEventSchema>;
+export type SourceVendor = z.infer<typeof SourceVendorSchema>;
+export type SourceAdapter = z.infer<typeof SourceAdapterSchema>;

@@ -65,7 +65,10 @@ describe("extractClaudeTranscriptObservations", () => {
         messageId: "msg_1",
         model: "sonnet-test",
         stopReason: "end_turn",
-        responseChars: 16
+        responseChars: 16,
+        providerId: null,
+        providerBaseUrl: null,
+        providerHost: null
       },
       {
         kind: "token_usage_recorded",
@@ -78,7 +81,10 @@ describe("extractClaudeTranscriptObservations", () => {
         outputTokens: 48,
         cacheCreationInputTokens: 0,
         cacheReadInputTokens: 16,
-        serverToolUse: "{\"web_search_requests\":0}"
+        serverToolUse: "{\"web_search_requests\":0}",
+        providerId: null,
+        providerBaseUrl: null,
+        providerHost: null
       }
     ]);
   });
@@ -117,7 +123,10 @@ describe("extractClaudeTranscriptObservations", () => {
         outputTokens: 48,
         cacheCreationInputTokens: 0,
         cacheReadInputTokens: 16,
-        serverToolUse: "{\"web_search_requests\":0}"
+        serverToolUse: "{\"web_search_requests\":0}",
+        providerId: null,
+        providerBaseUrl: null,
+        providerHost: null
       }
     ]);
   });
@@ -233,7 +242,10 @@ describe("extractClaudeTranscriptObservations", () => {
         messageId: "msg_1",
         model: "sonnet-test",
         stopReason: "end_turn",
-        responseChars: 5
+        responseChars: 5,
+        providerId: null,
+        providerBaseUrl: null,
+        providerHost: null
       }
     ]);
   });
@@ -297,9 +309,56 @@ describe("extractClaudeTranscriptObservations", () => {
         messageId: "msg_1",
         model: "sonnet-test",
         stopReason: "end_turn",
-        responseChars: 5
+        responseChars: 5,
+        providerId: null,
+        providerBaseUrl: null,
+        providerHost: null
       }
     ]);
+  });
+
+  it("extracts provider metadata when the transcript includes provider details", () => {
+    const observations = extractClaudeTranscriptObservations({
+      type: "assistant",
+      sessionId: "ses_1",
+      cwd: "D:/projects/dev/agent-metrics",
+      timestamp: "2026-05-27T10:00:10.000Z",
+      message: {
+        id: "msg_provider",
+        role: "assistant",
+        model: "sonnet-test",
+        stop_reason: "end_turn",
+        content: [{ type: "text", text: "Done." }],
+        metadata: {
+          provider_id: "ai",
+          base_url: "https://api.psydo.top/v1"
+        },
+        usage: {
+          input_tokens: 12,
+          output_tokens: 5,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 1,
+          server_tool_use: { web_search_requests: 0 }
+        }
+      }
+    });
+
+    expect(observations).toContainEqual(
+      expect.objectContaining({
+        kind: "assistant_responded",
+        providerId: "ai",
+        providerBaseUrl: "https://api.psydo.top/v1",
+        providerHost: "api.psydo.top"
+      })
+    );
+    expect(observations).toContainEqual(
+      expect.objectContaining({
+        kind: "token_usage_recorded",
+        providerId: "ai",
+        providerBaseUrl: "https://api.psydo.top/v1",
+        providerHost: "api.psydo.top"
+      })
+    );
   });
 
   it("normalizes transcript observations into AnyEvent-compatible payloads", () => {

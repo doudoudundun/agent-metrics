@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { AnyEvent } from "@agent-metrics/event-schema";
+import type { AnyEvent, SourceAdapter, SourceVendor } from "@agent-metrics/event-schema";
 
 type HookEventName =
   | "SessionStart"
@@ -33,6 +33,9 @@ export type ClaudeRawEnvelope = {
   payload: ClaudeHookPayload;
 };
 
+const CLAUDE_SOURCE_VENDOR: SourceVendor = "claude-code";
+const CLAUDE_HOOK_ADAPTER: SourceAdapter = "claude-hook";
+
 export function buildClaudeRawEnvelope(payload: ClaudeHookPayload): ClaudeRawEnvelope {
   return {
     raw_event_id: randomUUID(),
@@ -53,8 +56,8 @@ export function normalizeClaudeHookEvent(payload: ClaudeHookPayload): AnyEvent |
     event_id: randomUUID(),
     session_id: normalizeString(payload.session_id, "unknown-session"),
     timestamp: normalizeTimestamp(payload.timestamp),
-    source_vendor: "claude-code",
-    source_adapter: "claude",
+    source_vendor: CLAUDE_SOURCE_VENDOR,
+    source_adapter: CLAUDE_HOOK_ADAPTER,
     workspace_path: normalizeString(payload.cwd, ".")
   };
 

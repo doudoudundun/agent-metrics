@@ -235,6 +235,35 @@ describe("AnyEventSchema", () => {
     expect(unionResult.success).toBe(true);
   });
 
+  it("parses a token.usage.recorded event from a non-Claude source with provider metadata", () => {
+    const payload = {
+      event_id: "evt_13",
+      session_id: "ses_2",
+      timestamp: "2026-05-27T10:00:11.000Z",
+      source_vendor: "opencode",
+      source_adapter: "opencode-db",
+      workspace_path: "D:/projects/dev/agent-metrics",
+      type: "token.usage.recorded",
+      message_id: "msg_2",
+      model: "hy3-preview-free",
+      provider_id: "opencode",
+      provider_base_url: "https://api.opencode.dev",
+      provider_host: "api.opencode.dev",
+      input_tokens: 220,
+      output_tokens: 84,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 12,
+      server_tool_use: "{}",
+      usage_source: "opencode-message"
+    };
+
+    const result = TokenUsageRecordedEventSchema.safeParse(payload);
+    const unionResult = AnyEventSchema.safeParse(payload);
+
+    expect(result.success).toBe(true);
+    expect(unionResult.success).toBe(true);
+  });
+
   it("rejects a prompt.submitted event without a prompt id", () => {
     const result = AnyEventSchema.safeParse({
       event_id: "evt_14",
@@ -245,6 +274,20 @@ describe("AnyEventSchema", () => {
       workspace_path: "D:/projects/dev/agent-metrics",
       type: "prompt.submitted",
       prompt_chars: 27
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects an event with an unknown source vendor", () => {
+    const result = AnyEventSchema.safeParse({
+      event_id: "evt_15a",
+      session_id: "ses_1",
+      timestamp: "2026-05-27T10:00:10.000Z",
+      source_vendor: "unknown-tool",
+      source_adapter: "claude-transcript",
+      workspace_path: "D:/projects/dev/agent-metrics",
+      type: "session.started"
     });
 
     expect(result.success).toBe(false);
