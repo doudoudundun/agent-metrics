@@ -60,6 +60,32 @@ export const CodeEditAppliedEventSchema = BaseEventSchema.extend({
   edit_operation_count: z.number().int().positive()
 });
 
+export const PromptSubmittedEventSchema = BaseEventSchema.extend({
+  type: z.literal("prompt.submitted"),
+  prompt_id: z.string().min(1),
+  prompt_chars: z.number().int().nonnegative()
+});
+
+export const AssistantRespondedEventSchema = BaseEventSchema.extend({
+  type: z.literal("assistant.responded"),
+  message_id: z.string().min(1),
+  model: z.string().min(1).nullable().optional(),
+  stop_reason: z.string().min(1).nullable().optional(),
+  response_chars: z.number().int().nonnegative()
+});
+
+export const TokenUsageRecordedEventSchema = BaseEventSchema.extend({
+  type: z.literal("token.usage.recorded"),
+  message_id: z.string().min(1),
+  model: z.string().min(1).nullable().optional(),
+  input_tokens: z.number().int().nonnegative(),
+  output_tokens: z.number().int().nonnegative(),
+  cache_creation_input_tokens: z.number().int().nonnegative(),
+  cache_read_input_tokens: z.number().int().nonnegative(),
+  server_tool_use: z.string().default("{}"),
+  usage_source: z.literal("claude-transcript")
+});
+
 export const SnapshotCreatedEventSchema = BaseEventSchema.extend({
   type: z.literal("snapshot.created"),
   file_path: z.string().min(1),
@@ -77,6 +103,9 @@ export const AnyEventSchema = z.discriminatedUnion("type", [
   ToolCalledEventSchema,
   ...ToolFinishedEventSchemas,
   CodeEditAppliedEventSchema,
+  PromptSubmittedEventSchema,
+  AssistantRespondedEventSchema,
+  TokenUsageRecordedEventSchema,
   SnapshotCreatedEventSchema,
   IngestErrorEventSchema
 ]);
@@ -89,5 +118,8 @@ export type ToolSucceededEvent = z.infer<typeof ToolSucceededEventSchema>;
 export type ToolFailedEvent = z.infer<typeof ToolFailedEventSchema>;
 export type ToolFinishedEvent = z.infer<typeof ToolFinishedEventSchema>;
 export type CodeEditAppliedEvent = z.infer<typeof CodeEditAppliedEventSchema>;
+export type PromptSubmittedEvent = z.infer<typeof PromptSubmittedEventSchema>;
+export type AssistantRespondedEvent = z.infer<typeof AssistantRespondedEventSchema>;
+export type TokenUsageRecordedEvent = z.infer<typeof TokenUsageRecordedEventSchema>;
 export type SnapshotCreatedEvent = z.infer<typeof SnapshotCreatedEventSchema>;
 export type IngestErrorEvent = z.infer<typeof IngestErrorEventSchema>;

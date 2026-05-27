@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
+  AssistantRespondedEventSchema,
   AnyEventSchema,
   CodeEditAppliedEventSchema,
   IngestErrorEventSchema,
+  PromptSubmittedEventSchema,
   SessionEndedEventSchema,
   SessionStartedEventSchema,
   SnapshotCreatedEventSchema,
+  TokenUsageRecordedEventSchema,
   ToolCalledEventSchema,
   ToolFailedEventSchema,
   ToolFinishedEventSchema,
@@ -164,10 +167,66 @@ describe("AnyEventSchema", () => {
     expect(result.success).toBe(true);
   });
 
+  it("parses a prompt.submitted event", () => {
+    const result = PromptSubmittedEventSchema.safeParse({
+      event_id: "evt_10",
+      session_id: "ses_1",
+      timestamp: "2026-05-27T10:00:00.000Z",
+      source_vendor: "claude-code",
+      source_adapter: "claude",
+      workspace_path: "D:/projects/dev/agent-metrics",
+      type: "prompt.submitted",
+      prompt_id: "prompt_1",
+      prompt_chars: 27
+    });
+
+    expect(result.success).toBe(true);
+  });
+
+  it("parses an assistant.responded event", () => {
+    const result = AssistantRespondedEventSchema.safeParse({
+      event_id: "evt_11",
+      session_id: "ses_1",
+      timestamp: "2026-05-27T10:00:10.000Z",
+      source_vendor: "claude-code",
+      source_adapter: "claude",
+      workspace_path: "D:/projects/dev/agent-metrics",
+      type: "assistant.responded",
+      message_id: "msg_1",
+      model: "sonnet-test",
+      stop_reason: "end_turn",
+      response_chars: 16
+    });
+
+    expect(result.success).toBe(true);
+  });
+
+  it("parses a token.usage.recorded event", () => {
+    const result = TokenUsageRecordedEventSchema.safeParse({
+      event_id: "evt_12",
+      session_id: "ses_1",
+      timestamp: "2026-05-27T10:00:10.000Z",
+      source_vendor: "claude-code",
+      source_adapter: "claude",
+      workspace_path: "D:/projects/dev/agent-metrics",
+      type: "token.usage.recorded",
+      message_id: "msg_1",
+      model: "sonnet-test",
+      input_tokens: 120,
+      output_tokens: 48,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 16,
+      server_tool_use: "{\"web_search_requests\":0}",
+      usage_source: "claude-transcript"
+    });
+
+    expect(result.success).toBe(true);
+  });
+
   it("parses the full AnyEventSchema surface", () => {
     expect(
       AnyEventSchema.safeParse({
-        event_id: "evt_10",
+        event_id: "evt_13",
         session_id: "ses_1",
         timestamp: "2026-05-25T08:00:09.000Z",
         source_vendor: "claude-code",
