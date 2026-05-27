@@ -57,8 +57,6 @@ export type AggregateRowsResponse<T> = AggregateMeta & {
 export type ToolRowsResponse = AggregateRowsResponse<ToolRow>;
 export type SessionRowsResponse = AggregateRowsResponse<SessionRow>;
 
-type RowEnvelope<T> = T[] | AggregateRowsResponse<T>;
-
 async function fetchJson<T>(path: string): Promise<T> {
   const response = await fetch(path);
 
@@ -78,18 +76,18 @@ export async function fetchOverview(
 export async function fetchTools(
   scope: TimeScopeSelection = DEFAULT_TIME_SCOPE
 ): Promise<ToolRowsResponse> {
-  return rowsFromResponse(
-    await fetchJson<RowEnvelope<ToolRow>>(withScope("/api/tools", scope)),
-    scope
+  return parseAggregateRowsResponse<ToolRow>(
+    await fetchJson<unknown>(withScope("/api/tools", scope)),
+    "/api/tools"
   );
 }
 
 export async function fetchSessions(
   scope: TimeScopeSelection = DEFAULT_TIME_SCOPE
 ): Promise<SessionRowsResponse> {
-  return rowsFromResponse(
-    await fetchJson<RowEnvelope<SessionRow>>(withScope("/api/sessions", scope)),
-    scope
+  return parseAggregateRowsResponse<SessionRow>(
+    await fetchJson<unknown>(withScope("/api/sessions", scope)),
+    "/api/sessions"
   );
 }
 
@@ -105,27 +103,61 @@ function withScope(path: string, scope: TimeScopeSelection): string {
   return `${path}?${buildScopeSearchParams(scope).toString()}`;
 }
 
-function rowsFromResponse<T>(
-  response: RowEnvelope<T>,
-  scope: TimeScopeSelection
-): AggregateRowsResponse<T> {
-  if (!Array.isArray(response)) {
-    return response;
+function parseAggregateRowsResponse<T>(response: unknown, path: string): AggregateRowsResponse<T> {
+  if (
+    typeof response !== "object" ||
+    response === null ||
+    Array.isArray(response) ||
+    !("rows" in response) ||
+    !Array.isArray(response.rows) ||
+    !("mode" in response) ||
+    !("range" in response) ||
+    !("timezone" in response) ||
+    !("windowStart" in response) ||
+    !("windowEnd" in response) ||
+    !("updatedAt" in response) ||
+    typeof response.mode !== "string" ||
+    typeof response.range !== "string" ||
+    typeof response.timezone !== "string" ||
+    typeof response.updatedAt !== "string" ||
+    !isTimeScopeMode(response.mode) ||
+    !isTimeScopeRange(response.range) ||
+    !isValidTimeZone(response.timezone) ||
+    !isTimestampString(response.updatedAt) ||
+    !isNullableTimestamp(response.windowStart) ||
+    !isNullableTimestamp(response.windowEnd)
+  ) {
+    throw new Error(`Request failed: scoped aggregate metadata missing for ${path}`);
   }
 
-  return {
-    ...buildLegacyMeta(scope),
-    rows: response
-  };
+  return response as AggregateRowsResponse<T>;
 }
 
-function buildLegacyMeta(scope: TimeScopeSelection): AggregateMeta {
-  return {
-    mode: scope.mode,
-    range: scope.range,
-    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-    windowStart: null,
-    windowEnd: null,
-    updatedAt: new Date().toISOString()
-  };
+function isTimeScopeMode(value: string): value is TimeScopeSelection["mode"] {
+  return value === "calendar" || value === "rolling" || value === "lifetime";
+}
+
+function isTimeScopeRange(value: string): value is TimeScopeSelection["range"] {
+  return value === "day" || value === "week" || value === "month";
+}
+
+function isNullableTimestamp(value: unknown): value is string | null {
+  return value === null || isTimestampString(value);
+}
+
+function isTimestampString(value: unknown): value is string {
+  if (typeof value !== "string") {
+    return false;
+  }
+
+  return !Number.isNaN(new Date(value).getTime());
+}
+
+function isValidTimeZone(value: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: value });
+    return true;
+  } catch {
+    return false;
+  }
 }

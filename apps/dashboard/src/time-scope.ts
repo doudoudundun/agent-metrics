@@ -25,12 +25,38 @@ const ROLLING_LABELS: Record<TimeScopeRange, string> = {
 
 export function buildScopeLabel(selection: TimeScopeSelection): string {
   if (selection.mode === "lifetime") {
-    return "Lifetime";
+    return "All Time";
   }
 
   return selection.mode === "rolling"
     ? ROLLING_LABELS[selection.range]
     : CALENDAR_LABELS[selection.range];
+}
+
+export function formatScopeDateTime(value: string, timezone: string): string | null {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  try {
+    const formatter = new Intl.DateTimeFormat("sv-SE", {
+      timeZone: timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false
+    });
+    const parts = formatter.formatToParts(date);
+
+    return `${part(parts, "year")}-${part(parts, "month")}-${part(parts, "day")} ${part(parts, "hour")}:${part(parts, "minute")}:${part(parts, "second")}`;
+  } catch {
+    return null;
+  }
 }
 
 export function buildScopeSearchParams(selection: TimeScopeSelection): URLSearchParams {
@@ -43,4 +69,14 @@ export function buildScopeSearchParams(selection: TimeScopeSelection): URLSearch
 
 export function isSameScope(left: TimeScopeSelection, right: TimeScopeSelection): boolean {
   return left.mode === right.mode && left.range === right.range;
+}
+
+function part(parts: Intl.DateTimeFormatPart[], type: Intl.DateTimeFormatPartTypes): string {
+  const value = parts.find((entry) => entry.type === type)?.value;
+
+  if (!value) {
+    throw new Error(`Missing ${type} in formatted date parts.`);
+  }
+
+  return value;
 }

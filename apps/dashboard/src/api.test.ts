@@ -40,7 +40,7 @@ describe("api client", () => {
     expect(fetch).toHaveBeenCalledWith("/api/overview?mode=rolling&range=week");
   });
 
-  it("returns scoped tool envelopes while accepting legacy arrays", async () => {
+  it("returns scoped tool envelopes", async () => {
     const rows = [{ toolName: "Read", count: 1, failures: 0, averageDurationMs: 14 }];
     const scopeMeta = {
       mode: "calendar" as const,
@@ -53,12 +53,50 @@ describe("api client", () => {
 
     stubFetchJson({ rows, ...scopeMeta });
     await expect(fetchTools()).resolves.toEqual({ rows, ...scopeMeta });
-
-    stubFetchJson(rows);
-    await expect(fetchTools()).resolves.toEqual(expect.objectContaining({ rows }));
   });
 
-  it("returns scoped session envelopes while accepting legacy arrays", async () => {
+  it("rejects legacy tool arrays that omit scoped metadata", async () => {
+    const rows = [{ toolName: "Read", count: 1, failures: 0, averageDurationMs: 14 }];
+
+    stubFetchJson(rows);
+    await expect(fetchTools()).rejects.toThrow(
+      "Request failed: scoped aggregate metadata missing for /api/tools"
+    );
+  });
+
+  it("rejects malformed tool envelopes that do not match the aggregate metadata contract", async () => {
+    stubFetchJson({
+      rows: [{ toolName: "Read", count: 1, failures: 0, averageDurationMs: 14 }],
+      mode: "calendar",
+      range: "day",
+      timezone: "Asia/Shanghai",
+      windowStart: 123,
+      windowEnd: "2026-05-27T10:30:00.000Z",
+      updatedAt: "2026-05-27T10:30:00.000Z"
+    });
+
+    await expect(fetchTools()).rejects.toThrow(
+      "Request failed: scoped aggregate metadata missing for /api/tools"
+    );
+  });
+
+  it("rejects tool envelopes with an invalid timezone identifier", async () => {
+    stubFetchJson({
+      rows: [{ toolName: "Read", count: 1, failures: 0, averageDurationMs: 14 }],
+      mode: "calendar",
+      range: "day",
+      timezone: "Mars/Olympus",
+      windowStart: "2026-05-26T10:30:00.000Z",
+      windowEnd: "2026-05-27T10:30:00.000Z",
+      updatedAt: "2026-05-27T10:30:00.000Z"
+    });
+
+    await expect(fetchTools()).rejects.toThrow(
+      "Request failed: scoped aggregate metadata missing for /api/tools"
+    );
+  });
+
+  it("returns scoped session envelopes", async () => {
     const rows = [{ sessionId: "ses_1", workspacePath: "D:/projects/dev/agent-metrics" }];
     const scopeMeta = {
       mode: "calendar" as const,
@@ -71,8 +109,46 @@ describe("api client", () => {
 
     stubFetchJson({ rows, ...scopeMeta });
     await expect(fetchSessions()).resolves.toEqual({ rows, ...scopeMeta });
+  });
+
+  it("rejects legacy session arrays that omit scoped metadata", async () => {
+    const rows = [{ sessionId: "ses_1", workspacePath: "D:/projects/dev/agent-metrics" }];
 
     stubFetchJson(rows);
-    await expect(fetchSessions()).resolves.toEqual(expect.objectContaining({ rows }));
+    await expect(fetchSessions()).rejects.toThrow(
+      "Request failed: scoped aggregate metadata missing for /api/sessions"
+    );
+  });
+
+  it("rejects malformed session envelopes with invalid scope values", async () => {
+    stubFetchJson({
+      rows: [{ sessionId: "ses_1", workspacePath: "D:/projects/dev/agent-metrics" }],
+      mode: "custom",
+      range: "year",
+      timezone: "Asia/Shanghai",
+      windowStart: null,
+      windowEnd: null,
+      updatedAt: "2026-05-27T10:30:00.000Z"
+    });
+
+    await expect(fetchSessions()).rejects.toThrow(
+      "Request failed: scoped aggregate metadata missing for /api/sessions"
+    );
+  });
+
+  it("rejects session envelopes with invalid timestamp strings", async () => {
+    stubFetchJson({
+      rows: [{ sessionId: "ses_1", workspacePath: "D:/projects/dev/agent-metrics" }],
+      mode: "calendar",
+      range: "day",
+      timezone: "Asia/Shanghai",
+      windowStart: "not-a-date",
+      windowEnd: "2026-05-27T10:30:00.000Z",
+      updatedAt: "still-not-a-date"
+    });
+
+    await expect(fetchSessions()).rejects.toThrow(
+      "Request failed: scoped aggregate metadata missing for /api/sessions"
+    );
   });
 });

@@ -15,6 +15,7 @@ import { ToolRankingTable } from "./components/ToolRankingTable";
 import {
   buildScopeLabel,
   DEFAULT_TIME_SCOPE,
+  formatScopeDateTime,
   isSameScope,
   type TimeScopeSelection
 } from "./time-scope";
@@ -323,7 +324,10 @@ export function App() {
     );
   }
 
-  const lastUpdated = formatDateTime(dashboard.overview.updatedAt);
+  const lastUpdated = formatScopeDateTime(
+    dashboard.overview.updatedAt,
+    dashboard.overview.timezone
+  );
   const trendRows = trendOverride ? (trendTools.rows ?? dashboard.tools) : dashboard.tools;
   const rankingRows = rankingOverride ? (rankingTools.rows ?? dashboard.tools) : dashboard.tools;
   const trendStatusMessage = buildPanelStatusMessage(
@@ -443,23 +447,4 @@ function buildPanelStatusMessage(
 
 function messageFromError(error: unknown): string {
   return error instanceof Error ? error.message : "Failed to refresh scoped tool data.";
-}
-
-function formatDateTime(value: string): string | null {
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return null;
-  }
-
-  const parts = [
-    date.getFullYear(),
-    date.getMonth() + 1,
-    date.getDate(),
-    date.getHours(),
-    date.getMinutes(),
-    date.getSeconds()
-  ].map((part) => String(part).padStart(2, "0"));
-
-  return `${parts[0]}-${parts[1]}-${parts[2]} ${parts[3]}:${parts[4]}:${parts[5]}`;
 }

@@ -43,7 +43,7 @@ export function PanelScopeControls({
           <option value="global">Follow Global</option>
           <option value="calendar">Natural Calendar</option>
           <option value="rolling">Rolling Window</option>
-          <option value="lifetime">Lifetime</option>
+          <option value="lifetime">All Time</option>
         </select>
         <select
           aria-label={`${panelName} range`}

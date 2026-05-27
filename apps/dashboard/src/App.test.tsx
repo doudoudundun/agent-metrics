@@ -141,6 +141,36 @@ describe("App", () => {
     view.unmount();
   });
 
+  it("renders Updated using the overview timezone instead of the browser timezone", async () => {
+    const updatedAt = "2026-05-27T01:30:00.000Z";
+    const serverTimezone = pickNonLocalTimezone(updatedAt);
+    const expectedUpdated = formatInTimeZone(updatedAt, serverTimezone);
+
+    vi.mocked(fetchOverview).mockResolvedValue({
+      mode: "calendar",
+      range: "day",
+      timezone: serverTimezone,
+      windowStart: "2026-05-26T00:00:00.000Z",
+      windowEnd: "2026-05-27T00:00:00.000Z",
+      updatedAt,
+      sessionCount: 3,
+      totalToolCalls: 12,
+      successfulExecutions: 10,
+      failedExecutions: 2,
+      successRate: 0.8333,
+      editOperationCount: 4,
+      affectedFileCount: 7,
+      insertions: 42,
+      deletions: 8
+    });
+
+    const view = render(<App />);
+
+    expect(await screen.findByText(expectedUpdated)).toBeInTheDocument();
+
+    view.unmount();
+  });
+
   it("renders export links", async () => {
     const view = render(<App />);
 
@@ -152,6 +182,24 @@ describe("App", () => {
       "href",
       "/api/exports/json"
     );
+
+    view.unmount();
+  });
+
+  it("shows All Time in the panel scope mode controls", async () => {
+    const view = render(<App />);
+
+    expect(await screen.findByText("12")).toBeInTheDocument();
+    expect(
+      within(screen.getByLabelText("Activity Snapshot mode")).getByRole("option", {
+        name: "All Time"
+      })
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByLabelText("Tool Rankings mode")).getByRole("option", {
+        name: "All Time"
+      })
+    ).toBeInTheDocument();
 
     view.unmount();
   });
@@ -365,9 +413,9 @@ function seedApiMocks(): void {
     mode: "calendar",
     range: "day",
     timezone: "Asia/Shanghai",
-    windowStart: "2026-05-27T00:00:00",
-    windowEnd: "2026-05-28T00:00:00",
-    updatedAt: "2026-05-27T18:30:00",
+    windowStart: "2026-05-26T16:00:00.000Z",
+    windowEnd: "2026-05-27T16:00:00.000Z",
+    updatedAt: "2026-05-27T10:30:00.000Z",
     sessionCount: 3,
     totalToolCalls: 12,
     successfulExecutions: 10,
@@ -382,18 +430,18 @@ function seedApiMocks(): void {
     mode: "calendar",
     range: "day",
     timezone: "Asia/Shanghai",
-    windowStart: "2026-05-27T00:00:00",
-    windowEnd: "2026-05-28T00:00:00",
-    updatedAt: "2026-05-27T18:30:00",
+    windowStart: "2026-05-26T16:00:00.000Z",
+    windowEnd: "2026-05-27T16:00:00.000Z",
+    updatedAt: "2026-05-27T10:30:00.000Z",
     rows: [{ toolName: "Read", count: 6, failures: 0, averageDurationMs: 15 }]
   });
   vi.mocked(fetchSessions).mockResolvedValue({
     mode: "calendar",
     range: "day",
     timezone: "Asia/Shanghai",
-    windowStart: "2026-05-27T00:00:00",
-    windowEnd: "2026-05-28T00:00:00",
-    updatedAt: "2026-05-27T18:30:00",
+    windowStart: "2026-05-26T16:00:00.000Z",
+    windowEnd: "2026-05-27T16:00:00.000Z",
+    updatedAt: "2026-05-27T10:30:00.000Z",
     rows: [{ sessionId: "ses_1", workspacePath: "D:/projects/dev/agent-metrics" }]
   });
   apiMocks.fetchSessionDetail.mockResolvedValue({
@@ -426,4 +474,44 @@ function seedApiMocks(): void {
 
 async function nextTick(): Promise<void> {
   await new Promise((resolve) => window.setTimeout(resolve, 0));
+}
+
+function pickNonLocalTimezone(value: string): string {
+  const localTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const localFormatted = formatInTimeZone(value, localTimezone);
+  const candidates = ["UTC", "Asia/Shanghai", "America/Los_Angeles", "Pacific/Auckland"];
+
+  for (const candidate of candidates) {
+    if (formatInTimeZone(value, candidate) !== localFormatted) {
+      return candidate;
+    }
+  }
+
+  throw new Error("Expected to find a server timezone that differs from the local browser time.");
+}
+
+function formatInTimeZone(value: string, timezone: string): string {
+  const formatter = new Intl.DateTimeFormat("sv-SE", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false
+  });
+  const parts = formatter.formatToParts(new Date(value));
+
+  return `${part(parts, "year")}-${part(parts, "month")}-${part(parts, "day")} ${part(parts, "hour")}:${part(parts, "minute")}:${part(parts, "second")}`;
+}
+
+function part(parts: Intl.DateTimeFormatPart[], type: Intl.DateTimeFormatPartTypes): string {
+  const value = parts.find((entry) => entry.type === type)?.value;
+
+  if (!value) {
+    throw new Error(`Missing ${type} in formatted date parts.`);
+  }
+
+  return value;
 }
