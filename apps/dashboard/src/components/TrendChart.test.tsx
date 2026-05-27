@@ -17,6 +17,9 @@ describe("TrendChart", () => {
   it("shows the total calls across the top five tools", () => {
     render(
       <TrendChart
+        scopeLabel="Today"
+        override={null}
+        onOverrideChange={vi.fn()}
         rows={[
           { toolName: "Read", count: 9, failures: 0, averageDurationMs: 10 },
           { toolName: "Edit", count: 8, failures: 0, averageDurationMs: 11 },
@@ -30,5 +33,6 @@ describe("TrendChart", () => {
 
     expect(screen.getByText("Top 5 by calls")).toBeInTheDocument();
     expect(screen.getByText("35 calls total")).toBeInTheDocument();
+    expect(screen.getByText("Following global: Today")).toBeInTheDocument();
   });
 });

@@ -1,14 +1,32 @@
 import type { ToolRow } from "../api";
+import type { TimeScopeSelection } from "../time-scope";
+import { PanelScopeControls } from "./PanelScopeControls";
 
 type ToolRankingTableProps = {
   rows: ToolRow[];
+  scopeLabel: string;
+  override: TimeScopeSelection | null;
+  onOverrideChange: (next: TimeScopeSelection | null) => void;
 };
 
-export function ToolRankingTable({ rows }: ToolRankingTableProps) {
+export function ToolRankingTable({
+  rows,
+  scopeLabel,
+  override,
+  onOverrideChange
+}: ToolRankingTableProps) {
   return (
     <section className="panel table-panel">
-      <div className="panel-heading">
-        <h2>Tool Rankings</h2>
+      <div className="panel-heading panel-heading-scoped">
+        <div className="panel-title-block">
+          <h2>Tool Rankings</h2>
+          <PanelScopeControls
+            panelName="Tool Rankings"
+            scopeLabel={scopeLabel}
+            override={override}
+            onOverrideChange={onOverrideChange}
+          />
+        </div>
         <span>{rows.length} tracked</span>
       </div>
       <div className="table-shell">

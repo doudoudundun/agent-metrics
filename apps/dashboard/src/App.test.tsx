@@ -155,6 +155,59 @@ describe("App", () => {
 
     view.unmount();
   });
+
+  it("lets the activity snapshot override the global scope without changing tool rankings", async () => {
+    vi.mocked(fetchTools).mockImplementation(async (scope) => {
+      const requestedScope = scope ?? { mode: "calendar", range: "day" };
+
+      if (requestedScope.mode === "rolling" && requestedScope.range === "week") {
+        return {
+          mode: "rolling",
+          range: "week",
+          timezone: "Asia/Shanghai",
+          windowStart: "2026-05-20T10:30:00.000Z",
+          windowEnd: "2026-05-27T10:30:00.000Z",
+          updatedAt: "2026-05-27T10:30:00.000Z",
+          rows: [
+            { toolName: "Read", count: 9, failures: 0, averageDurationMs: 15 },
+            { toolName: "Edit", count: 4, failures: 0, averageDurationMs: 12 }
+          ]
+        };
+      }
+
+      return {
+        mode: "calendar",
+        range: "day",
+        timezone: "Asia/Shanghai",
+        windowStart: "2026-05-26T16:00:00.000Z",
+        windowEnd: "2026-05-27T10:30:00.000Z",
+        updatedAt: "2026-05-27T10:30:00.000Z",
+        rows: [{ toolName: "Read", count: 6, failures: 0, averageDurationMs: 15 }]
+      };
+    });
+
+    const view = render(<App />);
+
+    expect(await screen.findByText("6 calls total")).toBeInTheDocument();
+    vi.mocked(fetchOverview).mockClear();
+    vi.mocked(fetchTools).mockClear();
+    vi.mocked(fetchSessions).mockClear();
+
+    fireEvent.change(await screen.findByLabelText("Activity Snapshot mode"), {
+      target: { value: "rolling" }
+    });
+    fireEvent.change(screen.getByLabelText("Activity Snapshot range"), {
+      target: { value: "week" }
+    });
+
+    expect(await screen.findByText("13 calls total")).toBeInTheDocument();
+    expect(screen.getByText("1 tracked")).toBeInTheDocument();
+    expect(fetchTools).toHaveBeenCalledWith({ mode: "rolling", range: "week" });
+    expect(fetchOverview).not.toHaveBeenCalled();
+    expect(fetchSessions).not.toHaveBeenCalled();
+
+    view.unmount();
+  });
 });
 
 function seedApiMocks(): void {

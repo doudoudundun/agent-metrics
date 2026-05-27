@@ -41,6 +41,10 @@ const TrendChart = lazy(async () => {
 export function App() {
   const [dashboard, setDashboard] = useState<DashboardState>(INITIAL_STATE);
   const [globalScope, setGlobalScope] = useState<TimeScopeSelection>(DEFAULT_TIME_SCOPE);
+  const [trendOverride, setTrendOverride] = useState<TimeScopeSelection | null>(null);
+  const [rankingOverride, setRankingOverride] = useState<TimeScopeSelection | null>(null);
+  const [trendTools, setTrendTools] = useState<ToolRow[] | null>(null);
+  const [rankingTools, setRankingTools] = useState<ToolRow[] | null>(null);
   const [selectedSession, setSelectedSession] = useState<SessionDetailResponse | null>(null);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [loadErrorMessage, setLoadErrorMessage] = useState<string | null>(null);
@@ -107,6 +111,90 @@ export function App() {
       window.clearInterval(timer);
     };
   }, [globalScope]);
+
+  useEffect(() => {
+    if (!trendOverride) {
+      setTrendTools(null);
+      return;
+    }
+
+    let active = true;
+    setTrendTools([]);
+
+    const loadTools = async () => {
+      try {
+        const tools = await fetchTools(trendOverride);
+
+        if (!active) {
+          return;
+        }
+
+        startTransition(() => {
+          setTrendTools(tools.rows);
+        });
+      } catch {
+        if (!active) {
+          return;
+        }
+
+        startTransition(() => {
+          setTrendTools([]);
+        });
+      }
+    };
+
+    void loadTools();
+    const timer = window.setInterval(() => {
+      void loadTools();
+    }, 5000);
+
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [trendOverride]);
+
+  useEffect(() => {
+    if (!rankingOverride) {
+      setRankingTools(null);
+      return;
+    }
+
+    let active = true;
+    setRankingTools([]);
+
+    const loadTools = async () => {
+      try {
+        const tools = await fetchTools(rankingOverride);
+
+        if (!active) {
+          return;
+        }
+
+        startTransition(() => {
+          setRankingTools(tools.rows);
+        });
+      } catch {
+        if (!active) {
+          return;
+        }
+
+        startTransition(() => {
+          setRankingTools([]);
+        });
+      }
+    };
+
+    void loadTools();
+    const timer = window.setInterval(() => {
+      void loadTools();
+    }, 5000);
+
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [rankingOverride]);
 
   useEffect(() => {
     if (dashboard.sessions.length === 0) {
@@ -250,7 +338,12 @@ export function App() {
             </section>
           }
         >
-          <TrendChart rows={dashboard.tools} />
+          <TrendChart
+            rows={trendOverride ? (trendTools ?? []) : dashboard.tools}
+            scopeLabel={scopeLabel}
+            override={trendOverride}
+            onOverrideChange={setTrendOverride}
+          />
         </Suspense>
         <div className="surface-stack">
           <RecentSessionsTable
@@ -263,7 +356,12 @@ export function App() {
       </section>
 
       <section className="surface-stack">
-        <ToolRankingTable rows={dashboard.tools} />
+        <ToolRankingTable
+          rows={rankingOverride ? (rankingTools ?? []) : dashboard.tools}
+          scopeLabel={scopeLabel}
+          override={rankingOverride}
+          onOverrideChange={setRankingOverride}
+        />
       </section>
     </main>
   );

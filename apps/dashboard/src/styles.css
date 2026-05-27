@@ -322,6 +322,66 @@ body::before {
   font-size: 12px;
 }
 
+.panel-heading-scoped {
+  align-items: start;
+}
+
+.panel-title-block {
+  display: grid;
+  gap: 12px;
+}
+
+.panel-scope-controls {
+  display: grid;
+  gap: 8px;
+}
+
+.panel-scope-status {
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.panel-scope-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.panel-scope-fields select,
+.panel-scope-fields button {
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid rgba(226, 236, 247, 0.14);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--panel-text);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.panel-scope-fields select:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.panel-scope-fields option {
+  background: var(--panel);
+}
+
+.panel-scope-fields button {
+  border-color: rgba(209, 255, 77, 0.3);
+  color: var(--signal);
+  transition:
+    border-color 160ms ease,
+    background 160ms ease;
+}
+
+.panel-scope-fields button:hover {
+  border-color: rgba(209, 255, 77, 0.54);
+  background: rgba(209, 255, 77, 0.1);
+}
+
 .chart-summary {
   display: grid;
   justify-items: end;
@@ -524,6 +584,14 @@ tbody tr[data-selected="true"] .session-select {
 
   .kpi-grid {
     grid-template-columns: 1fr;
+  }
+
+  .panel-heading-scoped {
+    display: grid;
+  }
+
+  .panel-heading-scoped .chart-summary {
+    justify-items: start;
   }
 
   th,

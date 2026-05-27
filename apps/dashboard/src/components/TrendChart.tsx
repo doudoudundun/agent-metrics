@@ -8,12 +8,17 @@ import {
   YAxis
 } from "recharts";
 import type { ToolRow } from "../api";
+import type { TimeScopeSelection } from "../time-scope";
+import { PanelScopeControls } from "./PanelScopeControls";
 
 type TrendChartProps = {
   rows: ToolRow[];
+  scopeLabel: string;
+  override: TimeScopeSelection | null;
+  onOverrideChange: (next: TimeScopeSelection | null) => void;
 };
 
-export function TrendChart({ rows }: TrendChartProps) {
+export function TrendChart({ rows, scopeLabel, override, onOverrideChange }: TrendChartProps) {
   const data = [...rows]
     .sort((left, right) => right.count - left.count || left.toolName.localeCompare(right.toolName))
     .slice(0, 5)
@@ -25,8 +30,16 @@ export function TrendChart({ rows }: TrendChartProps) {
 
   return (
     <section className="panel chart-panel">
-      <div className="panel-heading">
-        <h2>Activity Snapshot</h2>
+      <div className="panel-heading panel-heading-scoped">
+        <div className="panel-title-block">
+          <h2>Activity Snapshot</h2>
+          <PanelScopeControls
+            panelName="Activity Snapshot"
+            scopeLabel={scopeLabel}
+            override={override}
+            onOverrideChange={onOverrideChange}
+          />
+        </div>
         <div className="chart-summary">
           <span>Top 5 by calls</span>
           <strong>{totalCalls} calls total</strong>
