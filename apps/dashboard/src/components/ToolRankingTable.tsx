@@ -9,6 +9,7 @@ type ToolRankingTableProps = {
   override: TimeScopeSelection | null;
   onOverrideChange: (next: TimeScopeSelection | null) => void;
   statusMessage?: string | null;
+  emptyMessage?: string;
 };
 
 export function ToolRankingTable({
@@ -17,7 +18,8 @@ export function ToolRankingTable({
   scopeLabel,
   override,
   onOverrideChange,
-  statusMessage
+  statusMessage,
+  emptyMessage
 }: ToolRankingTableProps) {
   return (
     <section className="panel table-panel">
@@ -35,28 +37,32 @@ export function ToolRankingTable({
         <span>{rows.length} tracked</span>
       </div>
       {statusMessage ? <p className="panel-scope-message">{statusMessage}</p> : null}
-      <div className="table-shell">
-        <table>
-          <thead>
-            <tr>
-              <th>Tool</th>
-              <th>Calls</th>
-              <th>Failures</th>
-              <th>Avg Duration</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => (
-              <tr key={row.toolName}>
-                <td>{row.toolName}</td>
-                <td>{row.count}</td>
-                <td>{row.failures}</td>
-                <td>{row.averageDurationMs} ms</td>
+      {rows.length > 0 ? (
+        <div className="table-shell">
+          <table>
+            <thead>
+              <tr>
+                <th>Tool</th>
+                <th>Calls</th>
+                <th>Failures</th>
+                <th>Avg Duration</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr key={row.toolName}>
+                  <td>{row.toolName}</td>
+                  <td>{row.count}</td>
+                  <td>{row.failures}</td>
+                  <td>{row.averageDurationMs} ms</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <p className="panel-empty">{emptyMessage ?? "No tool activity in this scope."}</p>
+      )}
     </section>
   );
 }

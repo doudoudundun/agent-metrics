@@ -141,6 +141,23 @@ describe("App", () => {
     view.unmount();
   });
 
+  it("renders overview metrics before tools and sessions finish loading", async () => {
+    vi.mocked(fetchTools).mockImplementationOnce(() => new Promise(() => undefined));
+    vi.mocked(fetchSessions).mockImplementationOnce(() => new Promise(() => undefined));
+
+    const view = render(<App />);
+
+    expect(
+      await screen.findByRole("region", { name: "Overview metrics for Today" })
+    ).toBeInTheDocument();
+    expect(screen.getByText("12")).toBeInTheDocument();
+    expect(screen.getAllByText("Loading global tool metrics...")).toHaveLength(2);
+    expect(screen.getByText("Loading recent sessions...")).toBeInTheDocument();
+    expect(screen.getByText("Waiting for session activity...")).toBeInTheDocument();
+
+    view.unmount();
+  });
+
   it("renders Updated using the overview timezone instead of the browser timezone", async () => {
     const updatedAt = "2026-05-27T01:30:00.000Z";
     const serverTimezone = pickNonLocalTimezone(updatedAt);

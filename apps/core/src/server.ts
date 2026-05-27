@@ -5,7 +5,9 @@ const app = buildApp({
   eventLogPath: resolveDefaultEventLogPath(import.meta.url)
 });
 
-app.listen({ host: "127.0.0.1", port: 4318 }).catch((error: unknown) => {
+const port = Number(process.env.AGENT_METRICS_CORE_PORT ?? "45183");
+
+app.listen({ host: "127.0.0.1", port }).catch((error: unknown) => {
   app.log.error(error as Error);
   process.exit(1);
 });

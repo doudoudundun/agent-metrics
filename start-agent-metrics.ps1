@@ -7,10 +7,11 @@ param(
 $ErrorActionPreference = "Stop"
 
 $RepoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-$CorePort = 4318
-$DashboardPort = 4173
+$CorePort = if ($env:AGENT_METRICS_CORE_PORT) { [int]$env:AGENT_METRICS_CORE_PORT } else { 45183 }
+$DashboardPort = if ($env:AGENT_METRICS_DASHBOARD_PORT) { [int]$env:AGENT_METRICS_DASHBOARD_PORT } else { 4173 }
 $CoreUrl = "http://127.0.0.1:$CorePort/api/overview"
 $DashboardUrl = "http://127.0.0.1:$DashboardPort"
+$DashboardApiUrl = "$DashboardUrl/api/overview"
 $RuntimeDir = Join-Path $RepoRoot ".runtime"
 $HookWatcherOutLog = Join-Path $RuntimeDir "hook-watcher.out.log"
 $HookWatcherErrLog = Join-Path $RuntimeDir "hook-watcher.err.log"
@@ -59,6 +60,23 @@ function Wait-UntilHealthy([string]$Name, [string]$Url, [scriptblock]$Validator,
   }
 
   throw "$Name did not become healthy in time."
+}
+
+function Test-DashboardHealthy() {
+  $shellHealthy = Test-HttpHealthy -Url $DashboardUrl -Validator {
+    param($Response)
+    return $Response.Content -match "<title>Agent Metrics</title>"
+  }
+
+  if (-not $shellHealthy) {
+    return $false
+  }
+
+  return Test-HttpHealthy -Url $DashboardApiUrl -Validator {
+    param($Response)
+    $json = $Response.Content | ConvertFrom-Json
+    return $null -ne $json.sessionCount
+  }
 }
 
 function Ensure-Command([string]$Name) {
@@ -265,11 +283,31 @@ function Start-CoreIfNeeded() {
   Write-Step "Core API started with PID $($process.Id)"
 }
 
-function Start-DashboardIfNeeded() {
-  $dashboardHealthy = Test-HttpHealthy -Url $DashboardUrl -Validator {
-    param($Response)
-    return $Response.Content -match "<title>Agent Metrics</title>"
+function Get-ManagedDashboardPid() {
+  $connection = Get-NetTCPConnection -LocalPort $DashboardPort -State Listen -ErrorAction SilentlyContinue |
+    Select-Object -First 1
+
+  if ($null -eq $connection) {
+    return $null
   }
+
+  $managedPid = [int]$connection.OwningProcess
+  $process = Get-CimInstance Win32_Process -Filter "ProcessId = $managedPid" -ErrorAction SilentlyContinue
+
+  if (
+    $null -eq $process -or
+    $process.Name -ne "node.exe" -or
+    $process.CommandLine -notlike "*$RepoRoot*" -or
+    $process.CommandLine -notmatch "vite(\.js)?"
+  ) {
+    return $null
+  }
+
+  return $managedPid
+}
+
+function Start-DashboardIfNeeded() {
+  $dashboardHealthy = Test-DashboardHealthy
 
   if ($dashboardHealthy) {
     Write-Step "Dashboard already running at $DashboardUrl"
@@ -277,7 +315,17 @@ function Start-DashboardIfNeeded() {
   }
 
   if (Get-NetTCPConnection -LocalPort $DashboardPort -State Listen -ErrorAction SilentlyContinue) {
-    throw "Port $DashboardPort is already in use, but the Agent Metrics dashboard health check failed."
+    $managedPid = Get-ManagedDashboardPid
+
+    if ($null -ne $managedPid) {
+      Write-Step "Stopping stale dashboard process with PID $managedPid"
+      Stop-Process -Id $managedPid -Force
+      Start-Sleep -Seconds 1
+    }
+  }
+
+  if (Get-NetTCPConnection -LocalPort $DashboardPort -State Listen -ErrorAction SilentlyContinue) {
+    throw "Port $DashboardPort is already in use, but the Agent Metrics dashboard proxy health check failed."
   }
 
   Write-Step "Starting dashboard"
@@ -289,9 +337,10 @@ function Start-DashboardIfNeeded() {
     -WindowStyle Hidden `
     -PassThru
 
-  Wait-UntilHealthy -Name "Dashboard" -Url $DashboardUrl -Validator {
+  Wait-UntilHealthy -Name "Dashboard" -Url $DashboardApiUrl -Validator {
     param($Response)
-    return $Response.Content -match "<title>Agent Metrics</title>"
+    $json = $Response.Content | ConvertFrom-Json
+    return $null -ne $json.sessionCount
   } -LogPath $DashboardErrLog
 
   Write-Step "Dashboard started with PID $($process.Id)"

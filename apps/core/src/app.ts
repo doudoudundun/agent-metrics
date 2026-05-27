@@ -1,5 +1,5 @@
 import { mkdirSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
@@ -87,12 +87,46 @@ type TimeWindow = {
   params: string[];
 };
 
+type EventLogSignature = {
+  mtimeMs: number;
+  size: number;
+};
+
 export function resolveDefaultDbPath(moduleUrl: string): string {
   return fileURLToPath(new URL("../../../data/sqlite/metrics.sqlite", moduleUrl));
 }
 
 export function resolveDefaultEventLogPath(moduleUrl: string): string {
   return fileURLToPath(new URL("../../../data/events/events.jsonl", moduleUrl));
+}
+
+export function createEventLogSynchronizer(input: {
+  eventLogPath: string;
+  ingest: () => Promise<void>;
+}): () => Promise<void> {
+  let lastIngestedSignature: EventLogSignature | null = null;
+  let syncQueue: Promise<void> = Promise.resolve();
+
+  return async () => {
+    const run = syncQueue.catch(() => undefined).then(async () => {
+      const nextSignature = await readEventLogSignature(input.eventLogPath);
+
+      if (isSameEventLogSignature(nextSignature, lastIngestedSignature)) {
+        return;
+      }
+
+      if (nextSignature === null) {
+        lastIngestedSignature = null;
+        return;
+      }
+
+      await input.ingest();
+      lastIngestedSignature = nextSignature;
+    });
+
+    syncQueue = run;
+    await run;
+  };
 }
 
 function selectOverviewRows(
@@ -277,25 +311,29 @@ export function buildApp(input: BuildAppInput): MetricsApp {
   migrateLegacyCodeEditsSchema(db);
 
   const app = Fastify();
-  let ingestQueue: Promise<void> = Promise.resolve();
+  const metricsApp = Object.assign(app, { db });
+  const syncEventLog = input.eventLogPath
+    ? createEventLogSynchronizer({
+        eventLogPath: input.eventLogPath,
+        ingest: async () => {
+          await ingestEventLog({
+            app: metricsApp,
+            eventLogPath: input.eventLogPath!
+          });
+        }
+      })
+    : null;
 
   app.addHook("onClose", async () => {
     db.close();
   });
 
   app.addHook("onRequest", async () => {
-    if (!input.eventLogPath) {
+    if (!syncEventLog) {
       return;
     }
 
-    ingestQueue = ingestQueue.catch(() => undefined).then(async () => {
-      await ingestEventLog({
-        app: metricsApp,
-        eventLogPath: input.eventLogPath!
-      });
-    });
-
-    await ingestQueue;
+    await syncEventLog();
   });
 
   app.get("/api/overview", async (request) => {
@@ -413,8 +451,6 @@ export function buildApp(input: BuildAppInput): MetricsApp {
     return toCsv(selectToolRanking(db));
   });
 
-  const metricsApp = Object.assign(app, { db });
-
   return metricsApp;
 }
 
@@ -487,4 +523,32 @@ function parseFilesChanged(value: string): string[] {
 
 function isMissingFileError(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
+}
+
+async function readEventLogSignature(eventLogPath: string): Promise<EventLogSignature | null> {
+  try {
+    const details = await stat(eventLogPath);
+
+    return {
+      mtimeMs: details.mtimeMs,
+      size: details.size
+    };
+  } catch (error) {
+    if (isMissingFileError(error)) {
+      return null;
+    }
+
+    throw error;
+  }
+}
+
+function isSameEventLogSignature(
+  left: EventLogSignature | null,
+  right: EventLogSignature | null
+): boolean {
+  if (left === null || right === null) {
+    return left === right;
+  }
+
+  return left.size === right.size && left.mtimeMs === right.mtimeMs;
 }

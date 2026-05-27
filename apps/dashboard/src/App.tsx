@@ -21,25 +21,25 @@ import {
 } from "./time-scope";
 import "./styles.css";
 
-type DashboardState = {
-  overview: OverviewResponse | null;
-  sessions: SessionRow[];
-  tools: ToolRow[];
-};
-
 type PanelToolsState = {
   rows: ToolRow[] | null;
   loading: boolean;
   errorMessage: string | null;
 };
 
-const INITIAL_STATE: DashboardState = {
-  overview: null,
-  sessions: [],
-  tools: []
+type SessionsState = {
+  rows: SessionRow[] | null;
+  loading: boolean;
+  errorMessage: string | null;
 };
 
 const INITIAL_PANEL_TOOLS_STATE: PanelToolsState = {
+  rows: null,
+  loading: false,
+  errorMessage: null
+};
+
+const INITIAL_SESSIONS_STATE: SessionsState = {
   rows: null,
   loading: false,
   errorMessage: null
@@ -51,8 +51,12 @@ const TrendChart = lazy(async () => {
   return { default: module.TrendChart };
 });
 
+const DEFAULT_TOOL_EMPTY_MESSAGE = "No tool activity in this scope.";
+
 export function App() {
-  const [dashboard, setDashboard] = useState<DashboardState>(INITIAL_STATE);
+  const [overview, setOverview] = useState<OverviewResponse | null>(null);
+  const [baseTools, setBaseTools] = useState<PanelToolsState>(INITIAL_PANEL_TOOLS_STATE);
+  const [baseSessions, setBaseSessions] = useState<SessionsState>(INITIAL_SESSIONS_STATE);
   const [globalScope, setGlobalScope] = useState<TimeScopeSelection>(DEFAULT_TIME_SCOPE);
   const [trendOverride, setTrendOverride] = useState<TimeScopeSelection | null>(null);
   const [rankingOverride, setRankingOverride] = useState<TimeScopeSelection | null>(null);
@@ -60,19 +64,20 @@ export function App() {
   const [rankingTools, setRankingTools] = useState<PanelToolsState>(INITIAL_PANEL_TOOLS_STATE);
   const [selectedSession, setSelectedSession] = useState<SessionDetailResponse | null>(null);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  const [sessionDetailLoading, setSessionDetailLoading] = useState(false);
   const [loadErrorMessage, setLoadErrorMessage] = useState<string | null>(null);
   const [staleMessage, setStaleMessage] = useState<string | null>(null);
 
-  const applyLoadedData = useEffectEvent((nextState: DashboardState) => {
+  const applyLoadedOverview = useEffectEvent((nextOverview: OverviewResponse) => {
     startTransition(() => {
-      setDashboard(nextState);
+      setOverview(nextOverview);
       setLoadErrorMessage(null);
       setStaleMessage(null);
     });
   });
 
   const applyLoadError = useEffectEvent((message: string) => {
-    if (dashboard.overview === null) {
+    if (overview === null) {
       startTransition(() => {
         setLoadErrorMessage(message);
       });
@@ -87,23 +92,15 @@ export function App() {
   useEffect(() => {
     let active = true;
 
-    const loadDashboard = async () => {
+    const loadOverview = async () => {
       try {
-        const [overview, tools, sessions] = await Promise.all([
-          fetchOverview(globalScope),
-          fetchTools(globalScope),
-          fetchSessions(globalScope)
-        ]);
+        const nextOverview = await fetchOverview(globalScope);
 
         if (!active) {
           return;
         }
 
-        applyLoadedData({
-          overview,
-          sessions: sessions.rows,
-          tools: tools.rows
-        });
+        applyLoadedOverview(nextOverview);
       } catch (error) {
         if (!active) {
           return;
@@ -114,9 +111,107 @@ export function App() {
       }
     };
 
-    void loadDashboard();
+    void loadOverview();
     const timer = window.setInterval(() => {
-      void loadDashboard();
+      void loadOverview();
+    }, 5000);
+
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [globalScope]);
+
+  useEffect(() => {
+    let active = true;
+    setBaseTools((current) => ({
+      rows: current.rows,
+      loading: true,
+      errorMessage: null
+    }));
+
+    const loadTools = async () => {
+      try {
+        const nextTools = await fetchTools(globalScope);
+
+        if (!active) {
+          return;
+        }
+
+        startTransition(() => {
+          setBaseTools({
+            rows: nextTools.rows,
+            loading: false,
+            errorMessage: null
+          });
+        });
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+
+        startTransition(() => {
+          setBaseTools((current) => ({
+            ...current,
+            loading: false,
+            errorMessage: messageFromError(error)
+          }));
+        });
+      }
+    };
+
+    void loadTools();
+    const timer = window.setInterval(() => {
+      void loadTools();
+    }, 5000);
+
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [globalScope]);
+
+  useEffect(() => {
+    let active = true;
+    setBaseSessions((current) => ({
+      rows: current.rows,
+      loading: true,
+      errorMessage: null
+    }));
+
+    const loadSessions = async () => {
+      try {
+        const nextSessions = await fetchSessions(globalScope);
+
+        if (!active) {
+          return;
+        }
+
+        startTransition(() => {
+          setBaseSessions({
+            rows: nextSessions.rows,
+            loading: false,
+            errorMessage: null
+          });
+        });
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+
+        startTransition(() => {
+          setBaseSessions((current) => ({
+            ...current,
+            loading: false,
+            errorMessage: messageFromError(error)
+          }));
+        });
+      }
+    };
+
+    void loadSessions();
+    const timer = window.setInterval(() => {
+      void loadSessions();
     }, 5000);
 
     return () => {
@@ -234,23 +329,28 @@ export function App() {
   }, [rankingOverride]);
 
   useEffect(() => {
-    if (dashboard.sessions.length === 0) {
+    const sessionRows = baseSessions.rows ?? [];
+
+    if (sessionRows.length === 0) {
       setSelectedSession(null);
       setSelectedSessionId(null);
+      setSessionDetailLoading(false);
       return;
     }
 
-    if (!selectedSessionId || !dashboard.sessions.some((row) => row.sessionId === selectedSessionId)) {
-      setSelectedSessionId(dashboard.sessions[0]?.sessionId ?? null);
+    if (!selectedSessionId || !sessionRows.some((row) => row.sessionId === selectedSessionId)) {
+      setSelectedSessionId(sessionRows[0]?.sessionId ?? null);
     }
-  }, [dashboard.sessions, selectedSessionId]);
+  }, [baseSessions.rows, selectedSessionId]);
 
   useEffect(() => {
     if (!selectedSessionId) {
+      setSessionDetailLoading(false);
       return;
     }
 
     let active = true;
+    setSessionDetailLoading(true);
 
     void fetchSessionDetail(selectedSessionId)
       .then((detail) => {
@@ -260,6 +360,7 @@ export function App() {
 
         startTransition(() => {
           setSelectedSession(detail);
+          setSessionDetailLoading(false);
         });
       })
       .catch(() => {
@@ -269,6 +370,7 @@ export function App() {
 
         startTransition(() => {
           setSelectedSession(null);
+          setSessionDetailLoading(false);
         });
       });
 
@@ -281,6 +383,7 @@ export function App() {
     startTransition(() => {
       setSelectedSessionId(sessionId);
       setSelectedSession(null);
+      setSessionDetailLoading(true);
     });
   });
 
@@ -290,16 +393,19 @@ export function App() {
     }
 
     setGlobalScope(selection);
-    setDashboard(INITIAL_STATE);
+    setOverview(null);
+    setBaseTools(INITIAL_PANEL_TOOLS_STATE);
+    setBaseSessions(INITIAL_SESSIONS_STATE);
     setSelectedSession(null);
     setSelectedSessionId(null);
+    setSessionDetailLoading(false);
     setLoadErrorMessage(null);
     setStaleMessage(null);
   });
 
   const scopeLabel = buildScopeLabel(globalScope);
 
-  if (!dashboard.overview) {
+  if (!overview) {
     return (
       <main className="app-shell">
         <section className="hero-panel">
@@ -324,100 +430,116 @@ export function App() {
     );
   }
 
-  const lastUpdated = formatScopeDateTime(
-    dashboard.overview.updatedAt,
-    dashboard.overview.timezone
-  );
-  const trendRows = trendOverride ? (trendTools.rows ?? dashboard.tools) : dashboard.tools;
-  const rankingRows = rankingOverride ? (rankingTools.rows ?? dashboard.tools) : dashboard.tools;
+  const baseToolRows = baseTools.rows ?? [];
+  const sessionRows = baseSessions.rows ?? [];
+  const lastUpdated = formatScopeDateTime(overview.updatedAt, overview.timezone);
+  const trendRows = trendOverride ? (trendTools.rows ?? baseToolRows) : baseToolRows;
+  const rankingRows = rankingOverride ? (rankingTools.rows ?? baseToolRows) : baseToolRows;
+  const baseToolEmptyMessage = buildToolEmptyMessage(baseTools);
   const trendStatusMessage = buildPanelStatusMessage(
     "Activity Snapshot",
     trendOverride,
-    trendTools
+    trendTools,
+    baseTools
   );
   const rankingStatusMessage = buildPanelStatusMessage(
     "Tool Rankings",
     rankingOverride,
-    rankingTools
+    rankingTools,
+    baseTools
   );
+  const sessionStatusMessage = buildSessionStatusMessage(baseSessions, sessionDetailLoading);
 
   return (
     <main className="app-shell">
-      <section className="hero-panel">
-        <div className="hero-eyebrow">Local Ops Console</div>
-        <h1>Agent Metrics</h1>
-        <p className="hero-copy">
-          Hooks-first telemetry for local agent sessions, real Claude Code tool usage, and code
-          edit activity.
-        </p>
-        <TimeScopeToolbar selection={globalScope} onChange={handleScopeChange} />
-        <div className="status-row">
-          <div className="status-pill" data-state={staleMessage ? "stale" : "fresh"}>
-            <strong>Status</strong>
-            <span>{staleMessage ? "Showing stale local data" : "Polling live local data"}</span>
+      <section className="hero-panel hero-panel-compact">
+        <div className="hero-grid">
+          <div className="hero-main">
+            <div className="hero-eyebrow">Local Ops Console</div>
+            <h1>Agent Metrics</h1>
+            <p className="hero-copy">
+              Hooks-first telemetry for local agent sessions, real Claude Code tool usage, and
+              code edit activity.
+            </p>
           </div>
-          <div className="status-pill">
-            <strong>Scope</strong>
-            <span>{scopeLabel}</span>
-          </div>
-          {lastUpdated ? (
-            <div className="status-pill">
-              <strong>Updated</strong>
-              <span>{lastUpdated}</span>
+          <div className="hero-side">
+            <TimeScopeToolbar selection={globalScope} onChange={handleScopeChange} />
+            <div className="status-row">
+              <div className="status-pill" data-state={staleMessage ? "stale" : "fresh"}>
+                <strong>Status</strong>
+                <span>{staleMessage ? "Showing stale local data" : "Polling live local data"}</span>
+              </div>
+              <div className="status-pill">
+                <strong>Scope</strong>
+                <span>{scopeLabel}</span>
+              </div>
+              {lastUpdated ? (
+                <div className="status-pill">
+                  <strong>Updated</strong>
+                  <span>{lastUpdated}</span>
+                </div>
+              ) : null}
             </div>
-          ) : null}
-        </div>
-        <div className="hero-actions">
-          <a className="hero-link" href={buildExportUrl("csv")}>
-            Export CSV
-          </a>
-          <a className="hero-link" href={buildExportUrl("json")}>
-            Export JSON
-          </a>
+            <div className="hero-actions">
+              <a className="hero-link" href={buildExportUrl("csv")}>
+                Export CSV
+              </a>
+              <a className="hero-link" href={buildExportUrl("json")}>
+                Export JSON
+              </a>
+            </div>
+          </div>
         </div>
       </section>
 
-      <KpiGrid overview={dashboard.overview} scopeLabel={scopeLabel} />
+      <KpiGrid overview={overview} scopeLabel={scopeLabel} />
 
-      <section className="surface-grid">
-        <Suspense
-          fallback={
-            <section className="panel chart-panel">
-              <div className="panel-heading">
-                <h2>Activity Snapshot</h2>
-                <span>Rendering chart</span>
-              </div>
-            </section>
-          }
-        >
-          <TrendChart
-            rows={trendRows}
+      <section className="surface-grid surface-grid-dense">
+        <div className="surface-stack">
+          <Suspense
+            fallback={
+              <section className="panel chart-panel">
+                <div className="panel-heading">
+                  <h2>Activity Snapshot</h2>
+                  <span>Rendering chart</span>
+                </div>
+              </section>
+            }
+          >
+            <TrendChart
+              rows={trendRows}
+              scope={globalScope}
+              scopeLabel={scopeLabel}
+              override={trendOverride}
+              onOverrideChange={setTrendOverride}
+              statusMessage={trendStatusMessage}
+              emptyMessage={baseToolEmptyMessage}
+            />
+          </Suspense>
+          <ToolRankingTable
+            rows={rankingRows}
             scope={globalScope}
             scopeLabel={scopeLabel}
-            override={trendOverride}
-            onOverrideChange={setTrendOverride}
-            statusMessage={trendStatusMessage}
+            override={rankingOverride}
+            onOverrideChange={setRankingOverride}
+            statusMessage={rankingStatusMessage}
+            emptyMessage={baseToolEmptyMessage}
           />
-        </Suspense>
+        </div>
         <div className="surface-stack">
           <RecentSessionsTable
             onSelect={handleSelectSession}
-            rows={dashboard.sessions}
+            errorMessage={baseSessions.errorMessage}
+            loading={baseSessions.loading}
+            rows={sessionRows}
             selectedSessionId={selectedSessionId}
           />
-          <SessionTimelinePanel detail={selectedSession} />
+          <SessionTimelinePanel
+            detail={selectedSession}
+            loading={sessionDetailLoading}
+            statusMessage={sessionStatusMessage}
+          />
         </div>
-      </section>
-
-      <section className="surface-stack">
-        <ToolRankingTable
-          rows={rankingRows}
-          scope={globalScope}
-          scopeLabel={scopeLabel}
-          override={rankingOverride}
-          onOverrideChange={setRankingOverride}
-          statusMessage={rankingStatusMessage}
-        />
       </section>
     </main>
   );
@@ -426,9 +548,18 @@ export function App() {
 function buildPanelStatusMessage(
   panelName: string,
   override: TimeScopeSelection | null,
-  state: PanelToolsState
+  state: PanelToolsState,
+  baseState: PanelToolsState
 ): string | null {
   if (!override) {
+    if (baseState.rows && baseState.errorMessage) {
+      return `${panelName} showing last loaded data: ${baseState.errorMessage}`;
+    }
+
+    if (baseState.rows && baseState.loading) {
+      return `Refreshing global tool metrics...`;
+    }
+
     return null;
   }
 
@@ -447,4 +578,35 @@ function buildPanelStatusMessage(
 
 function messageFromError(error: unknown): string {
   return error instanceof Error ? error.message : "Failed to refresh scoped tool data.";
+}
+
+function buildToolEmptyMessage(state: PanelToolsState): string {
+  if (state.loading) {
+    return "Loading global tool metrics...";
+  }
+
+  if (state.errorMessage) {
+    return `Global tool metrics unavailable: ${state.errorMessage}`;
+  }
+
+  return DEFAULT_TOOL_EMPTY_MESSAGE;
+}
+
+function buildSessionStatusMessage(
+  state: SessionsState,
+  sessionDetailLoading: boolean
+): string | null {
+  if (state.loading && !state.rows) {
+    return "Waiting for session activity...";
+  }
+
+  if (state.errorMessage && !state.rows) {
+    return `Recent sessions unavailable: ${state.errorMessage}`;
+  }
+
+  if (sessionDetailLoading) {
+    return "Loading session activity...";
+  }
+
+  return null;
 }

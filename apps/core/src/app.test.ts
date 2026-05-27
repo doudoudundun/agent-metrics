@@ -3,10 +3,16 @@ import { existsSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
+import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { beforeEach, describe, expect, it } from "vitest";
 import { appendJsonLine } from "@agent-metrics/shared-utils";
-import { buildApp, ingestEventLog, resolveDefaultDbPath } from "./app.js";
+import {
+  buildApp,
+  createEventLogSynchronizer,
+  ingestEventLog,
+  resolveDefaultDbPath
+} from "./app.js";
 
 let dbPath: string;
 let logPath: string;
@@ -150,6 +156,59 @@ describe("ingestEventLog", () => {
     });
 
     await app.close();
+  });
+
+  it("coalesces concurrent sync requests and skips unchanged event logs", async () => {
+    await appendJsonLine(logPath, {
+      event_id: "evt_sync_1",
+      session_id: "ses_sync_1",
+      timestamp: "2026-05-25T08:00:00.000Z",
+      source_vendor: "claude-code",
+      source_adapter: "claude",
+      workspace_path: "D:/projects/dev/agent-metrics",
+      type: "session.started"
+    });
+
+    let ingestCount = 0;
+    let releaseIngest: (() => void) | null = null;
+    const waitForRelease = new Promise<void>((resolve) => {
+      releaseIngest = resolve;
+    });
+    const syncEventLog = createEventLogSynchronizer({
+      eventLogPath: logPath,
+      ingest: async () => {
+        ingestCount += 1;
+        await waitForRelease;
+      }
+    });
+
+    const firstSync = syncEventLog();
+    const secondSync = syncEventLog();
+
+    await waitForCondition(() => ingestCount === 1);
+    releaseIngest?.();
+    await Promise.all([firstSync, secondSync]);
+
+    expect(ingestCount).toBe(1);
+
+    await syncEventLog();
+    expect(ingestCount).toBe(1);
+
+    await appendJsonLine(logPath, {
+      event_id: "evt_sync_2",
+      session_id: "ses_sync_1",
+      timestamp: "2026-05-25T08:00:01.000Z",
+      source_vendor: "claude-code",
+      source_adapter: "claude",
+      workspace_path: "D:/projects/dev/agent-metrics",
+      type: "tool.succeeded",
+      tool_name: "Read",
+      status: "succeeded",
+      duration_ms: 14
+    });
+
+    await syncEventLog();
+    expect(ingestCount).toBe(2);
   });
 });
 
@@ -606,3 +665,20 @@ describe("core api", () => {
     await app.close();
   });
 });
+
+async function waitForCondition(
+  predicate: () => boolean,
+  timeoutMs = 1000
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    if (predicate()) {
+      return;
+    }
+
+    await delay(10);
+  }
+
+  throw new Error("Condition not met before timeout.");
+}

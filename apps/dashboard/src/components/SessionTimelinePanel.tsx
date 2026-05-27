@@ -5,8 +5,12 @@ const TIMELINE_PAGE_SIZE = 8;
 
 export function SessionTimelinePanel(input: {
   detail: SessionDetailResponse | null;
+  loading?: boolean;
+  statusMessage?: string | null;
 }) {
   const detail = input.detail;
+  const loading = input.loading ?? false;
+  const statusMessage = input.statusMessage;
   const [pageIndex, setPageIndex] = useState(0);
   const pageCount = detail ? Math.max(1, Math.ceil(detail.timeline.length / TIMELINE_PAGE_SIZE)) : 1;
   const safePageIndex = Math.min(pageIndex, pageCount - 1);
@@ -80,7 +84,9 @@ export function SessionTimelinePanel(input: {
           ) : null}
         </>
       ) : (
-        <p className="timeline-empty">Select a session to inspect its hook timeline.</p>
+        <p className="timeline-empty">
+          {statusMessage ?? (loading ? "Loading session activity..." : "Select a session to inspect its hook timeline.")}
+        </p>
       )}
     </section>
   );
