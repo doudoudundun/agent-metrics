@@ -110,7 +110,7 @@ export function extractClaudeTranscriptObservations(record: unknown): ClaudeTran
       outputTokens: usageCounts.outputTokens,
       cacheCreationInputTokens: usageCounts.cacheCreationInputTokens,
       cacheReadInputTokens: usageCounts.cacheReadInputTokens,
-      serverToolUse: serializeCompactJson(usage.server_tool_use)
+      serverToolUse: usageCounts.serverToolUse
     });
   }
 
@@ -257,6 +257,7 @@ function normalizeUsageCounts(usage: Record<string, unknown>):
       outputTokens: number;
       cacheCreationInputTokens: number;
       cacheReadInputTokens: number;
+      serverToolUse: string;
     }
   | null {
   const inputTokens = normalizeNonNegativeInteger(usage.input_tokens);
@@ -277,6 +278,7 @@ function normalizeUsageCounts(usage: Record<string, unknown>):
     inputTokens,
     outputTokens,
     cacheCreationInputTokens,
-    cacheReadInputTokens
+    cacheReadInputTokens,
+    serverToolUse: serializeCompactJson(usage.server_tool_use)
   };
 }
