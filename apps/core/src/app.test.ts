@@ -1,12 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as claudeAdapter from "@agent-metrics/adapters-claude";
+import * as codexAdapter from "@agent-metrics/adapters-codex";
+import * as opencodeAdapter from "@agent-metrics/adapters-opencode";
 import { recordClaudeTranscriptReference } from "@agent-metrics/adapters-claude";
 import { getAgentMetricsPaths } from "@agent-metrics/shared-utils";
 import { appendJsonLine } from "@agent-metrics/shared-utils";
@@ -35,7 +37,15 @@ const scopedAppInput = {
 
 beforeEach(async () => {
   vi.restoreAllMocks();
+  delete process.env.AGENT_METRICS_OPENCODE_DB_PATH;
+  delete process.env.AGENT_METRICS_CODEX_SESSIONS_ROOT;
+  delete process.env.AGENT_METRICS_CODEX_LOGS_DB_PATH;
+  delete process.env.AGENT_METRICS_CODEX_CONFIG_PATH;
   const root = await mkdtemp(join(tmpdir(), "agent-metrics-core-"));
+  process.env.AGENT_METRICS_OPENCODE_DB_PATH = join(root, "missing-opencode.db");
+  process.env.AGENT_METRICS_CODEX_SESSIONS_ROOT = join(root, "missing-codex-sessions");
+  process.env.AGENT_METRICS_CODEX_LOGS_DB_PATH = join(root, "missing-logs_2.sqlite");
+  process.env.AGENT_METRICS_CODEX_CONFIG_PATH = join(root, "missing-config.toml");
   dbPath = join(root, "metrics.sqlite");
   logPath = join(root, "events.jsonl");
 });
@@ -220,6 +230,73 @@ describe("ingestEventLog", () => {
 
     await syncEventLog();
     expect(ingestCount).toBe(2);
+  });
+
+  it("persists the event-log cursor and advances it across app restarts", async () => {
+    await appendJsonLine(logPath, {
+      event_id: "evt_cursor_1",
+      session_id: "ses_cursor_1",
+      timestamp: "2026-05-25T08:00:00.000Z",
+      source_vendor: "claude-code",
+      source_adapter: "claude",
+      workspace_path: "D:/projects/dev/agent-metrics",
+      type: "session.started"
+    });
+
+    const firstSize = (await stat(logPath)).size;
+    const app = buildApp({ dbPath, ...may25AppInput });
+    await ingestEventLog({ app, eventLogPath: logPath });
+
+    expect(
+      app.db
+        .prepare<{ offsetBytes: number; sizeBytes: number }>(
+          "SELECT offset_bytes AS offsetBytes, size_bytes AS sizeBytes FROM ingestion_state WHERE stream_name = 'events.jsonl'"
+        )
+        .get()
+    ).toMatchObject({
+      offsetBytes: firstSize,
+      sizeBytes: firstSize
+    });
+
+    await app.close();
+
+    await appendJsonLine(logPath, {
+      event_id: "evt_cursor_2",
+      session_id: "ses_cursor_1",
+      timestamp: "2026-05-25T08:00:01.000Z",
+      source_vendor: "claude-code",
+      source_adapter: "claude",
+      workspace_path: "D:/projects/dev/agent-metrics",
+      type: "tool.succeeded",
+      tool_name: "Read",
+      status: "succeeded",
+      duration_ms: 14
+    });
+
+    const secondSize = (await stat(logPath)).size;
+    const restartedApp = buildApp({ dbPath, ...may25AppInput });
+    await ingestEventLog({ app: restartedApp, eventLogPath: logPath });
+
+    expect(
+      restartedApp
+        .db
+        .prepare<{ offsetBytes: number; sizeBytes: number }>(
+          "SELECT offset_bytes AS offsetBytes, size_bytes AS sizeBytes FROM ingestion_state WHERE stream_name = 'events.jsonl'"
+        )
+        .get()
+    ).toMatchObject({
+      offsetBytes: secondSize,
+      sizeBytes: secondSize
+    });
+
+    const response = await restartedApp.inject({ method: "GET", url: "/api/overview" });
+    expect(response.json()).toMatchObject({
+      sessionCount: 1,
+      totalToolCalls: 1,
+      successfulExecutions: 1
+    });
+
+    await restartedApp.close();
   });
 
   it("returns token and turn totals for a session with no tool events", async () => {
@@ -436,6 +513,227 @@ describe("ingestEventLog", () => {
 
     vi.spyOn(claudeAdapter, "syncKnownClaudeTranscripts").mockRejectedValue(
       new Error("transcript lock timeout")
+    );
+
+    const app = buildApp({
+      dbPath,
+      eventLogPath: logPath,
+      repoRoot,
+      ...scopedAppInput
+    });
+
+    const response = await app.inject({ method: "GET", url: "/api/tools?mode=calendar&range=day" });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      rows: [
+        {
+          toolName: "Read",
+          count: 1
+        }
+      ]
+    });
+
+    await app.close();
+  });
+
+  it("syncs OpenCode database state before overview reads when repoRoot is provided", async () => {
+    const repoRoot = await mkdtemp(join(tmpdir(), "agent-metrics-opencode-core-"));
+    const paths = getAgentMetricsPaths(repoRoot);
+    process.env.AGENT_METRICS_OPENCODE_DB_PATH = await createOpenCodeFixtureDb(repoRoot);
+
+    const app = buildApp({
+      dbPath,
+      eventLogPath: paths.eventLogPath,
+      repoRoot,
+      ...scopedAppInput
+    });
+
+    const overview = await app.inject({ method: "GET", url: "/api/overview?mode=calendar&range=day" });
+    const sessions = await app.inject({ method: "GET", url: "/api/sessions?mode=calendar&range=day" });
+
+    expect(overview.statusCode).toBe(200);
+    expect(overview.json()).toMatchObject({
+      sessionCount: 1,
+      totalToolCalls: 1,
+      successfulExecutions: 1,
+      failedExecutions: 0,
+      turnCount: 1,
+      responseCount: 1,
+      totalTokens: 29725,
+      inputTokens: 27470,
+      outputTokens: 207,
+      cacheReadTokens: 2048,
+      cacheCreationTokens: 0,
+      sourceBreakdown: [
+        {
+          sourceVendor: "opencode",
+          sessionCount: 1,
+          turnCount: 1,
+          totalTokens: 29725,
+          toolCalls: 1
+        }
+      ],
+      tokensByModel: [
+        {
+          model: "hy3-preview-free",
+          totalTokens: 29725
+        }
+      ]
+    });
+    expect(sessions.statusCode).toBe(200);
+    expect(sessions.json()).toMatchObject({
+      rows: [
+        {
+          sessionId: "ses_open_1",
+          sourceVendor: "opencode",
+          sourceAdapter: "opencode-db",
+          providerId: "opencode",
+          providerHost: null,
+          totalTokens: 29725,
+          lastModel: "hy3-preview-free"
+        }
+      ]
+    });
+
+    await app.close();
+  });
+
+  it("serves stale API data when OpenCode sync throws", async () => {
+    const repoRoot = await mkdtemp(join(tmpdir(), "agent-metrics-opencode-failure-"));
+
+    await appendJsonLine(logPath, {
+      event_id: "evt_runtime_open_1",
+      session_id: "ses_runtime_open_1",
+      timestamp: "2026-05-27T10:00:00.000Z",
+      source_vendor: "claude-code",
+      source_adapter: "claude",
+      workspace_path: "D:/projects/dev/agent-metrics",
+      type: "tool.succeeded",
+      tool_name: "Read",
+      status: "succeeded",
+      duration_ms: 14
+    });
+
+    vi.spyOn(opencodeAdapter, "syncOpenCodeDatabase").mockRejectedValue(
+      new Error("opencode database busy")
+    );
+
+    const app = buildApp({
+      dbPath,
+      eventLogPath: logPath,
+      repoRoot,
+      ...scopedAppInput
+    });
+
+    const response = await app.inject({ method: "GET", url: "/api/tools?mode=calendar&range=day" });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      rows: [
+        {
+          toolName: "Read",
+          count: 1
+        }
+      ]
+    });
+
+    await app.close();
+  });
+
+  it("syncs Codex rollout state before overview reads when repoRoot is provided", async () => {
+    const repoRoot = await mkdtemp(join(tmpdir(), "agent-metrics-codex-core-"));
+    const paths = getAgentMetricsPaths(repoRoot);
+    const fixture = await createCodexFixture(repoRoot);
+    process.env.AGENT_METRICS_CODEX_SESSIONS_ROOT = fixture.sessionsRoot;
+    process.env.AGENT_METRICS_CODEX_LOGS_DB_PATH = fixture.logsDbPath;
+    process.env.AGENT_METRICS_CODEX_CONFIG_PATH = fixture.configPath;
+
+    const app = buildApp({
+      dbPath,
+      eventLogPath: paths.eventLogPath,
+      repoRoot,
+      ...scopedAppInput
+    });
+
+    const overview = await app.inject({
+      method: "GET",
+      url: "/api/overview?mode=calendar&range=day&sourceVendor=codex"
+    });
+    const sessions = await app.inject({
+      method: "GET",
+      url: "/api/sessions?mode=calendar&range=day&sourceVendor=codex"
+    });
+
+    expect(overview.statusCode).toBe(200);
+    expect(overview.json()).toMatchObject({
+      sessionCount: 1,
+      turnCount: 0,
+      responseCount: 0,
+      totalTokens: 19623,
+      inputTokens: 15928,
+      outputTokens: 239,
+      cacheReadTokens: 3456,
+      cacheCreationTokens: 0,
+      sourceBreakdown: [
+        {
+          sourceVendor: "codex",
+          sessionCount: 1,
+          turnCount: 0,
+          totalTokens: 19623,
+          toolCalls: 0
+        }
+      ],
+      providerBreakdown: [
+        {
+          providerHost: "api.psydo.top",
+          providerId: "ai",
+          totalTokens: 19623
+        }
+      ],
+      tokensByModel: [
+        {
+          model: "gpt-5.4",
+          totalTokens: 19623
+        }
+      ]
+    });
+    expect(sessions.statusCode).toBe(200);
+    expect(sessions.json()).toMatchObject({
+      rows: [
+        {
+          sessionId: "019e5dc9-b10c-7371-8edd-066e8db7e50d",
+          sourceVendor: "codex",
+          sourceAdapter: "codex-rollout",
+          providerId: "ai",
+          providerHost: "api.psydo.top",
+          totalTokens: 19623,
+          lastModel: "gpt-5.4"
+        }
+      ]
+    });
+
+    await app.close();
+  });
+
+  it("serves stale API data when Codex sync throws", async () => {
+    const repoRoot = await mkdtemp(join(tmpdir(), "agent-metrics-codex-failure-"));
+
+    await appendJsonLine(logPath, {
+      event_id: "evt_runtime_codex_1",
+      session_id: "ses_runtime_codex_1",
+      timestamp: "2026-05-27T10:00:00.000Z",
+      source_vendor: "claude-code",
+      source_adapter: "claude",
+      workspace_path: "D:/projects/dev/agent-metrics",
+      type: "tool.succeeded",
+      tool_name: "Read",
+      status: "succeeded",
+      duration_ms: 14
+    });
+
+    vi.spyOn(codexAdapter, "syncCodexRollouts").mockRejectedValue(
+      new Error("codex rollout locked")
     );
 
     const app = buildApp({
@@ -1381,4 +1679,268 @@ async function waitForCondition(
   }
 
   throw new Error("Condition not met before timeout.");
+}
+
+async function createOpenCodeFixtureDb(root: string): Promise<string> {
+  const opencodeDbPath = join(root, "opencode.db");
+  const { default: BetterSqlite3 } = await import("better-sqlite3");
+  const db = new BetterSqlite3(opencodeDbPath);
+
+  db.exec(`
+    CREATE TABLE session (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      parent_id TEXT,
+      slug TEXT NOT NULL,
+      directory TEXT NOT NULL,
+      title TEXT NOT NULL,
+      version TEXT NOT NULL,
+      share_url TEXT,
+      summary_additions INTEGER,
+      summary_deletions INTEGER,
+      summary_files INTEGER,
+      summary_diffs TEXT,
+      revert TEXT,
+      permission TEXT,
+      time_created INTEGER NOT NULL,
+      time_updated INTEGER NOT NULL,
+      time_compacting INTEGER,
+      time_archived INTEGER,
+      workspace_id TEXT,
+      path TEXT,
+      agent TEXT,
+      model TEXT,
+      cost REAL NOT NULL DEFAULT 0,
+      tokens_input INTEGER NOT NULL DEFAULT 0,
+      tokens_output INTEGER NOT NULL DEFAULT 0,
+      tokens_reasoning INTEGER NOT NULL DEFAULT 0,
+      tokens_cache_read INTEGER NOT NULL DEFAULT 0,
+      tokens_cache_write INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE TABLE message (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      time_created INTEGER NOT NULL,
+      time_updated INTEGER NOT NULL,
+      data TEXT NOT NULL
+    );
+    CREATE TABLE part (
+      id TEXT PRIMARY KEY,
+      message_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      time_created INTEGER NOT NULL,
+      time_updated INTEGER NOT NULL,
+      data TEXT NOT NULL
+    );
+  `);
+
+  db.prepare(`
+    INSERT INTO session (
+      id, project_id, parent_id, slug, directory, title, version, share_url,
+      summary_additions, summary_deletions, summary_files, summary_diffs, revert, permission,
+      time_created, time_updated, time_compacting, time_archived, workspace_id, path, agent, model,
+      cost, tokens_input, tokens_output, tokens_reasoning, tokens_cache_read, tokens_cache_write
+    ) VALUES (?, ?, NULL, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, 0, 0, 0, 0, 0, 0)
+  `).run(
+    "ses_open_1",
+    "proj_1",
+    "slug-1",
+    root,
+    "Demo",
+    "1",
+    1779875940000,
+    1779876003000
+  );
+  db.prepare(
+    "INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?)"
+  ).run(
+    "msg_user_1",
+    "ses_open_1",
+    1779876000355,
+    1779876000355,
+    JSON.stringify({
+      role: "user",
+      time: { created: 1779876000355 }
+    })
+  );
+  db.prepare(
+    "INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?)"
+  ).run(
+    "msg_assistant_1",
+    "ses_open_1",
+    1779876001153,
+    1779876002420,
+    JSON.stringify({
+      role: "assistant",
+      time: {
+        created: 1779876001153,
+        completed: 1779876002420
+      },
+      providerID: "opencode",
+      modelID: "hy3-preview-free",
+      finish: "tool-calls",
+      path: {
+        root
+      },
+      tokens: {
+        input: 27470,
+        output: 207,
+        reasoning: 0,
+        cache: {
+          read: 2048,
+          write: 0
+        }
+      }
+    })
+  );
+  db.prepare(
+    "INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?, ?)"
+  ).run(
+    "prt_user_text",
+    "msg_user_1",
+    "ses_open_1",
+    1779876000355,
+    1779876000355,
+    JSON.stringify({
+      type: "text",
+      text: "PopupActivity这个文件能看到里面是什么吗？"
+    })
+  );
+  db.prepare(
+    "INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?, ?)"
+  ).run(
+    "prt_assistant_text",
+    "msg_assistant_1",
+    "ses_open_1",
+    1779876001641,
+    1779876001641,
+    JSON.stringify({
+      type: "text",
+      text: "找到了！"
+    })
+  );
+  db.prepare(
+    "INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?, ?)"
+  ).run(
+    "prt_tool_1",
+    "msg_assistant_1",
+    "ses_open_1",
+    1779876002227,
+    1779876002866,
+    JSON.stringify({
+      type: "tool",
+      tool: "read",
+      state: {
+        status: "completed",
+        input: {
+          filePath: join(root, "src", "app.ts")
+        },
+        time: {
+          start: 1779876002852,
+          end: 1779876002866
+        }
+      }
+    })
+  );
+
+  db.close();
+  return opencodeDbPath;
+}
+
+async function createCodexFixture(root: string): Promise<{
+  sessionsRoot: string;
+  logsDbPath: string;
+  configPath: string;
+}> {
+  const sessionsRoot = join(root, "codex-sessions");
+  const dayRoot = join(sessionsRoot, "2026", "05", "27");
+  const rolloutPath = join(
+    dayRoot,
+    "rollout-2026-05-27T10-00-00-019e5dc9-b10c-7371-8edd-066e8db7e50d.jsonl"
+  );
+  const logsDbPath = join(root, "logs_2.sqlite");
+  const configPath = join(root, "config.toml");
+
+  await mkdir(dayRoot, { recursive: true });
+  await writeFile(
+    configPath,
+    [
+      'model_provider = "ai"',
+      "",
+      "[model_providers.ai]",
+      'base_url = "https://api.psydo.top"'
+    ].join("\n"),
+    "utf8"
+  );
+  await writeFile(
+    rolloutPath,
+    [
+      JSON.stringify({
+        timestamp: "2026-05-27T10:00:00.000Z",
+        type: "session_meta",
+        payload: {
+          id: "019e5dc9-b10c-7371-8edd-066e8db7e50d",
+          timestamp: "2026-05-27T10:00:00.000Z",
+          cwd: root,
+          model_provider: "ai"
+        }
+      }),
+      JSON.stringify({
+        timestamp: "2026-05-27T10:00:12.000Z",
+        type: "event_msg",
+        payload: {
+          type: "token_count",
+          info: {
+            total_token_usage: {
+              input_tokens: 29619,
+              cached_input_tokens: 6912,
+              output_tokens: 702,
+              reasoning_output_tokens: 333,
+              total_tokens: 30321
+            },
+            last_token_usage: {
+              input_tokens: 15928,
+              cached_input_tokens: 3456,
+              output_tokens: 202,
+              reasoning_output_tokens: 37,
+              total_tokens: 16130
+            }
+          }
+        }
+      })
+    ].join("\n"),
+    "utf8"
+  );
+
+  const { default: BetterSqlite3 } = await import("better-sqlite3");
+  const db = new BetterSqlite3(logsDbPath);
+  db.exec(`
+    CREATE TABLE logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ts INTEGER NOT NULL,
+      ts_nanos INTEGER NOT NULL DEFAULT 0,
+      level TEXT NOT NULL DEFAULT 'INFO',
+      target TEXT NOT NULL DEFAULT 'codex_otel.log_only',
+      feedback_log_body TEXT,
+      module_path TEXT,
+      file TEXT,
+      line INTEGER,
+      thread_id TEXT,
+      process_uuid TEXT,
+      estimated_bytes INTEGER NOT NULL DEFAULT 0
+    );
+  `);
+  db.prepare(
+    "INSERT INTO logs (ts, ts_nanos, level, target, feedback_log_body, estimated_bytes) VALUES (?, 0, 'INFO', 'codex_otel.log_only', ?, 0)"
+  ).run(
+    1779876012,
+    'event.name="codex.sse_event" conversation.id=019e5dc9-b10c-7371-8edd-066e8db7e50d model=gpt-5.4 slug=gpt-5.4'
+  );
+  db.close();
+
+  return {
+    sessionsRoot,
+    logsDbPath,
+    configPath
+  };
 }

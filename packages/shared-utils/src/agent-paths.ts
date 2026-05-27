@@ -9,6 +9,10 @@ export type AgentMetricsPaths = {
   transcriptManifestPath: string;
   transcriptCursorPath: string;
   transcriptLedgerPath: string;
+  opencodeCursorPath: string;
+  opencodeLedgerPath: string;
+  codexCursorPath: string;
+  codexLedgerPath: string;
 };
 
 export function getAgentMetricsPaths(repoRoot: string): AgentMetricsPaths {
@@ -38,6 +42,34 @@ export function getAgentMetricsPaths(repoRoot: string): AgentMetricsPaths {
       "hooks",
       "state",
       "transcript-ledger.json"
+    ),
+    opencodeCursorPath: buildAgentMetricsPath(
+      repoRoot,
+      "data",
+      "sources",
+      "state",
+      "opencode-cursor.json"
+    ),
+    opencodeLedgerPath: buildAgentMetricsPath(
+      repoRoot,
+      "data",
+      "sources",
+      "state",
+      "opencode-ledger.json"
+    ),
+    codexCursorPath: buildAgentMetricsPath(
+      repoRoot,
+      "data",
+      "sources",
+      "state",
+      "codex-cursor.json"
+    ),
+    codexLedgerPath: buildAgentMetricsPath(
+      repoRoot,
+      "data",
+      "sources",
+      "state",
+      "codex-ledger.json"
     )
   };
 }

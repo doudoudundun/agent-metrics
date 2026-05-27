@@ -62,6 +62,12 @@ importers:
       '@agent-metrics/adapters-claude':
         specifier: workspace:*
         version: link:../../packages/adapters-claude
+      '@agent-metrics/adapters-codex':
+        specifier: workspace:*
+        version: link:../../packages/adapters-codex
+      '@agent-metrics/adapters-opencode':
+        specifier: workspace:*
+        version: link:../../packages/adapters-opencode
       '@agent-metrics/event-schema':
         specifier: workspace:*
         version: link:../../packages/event-schema
@@ -101,6 +107,30 @@ importers:
       '@agent-metrics/shared-utils':
         specifier: workspace:*
         version: link:../shared-utils
+
+  packages/adapters-codex:
+    dependencies:
+      '@agent-metrics/event-schema':
+        specifier: workspace:*
+        version: link:../event-schema
+      '@agent-metrics/shared-utils':
+        specifier: workspace:*
+        version: link:../shared-utils
+      better-sqlite3:
+        specifier: ^11.10.0
+        version: 11.10.0
+
+  packages/adapters-opencode:
+    dependencies:
+      '@agent-metrics/event-schema':
+        specifier: workspace:*
+        version: link:../event-schema
+      '@agent-metrics/shared-utils':
+        specifier: workspace:*
+        version: link:../shared-utils
+      better-sqlite3:
+        specifier: ^11.10.0
+        version: 11.10.0
 
   packages/event-schema:
     dependencies:

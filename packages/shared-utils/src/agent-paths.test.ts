@@ -11,7 +11,11 @@ describe("getAgentMetricsPaths", () => {
       parserSeenPath: "D:/projects/dev/agent-metrics/data/hooks/state/seen-raw-ids.json",
       transcriptManifestPath: "D:/projects/dev/agent-metrics/data/hooks/state/transcript-manifest.json",
       transcriptCursorPath: "D:/projects/dev/agent-metrics/data/hooks/state/transcript-cursors.json",
-      transcriptLedgerPath: "D:/projects/dev/agent-metrics/data/hooks/state/transcript-ledger.json"
+      transcriptLedgerPath: "D:/projects/dev/agent-metrics/data/hooks/state/transcript-ledger.json",
+      opencodeCursorPath: "D:/projects/dev/agent-metrics/data/sources/state/opencode-cursor.json",
+      opencodeLedgerPath: "D:/projects/dev/agent-metrics/data/sources/state/opencode-ledger.json",
+      codexCursorPath: "D:/projects/dev/agent-metrics/data/sources/state/codex-cursor.json",
+      codexLedgerPath: "D:/projects/dev/agent-metrics/data/sources/state/codex-ledger.json"
     });
   });
 
@@ -27,7 +31,15 @@ describe("getAgentMetricsPaths", () => {
       transcriptCursorPath:
         "D:\\projects\\dev\\agent-metrics\\data\\hooks\\state\\transcript-cursors.json",
       transcriptLedgerPath:
-        "D:\\projects\\dev\\agent-metrics\\data\\hooks\\state\\transcript-ledger.json"
+        "D:\\projects\\dev\\agent-metrics\\data\\hooks\\state\\transcript-ledger.json",
+      opencodeCursorPath:
+        "D:\\projects\\dev\\agent-metrics\\data\\sources\\state\\opencode-cursor.json",
+      opencodeLedgerPath:
+        "D:\\projects\\dev\\agent-metrics\\data\\sources\\state\\opencode-ledger.json",
+      codexCursorPath:
+        "D:\\projects\\dev\\agent-metrics\\data\\sources\\state\\codex-cursor.json",
+      codexLedgerPath:
+        "D:\\projects\\dev\\agent-metrics\\data\\sources\\state\\codex-ledger.json"
     });
   });
 
@@ -43,7 +55,15 @@ describe("getAgentMetricsPaths", () => {
       transcriptCursorPath:
         "\\\\server\\share\\repo\\data\\hooks\\state\\transcript-cursors.json",
       transcriptLedgerPath:
-        "\\\\server\\share\\repo\\data\\hooks\\state\\transcript-ledger.json"
+        "\\\\server\\share\\repo\\data\\hooks\\state\\transcript-ledger.json",
+      opencodeCursorPath:
+        "\\\\server\\share\\repo\\data\\sources\\state\\opencode-cursor.json",
+      opencodeLedgerPath:
+        "\\\\server\\share\\repo\\data\\sources\\state\\opencode-ledger.json",
+      codexCursorPath:
+        "\\\\server\\share\\repo\\data\\sources\\state\\codex-cursor.json",
+      codexLedgerPath:
+        "\\\\server\\share\\repo\\data\\sources\\state\\codex-ledger.json"
     });
   });
 });

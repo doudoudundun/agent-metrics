@@ -5,6 +5,8 @@ import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 import Fastify from "fastify";
 import { syncKnownClaudeTranscripts } from "@agent-metrics/adapters-claude";
+import { syncCodexRollouts } from "@agent-metrics/adapters-codex";
+import { syncOpenCodeDatabase } from "@agent-metrics/adapters-opencode";
 import { AnyEventSchema, type AnyEvent, type SourceVendor } from "@agent-metrics/event-schema";
 import { toCsv, toJson } from "@agent-metrics/export-kit";
 import { buildOverviewMetrics } from "@agent-metrics/metrics-engine";
@@ -21,6 +23,9 @@ type MetricsDatabase = {
   close(): void;
   exec(sql: string): unknown;
   prepare<Result = unknown>(sql: string): MetricsStatement<Result>;
+  transaction<TArgs extends unknown[], TResult>(
+    fn: (...args: TArgs) => TResult
+  ): (...args: TArgs) => TResult;
 };
 
 type MetricsApp = ReturnType<typeof Fastify> & {
@@ -210,6 +215,12 @@ type TimeWindow = {
 type EventLogSignature = {
   mtimeMs: number;
   size: number;
+};
+
+type EventLogCursor = {
+  offsetBytes: number;
+  sizeBytes: number;
+  mtimeMs: number;
 };
 
 export function resolveDefaultDbPath(moduleUrl: string): string {
@@ -754,7 +765,7 @@ function migrateLegacyEventTableSchema(
 export function buildApp(input: BuildAppInput): MetricsApp {
   mkdirSync(dirname(input.dbPath), { recursive: true });
 
-  const db = new Database(input.dbPath) as MetricsDatabase;
+  const db = new Database(input.dbPath) as unknown as MetricsDatabase;
   const agentPaths = input.repoRoot ? getAgentMetricsPaths(input.repoRoot) : null;
 
   db.exec(`
@@ -836,6 +847,13 @@ export function buildApp(input: BuildAppInput): MetricsApp {
       source_adapter TEXT NOT NULL,
       created_at TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS ingestion_state (
+      stream_name TEXT PRIMARY KEY,
+      offset_bytes INTEGER NOT NULL,
+      size_bytes INTEGER NOT NULL,
+      mtime_ms REAL NOT NULL
+    );
   `);
   migrateLegacySessionsSchema(db);
   migrateLegacyCodeEditsSchema(db);
@@ -887,6 +905,24 @@ export function buildApp(input: BuildAppInput): MetricsApp {
         });
       })
     : null;
+  const syncOpenCodeState = agentPaths
+    ? createSingleFlightAction(async () => {
+        await syncOpenCodeDatabase({
+          eventLogPath: input.eventLogPath ?? agentPaths.eventLogPath,
+          cursorPath: agentPaths.opencodeCursorPath,
+          ledgerPath: agentPaths.opencodeLedgerPath
+        });
+      })
+    : null;
+  const syncCodexState = agentPaths
+    ? createSingleFlightAction(async () => {
+        await syncCodexRollouts({
+          eventLogPath: input.eventLogPath ?? agentPaths.eventLogPath,
+          cursorPath: agentPaths.codexCursorPath,
+          ledgerPath: agentPaths.codexLedgerPath
+        });
+      })
+    : null;
 
   app.addHook("onClose", async () => {
     db.close();
@@ -900,6 +936,28 @@ export function buildApp(input: BuildAppInput): MetricsApp {
         request.log.warn(
           { err: error },
           "Transcript sync failed; serving stale local metrics."
+        );
+      }
+    }
+
+    if (syncOpenCodeState) {
+      try {
+        await syncOpenCodeState();
+      } catch (error) {
+        request.log.warn(
+          { err: error },
+          "OpenCode sync failed; serving stale local metrics."
+        );
+      }
+    }
+
+    if (syncCodexState) {
+      try {
+        await syncCodexState();
+      } catch (error) {
+        request.log.warn(
+          { err: error },
+          "Codex sync failed; serving stale local metrics."
         );
       }
     }
@@ -1145,10 +1203,27 @@ export async function ingestEventLog(input: {
   app: MetricsApp;
   eventLogPath: string;
 }): Promise<void> {
-  let file: string;
+  const db = input.app.db;
+  const signature = await readEventLogSignature(input.eventLogPath);
+
+  if (signature === null) {
+    return;
+  }
+
+  const existingCursor = readEventLogCursor(db);
+  if (
+    existingCursor !== null &&
+    existingCursor.offsetBytes === signature.size &&
+    existingCursor.sizeBytes === signature.size &&
+    existingCursor.mtimeMs === signature.mtimeMs
+  ) {
+    return;
+  }
+
+  let file: Buffer;
 
   try {
-    file = await readFile(input.eventLogPath, "utf8");
+    file = await readFile(input.eventLogPath);
   } catch (error) {
     if (isMissingFileError(error)) {
       return;
@@ -1157,176 +1232,214 @@ export async function ingestEventLog(input: {
     throw error;
   }
 
-  const lines = file.trim().split("\n").filter(Boolean);
-  const db = input.app.db;
+  const committedSize = resolveCommittedEventLogSize(file);
+  const shouldResumeIncrementally =
+    existingCursor !== null &&
+    existingCursor.offsetBytes > 0 &&
+    existingCursor.offsetBytes <= committedSize &&
+    existingCursor.sizeBytes < signature.size;
+  const startOffset = shouldResumeIncrementally ? existingCursor.offsetBytes : 0;
+  const nextOffset = committedSize;
 
-  for (const line of lines) {
-    const parsed = AnyEventSchema.parse(JSON.parse(line));
-    const storedSourceVendor = parsed.source_vendor;
-    const storedSourceAdapter = normalizeSourceAdapterForStorage(parsed);
-
-    if (parsed.type === "session.started") {
-      db.prepare(
-        `
-          INSERT INTO sessions (
-            session_id,
-            started_at,
-            workspace_path,
-            source_vendor,
-            source_adapter,
-            ended_at,
-            exit_code
-          )
-          VALUES (?, ?, ?, ?, ?, NULL, NULL)
-          ON CONFLICT(session_id) DO UPDATE SET
-            started_at = excluded.started_at,
-            workspace_path = excluded.workspace_path,
-            source_vendor = excluded.source_vendor,
-            source_adapter = excluded.source_adapter
-        `
-      ).run(
-        parsed.session_id,
-        parsed.timestamp,
-        parsed.workspace_path,
-        storedSourceVendor,
-        storedSourceAdapter
-      );
-    }
-
-    if (parsed.type === "session.ended") {
-      ensureSessionExists(
-        db,
-        parsed.session_id,
-        parsed.timestamp,
-        parsed.workspace_path,
-        storedSourceVendor,
-        storedSourceAdapter
-      );
-      db.prepare(
-        "UPDATE sessions SET ended_at = ?, exit_code = ?, workspace_path = ?, source_vendor = ?, source_adapter = ? WHERE session_id = ?"
-      ).run(
-        parsed.timestamp,
-        parsed.exit_code ?? null,
-        parsed.workspace_path,
-        storedSourceVendor,
-        storedSourceAdapter,
-        parsed.session_id
-      );
-    }
-
-    if (parsed.type === "tool.succeeded" || parsed.type === "tool.failed") {
-      db.prepare(
-        "INSERT OR REPLACE INTO tool_events (event_id, session_id, tool_name, status, duration_ms, source_vendor, source_adapter, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-      ).run(
-        parsed.event_id,
-        parsed.session_id,
-        parsed.tool_name,
-        parsed.status,
-        parsed.duration_ms,
-        storedSourceVendor,
-        storedSourceAdapter,
-        parsed.timestamp
-      );
-    }
-
-    if (parsed.type === "prompt.submitted") {
-      ensureSessionExists(
-        db,
-        parsed.session_id,
-        parsed.timestamp,
-        parsed.workspace_path,
-        storedSourceVendor,
-        storedSourceAdapter
-      );
-      db.prepare(
-        "INSERT OR REPLACE INTO prompt_events (event_id, session_id, prompt_id, prompt_chars, source_vendor, source_adapter, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
-      ).run(
-        parsed.event_id,
-        parsed.session_id,
-        parsed.prompt_id,
-        parsed.prompt_chars,
-        storedSourceVendor,
-        storedSourceAdapter,
-        parsed.timestamp
-      );
-    }
-
-    if (parsed.type === "assistant.responded") {
-      ensureSessionExists(
-        db,
-        parsed.session_id,
-        parsed.timestamp,
-        parsed.workspace_path,
-        storedSourceVendor,
-        storedSourceAdapter
-      );
-      db.prepare(
-        "INSERT OR REPLACE INTO assistant_responses (event_id, session_id, message_id, model, stop_reason, response_chars, source_vendor, source_adapter, provider_id, provider_base_url, provider_host, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-      ).run(
-        parsed.event_id,
-        parsed.session_id,
-        parsed.message_id,
-        parsed.model ?? null,
-        parsed.stop_reason ?? null,
-        parsed.response_chars,
-        storedSourceVendor,
-        storedSourceAdapter,
-        parsed.provider_id ?? null,
-        parsed.provider_base_url ?? null,
-        parsed.provider_host ?? null,
-        parsed.timestamp
-      );
-    }
-
-    if (parsed.type === "token.usage.recorded") {
-      ensureSessionExists(
-        db,
-        parsed.session_id,
-        parsed.timestamp,
-        parsed.workspace_path,
-        storedSourceVendor,
-        storedSourceAdapter
-      );
-      db.prepare(
-        "INSERT OR REPLACE INTO token_usage_events (event_id, session_id, message_id, model, input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens, server_tool_use, usage_source, source_vendor, source_adapter, provider_id, provider_base_url, provider_host, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-      ).run(
-        parsed.event_id,
-        parsed.session_id,
-        parsed.message_id,
-        parsed.model ?? null,
-        parsed.input_tokens,
-        parsed.output_tokens,
-        parsed.cache_creation_input_tokens,
-        parsed.cache_read_input_tokens,
-        parsed.server_tool_use,
-        parsed.usage_source,
-        storedSourceVendor,
-        storedSourceAdapter,
-        parsed.provider_id ?? null,
-        parsed.provider_base_url ?? null,
-        parsed.provider_host ?? null,
-        parsed.timestamp
-      );
-    }
-
-    if (parsed.type === "code.edit.applied") {
-      db.prepare(
-        "INSERT OR REPLACE INTO code_edits (event_id, session_id, tool_name, files_changed, file_count, insertions, deletions, edit_operation_count, source_vendor, source_adapter, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-      ).run(
-        parsed.event_id,
-        parsed.session_id,
-        parsed.tool_name,
-        JSON.stringify(parsed.files_changed),
-        parsed.file_count,
-        parsed.insertions,
-        parsed.deletions,
-        parsed.edit_operation_count,
-        storedSourceVendor,
-        storedSourceAdapter,
-        parsed.timestamp
-      );
-    }
+  if (nextOffset <= startOffset) {
+    writeEventLogCursor(db, {
+      offsetBytes: nextOffset,
+      sizeBytes: signature.size,
+      mtimeMs: signature.mtimeMs
+    });
+    return;
   }
+
+  const chunk = file.subarray(startOffset, nextOffset);
+  const lines = chunk
+    .toString("utf8")
+    .split("\n")
+    .filter((line) => line.length > 0);
+  if (lines.length === 0) {
+    writeEventLogCursor(db, {
+      offsetBytes: nextOffset,
+      sizeBytes: signature.size,
+      mtimeMs: signature.mtimeMs
+    });
+    return;
+  }
+
+  const parsedEvents = lines.map((line) => AnyEventSchema.parse(JSON.parse(line)));
+  const persistEvents = db.transaction((events: AnyEvent[]) => {
+    for (const parsed of events) {
+      const storedSourceVendor = parsed.source_vendor;
+      const storedSourceAdapter = normalizeSourceAdapterForStorage(parsed);
+
+      if (parsed.type === "session.started") {
+        db.prepare(
+          `
+            INSERT INTO sessions (
+              session_id,
+              started_at,
+              workspace_path,
+              source_vendor,
+              source_adapter,
+              ended_at,
+              exit_code
+            )
+            VALUES (?, ?, ?, ?, ?, NULL, NULL)
+            ON CONFLICT(session_id) DO UPDATE SET
+              started_at = excluded.started_at,
+              workspace_path = excluded.workspace_path,
+              source_vendor = excluded.source_vendor,
+              source_adapter = excluded.source_adapter
+          `
+        ).run(
+          parsed.session_id,
+          parsed.timestamp,
+          parsed.workspace_path,
+          storedSourceVendor,
+          storedSourceAdapter
+        );
+      }
+
+      if (parsed.type === "session.ended") {
+        ensureSessionExists(
+          db,
+          parsed.session_id,
+          parsed.timestamp,
+          parsed.workspace_path,
+          storedSourceVendor,
+          storedSourceAdapter
+        );
+        db.prepare(
+          "UPDATE sessions SET ended_at = ?, exit_code = ?, workspace_path = ?, source_vendor = ?, source_adapter = ? WHERE session_id = ?"
+        ).run(
+          parsed.timestamp,
+          parsed.exit_code ?? null,
+          parsed.workspace_path,
+          storedSourceVendor,
+          storedSourceAdapter,
+          parsed.session_id
+        );
+      }
+
+      if (parsed.type === "tool.succeeded" || parsed.type === "tool.failed") {
+        db.prepare(
+          "INSERT OR REPLACE INTO tool_events (event_id, session_id, tool_name, status, duration_ms, source_vendor, source_adapter, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        ).run(
+          parsed.event_id,
+          parsed.session_id,
+          parsed.tool_name,
+          parsed.status,
+          parsed.duration_ms,
+          storedSourceVendor,
+          storedSourceAdapter,
+          parsed.timestamp
+        );
+      }
+
+      if (parsed.type === "prompt.submitted") {
+        ensureSessionExists(
+          db,
+          parsed.session_id,
+          parsed.timestamp,
+          parsed.workspace_path,
+          storedSourceVendor,
+          storedSourceAdapter
+        );
+        db.prepare(
+          "INSERT OR REPLACE INTO prompt_events (event_id, session_id, prompt_id, prompt_chars, source_vendor, source_adapter, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+        ).run(
+          parsed.event_id,
+          parsed.session_id,
+          parsed.prompt_id,
+          parsed.prompt_chars,
+          storedSourceVendor,
+          storedSourceAdapter,
+          parsed.timestamp
+        );
+      }
+
+      if (parsed.type === "assistant.responded") {
+        ensureSessionExists(
+          db,
+          parsed.session_id,
+          parsed.timestamp,
+          parsed.workspace_path,
+          storedSourceVendor,
+          storedSourceAdapter
+        );
+        db.prepare(
+          "INSERT OR REPLACE INTO assistant_responses (event_id, session_id, message_id, model, stop_reason, response_chars, source_vendor, source_adapter, provider_id, provider_base_url, provider_host, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        ).run(
+          parsed.event_id,
+          parsed.session_id,
+          parsed.message_id,
+          parsed.model ?? null,
+          parsed.stop_reason ?? null,
+          parsed.response_chars,
+          storedSourceVendor,
+          storedSourceAdapter,
+          parsed.provider_id ?? null,
+          parsed.provider_base_url ?? null,
+          parsed.provider_host ?? null,
+          parsed.timestamp
+        );
+      }
+
+      if (parsed.type === "token.usage.recorded") {
+        ensureSessionExists(
+          db,
+          parsed.session_id,
+          parsed.timestamp,
+          parsed.workspace_path,
+          storedSourceVendor,
+          storedSourceAdapter
+        );
+        db.prepare(
+          "INSERT OR REPLACE INTO token_usage_events (event_id, session_id, message_id, model, input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens, server_tool_use, usage_source, source_vendor, source_adapter, provider_id, provider_base_url, provider_host, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        ).run(
+          parsed.event_id,
+          parsed.session_id,
+          parsed.message_id,
+          parsed.model ?? null,
+          parsed.input_tokens,
+          parsed.output_tokens,
+          parsed.cache_creation_input_tokens,
+          parsed.cache_read_input_tokens,
+          parsed.server_tool_use,
+          parsed.usage_source,
+          storedSourceVendor,
+          storedSourceAdapter,
+          parsed.provider_id ?? null,
+          parsed.provider_base_url ?? null,
+          parsed.provider_host ?? null,
+          parsed.timestamp
+        );
+      }
+
+      if (parsed.type === "code.edit.applied") {
+        db.prepare(
+          "INSERT OR REPLACE INTO code_edits (event_id, session_id, tool_name, files_changed, file_count, insertions, deletions, edit_operation_count, source_vendor, source_adapter, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        ).run(
+          parsed.event_id,
+          parsed.session_id,
+          parsed.tool_name,
+          JSON.stringify(parsed.files_changed),
+          parsed.file_count,
+          parsed.insertions,
+          parsed.deletions,
+          parsed.edit_operation_count,
+          storedSourceVendor,
+          storedSourceAdapter,
+          parsed.timestamp
+        );
+      }
+    }
+  });
+
+  persistEvents(parsedEvents);
+  writeEventLogCursor(db, {
+    offsetBytes: nextOffset,
+    sizeBytes: signature.size,
+    mtimeMs: signature.mtimeMs
+  });
 }
 
 function normalizeSourceAdapterForStorage(event: AnyEvent): string {
@@ -1434,6 +1547,48 @@ function isMissingFileError(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
 
+function readEventLogCursor(db: MetricsDatabase): EventLogCursor | null {
+  const row = db
+    .prepare<{ offsetBytes: number; sizeBytes: number; mtimeMs: number }>(
+      `
+        SELECT
+          offset_bytes AS offsetBytes,
+          size_bytes AS sizeBytes,
+          mtime_ms AS mtimeMs
+        FROM ingestion_state
+        WHERE stream_name = 'events.jsonl'
+      `
+    )
+    .get();
+
+  if (
+    !row ||
+    !Number.isInteger(row.offsetBytes) ||
+    row.offsetBytes < 0 ||
+    !Number.isInteger(row.sizeBytes) ||
+    row.sizeBytes < 0 ||
+    typeof row.mtimeMs !== "number" ||
+    row.mtimeMs < 0
+  ) {
+    return null;
+  }
+
+  return row;
+}
+
+function writeEventLogCursor(db: MetricsDatabase, cursor: EventLogCursor): void {
+  db.prepare(
+    `
+      INSERT INTO ingestion_state (stream_name, offset_bytes, size_bytes, mtime_ms)
+      VALUES ('events.jsonl', ?, ?, ?)
+      ON CONFLICT(stream_name) DO UPDATE SET
+        offset_bytes = excluded.offset_bytes,
+        size_bytes = excluded.size_bytes,
+        mtime_ms = excluded.mtime_ms
+    `
+  ).run(cursor.offsetBytes, cursor.sizeBytes, cursor.mtimeMs);
+}
+
 async function readEventLogSignature(eventLogPath: string): Promise<EventLogSignature | null> {
   try {
     const details = await stat(eventLogPath);
@@ -1449,6 +1604,15 @@ async function readEventLogSignature(eventLogPath: string): Promise<EventLogSign
 
     throw error;
   }
+}
+
+function resolveCommittedEventLogSize(file: Buffer): number {
+  if (file.length === 0) {
+    return 0;
+  }
+
+  const newlineIndex = file.lastIndexOf(0x0a);
+  return newlineIndex === -1 ? 0 : newlineIndex + 1;
 }
 
 function isSameEventLogSignature(
