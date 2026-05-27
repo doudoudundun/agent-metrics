@@ -81,8 +81,9 @@ export function extractClaudeTranscriptObservations(record: unknown): ClaudeTran
   const observations: ClaudeTranscriptObservation[] = [];
   const messageId = normalizeOptionalString(message.id ?? row.message_id);
   const model = normalizeNullableString(message.model ?? row.model);
+  const responseText = flattenClaudeContent(message.content);
 
-  if (messageId !== undefined && isTerminalAssistantMessage(message)) {
+  if (messageId !== undefined && isTerminalAssistantMessage(message, responseText)) {
     observations.push({
       kind: "assistant_responded",
       sessionId,
@@ -91,12 +92,13 @@ export function extractClaudeTranscriptObservations(record: unknown): ClaudeTran
       messageId,
       model,
       stopReason: normalizeNullableString(message.stop_reason),
-      responseChars: flattenClaudeContent(message.content).length
+      responseChars: responseText.length
     });
   }
 
   const usage = asRecord(message.usage);
-  if (messageId !== undefined && usage !== null) {
+  const usageCounts = usage === null ? null : normalizeUsageCounts(usage);
+  if (messageId !== undefined && usageCounts !== null) {
     observations.push({
       kind: "token_usage_recorded",
       sessionId,
@@ -104,10 +106,10 @@ export function extractClaudeTranscriptObservations(record: unknown): ClaudeTran
       timestamp,
       messageId,
       model,
-      inputTokens: normalizeNonNegativeInteger(usage.input_tokens),
-      outputTokens: normalizeNonNegativeInteger(usage.output_tokens),
-      cacheCreationInputTokens: normalizeNonNegativeInteger(usage.cache_creation_input_tokens),
-      cacheReadInputTokens: normalizeNonNegativeInteger(usage.cache_read_input_tokens),
+      inputTokens: usageCounts.inputTokens,
+      outputTokens: usageCounts.outputTokens,
+      cacheCreationInputTokens: usageCounts.cacheCreationInputTokens,
+      cacheReadInputTokens: usageCounts.cacheReadInputTokens,
       serverToolUse: serializeCompactJson(usage.server_tool_use)
     });
   }
@@ -161,12 +163,13 @@ export function normalizeClaudeTranscriptObservation(
   };
 }
 
-function isTerminalAssistantMessage(message: Record<string, unknown>): boolean {
-  if (!Object.prototype.hasOwnProperty.call(message, "stop_reason")) {
+function isTerminalAssistantMessage(message: Record<string, unknown>, responseText: string): boolean {
+  const stopReason = normalizeOptionalString(message.stop_reason);
+  if (stopReason === undefined) {
     return false;
   }
 
-  return flattenClaudeContent(message.content).length > 0;
+  return isTerminalStopReason(stopReason) && responseText.length > 0;
 }
 
 function flattenClaudeContent(content: unknown): string {
@@ -221,10 +224,6 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : null;
 }
 
-function normalizeString(value: unknown, fallback: string): string {
-  return typeof value === "string" && value.length > 0 ? value : fallback;
-}
-
 function normalizeOptionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
@@ -233,8 +232,8 @@ function normalizeNullableString(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
-function normalizeNonNegativeInteger(value: unknown): number {
-  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : 0;
+function normalizeNonNegativeInteger(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : undefined;
 }
 
 function normalizeValidTimestamp(value: unknown): string | undefined {
@@ -246,4 +245,38 @@ function normalizeValidTimestamp(value: unknown): string | undefined {
   }
 
   return undefined;
+}
+
+function isTerminalStopReason(stopReason: string): boolean {
+  return stopReason === "end_turn" || stopReason === "stop_sequence" || stopReason === "max_tokens";
+}
+
+function normalizeUsageCounts(usage: Record<string, unknown>):
+  | {
+      inputTokens: number;
+      outputTokens: number;
+      cacheCreationInputTokens: number;
+      cacheReadInputTokens: number;
+    }
+  | null {
+  const inputTokens = normalizeNonNegativeInteger(usage.input_tokens);
+  const outputTokens = normalizeNonNegativeInteger(usage.output_tokens);
+  const cacheCreationInputTokens = normalizeNonNegativeInteger(usage.cache_creation_input_tokens);
+  const cacheReadInputTokens = normalizeNonNegativeInteger(usage.cache_read_input_tokens);
+
+  if (
+    inputTokens === undefined ||
+    outputTokens === undefined ||
+    cacheCreationInputTokens === undefined ||
+    cacheReadInputTokens === undefined
+  ) {
+    return null;
+  }
+
+  return {
+    inputTokens,
+    outputTokens,
+    cacheCreationInputTokens,
+    cacheReadInputTokens
+  };
 }

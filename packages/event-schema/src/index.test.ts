@@ -235,10 +235,64 @@ describe("AnyEventSchema", () => {
     expect(unionResult.success).toBe(true);
   });
 
+  it("rejects a prompt.submitted event without a prompt id", () => {
+    const result = AnyEventSchema.safeParse({
+      event_id: "evt_14",
+      session_id: "ses_1",
+      timestamp: "2026-05-27T10:00:00.000Z",
+      source_vendor: "claude-code",
+      source_adapter: "claude",
+      workspace_path: "D:/projects/dev/agent-metrics",
+      type: "prompt.submitted",
+      prompt_chars: 27
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects an assistant.responded event without a message id", () => {
+    const result = AnyEventSchema.safeParse({
+      event_id: "evt_15",
+      session_id: "ses_1",
+      timestamp: "2026-05-27T10:00:10.000Z",
+      source_vendor: "claude-code",
+      source_adapter: "claude",
+      workspace_path: "D:/projects/dev/agent-metrics",
+      type: "assistant.responded",
+      model: "sonnet-test",
+      stop_reason: "end_turn",
+      response_chars: 16
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a token.usage.recorded event with an invalid usage_source", () => {
+    const result = AnyEventSchema.safeParse({
+      event_id: "evt_16",
+      session_id: "ses_1",
+      timestamp: "2026-05-27T10:00:10.000Z",
+      source_vendor: "claude-code",
+      source_adapter: "claude",
+      workspace_path: "D:/projects/dev/agent-metrics",
+      type: "token.usage.recorded",
+      message_id: "msg_1",
+      model: "sonnet-test",
+      input_tokens: 120,
+      output_tokens: 48,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 16,
+      server_tool_use: "{\"web_search_requests\":0}",
+      usage_source: "hook"
+    });
+
+    expect(result.success).toBe(false);
+  });
+
   it("parses the full AnyEventSchema surface", () => {
     expect(
       AnyEventSchema.safeParse({
-        event_id: "evt_13",
+        event_id: "evt_17",
         session_id: "ses_1",
         timestamp: "2026-05-25T08:00:09.000Z",
         source_vendor: "claude-code",
