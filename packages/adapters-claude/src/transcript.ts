@@ -45,24 +45,30 @@ export function extractClaudeTranscriptObservations(record: unknown): ClaudeTran
     return [];
   }
 
-  const sessionId = normalizeString(row.sessionId ?? row.session_id, "unknown-session");
-  const workspacePath = normalizeString(row.cwd ?? row.workspace_path, ".");
-  const timestamp = normalizeTimestamp(row.timestamp);
+  const sessionId = normalizeOptionalString(row.sessionId ?? row.session_id);
+  const workspacePath = normalizeOptionalString(row.cwd ?? row.workspace_path);
+  const timestamp = normalizeValidTimestamp(row.timestamp);
+  if (sessionId === undefined || workspacePath === undefined || timestamp === undefined) {
+    return [];
+  }
+
   const rowType = normalizeOptionalString(row.type);
   const role = normalizeOptionalString(message.role);
 
   if (rowType === "user" || role === "user") {
     const promptText = flattenClaudeContent(message.content);
+    const promptId = normalizeOptionalString(row.promptId ?? row.prompt_id ?? row.uuid);
+    if (promptId === undefined) {
+      return [];
+    }
+
     return [
       {
         kind: "prompt_submitted",
         sessionId,
         workspacePath,
         timestamp,
-        promptId: normalizeString(
-          row.promptId ?? row.prompt_id ?? row.id ?? message.id ?? row.uuid,
-          "unknown-prompt"
-        ),
+        promptId,
         promptChars: promptText.length
       }
     ];
@@ -231,7 +237,7 @@ function normalizeNonNegativeInteger(value: unknown): number {
   return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : 0;
 }
 
-function normalizeTimestamp(value: unknown): string {
+function normalizeValidTimestamp(value: unknown): string | undefined {
   if (typeof value === "string") {
     const parsed = new Date(value);
     if (!Number.isNaN(parsed.getTime())) {
@@ -239,5 +245,5 @@ function normalizeTimestamp(value: unknown): string {
     }
   }
 
-  return new Date().toISOString();
+  return undefined;
 }

@@ -168,7 +168,7 @@ describe("AnyEventSchema", () => {
   });
 
   it("parses a prompt.submitted event", () => {
-    const result = PromptSubmittedEventSchema.safeParse({
+    const payload = {
       event_id: "evt_10",
       session_id: "ses_1",
       timestamp: "2026-05-27T10:00:00.000Z",
@@ -178,13 +178,17 @@ describe("AnyEventSchema", () => {
       type: "prompt.submitted",
       prompt_id: "prompt_1",
       prompt_chars: 27
-    });
+    };
+
+    const result = PromptSubmittedEventSchema.safeParse(payload);
+    const unionResult = AnyEventSchema.safeParse(payload);
 
     expect(result.success).toBe(true);
+    expect(unionResult.success).toBe(true);
   });
 
   it("parses an assistant.responded event", () => {
-    const result = AssistantRespondedEventSchema.safeParse({
+    const payload = {
       event_id: "evt_11",
       session_id: "ses_1",
       timestamp: "2026-05-27T10:00:10.000Z",
@@ -196,13 +200,17 @@ describe("AnyEventSchema", () => {
       model: "sonnet-test",
       stop_reason: "end_turn",
       response_chars: 16
-    });
+    };
+
+    const result = AssistantRespondedEventSchema.safeParse(payload);
+    const unionResult = AnyEventSchema.safeParse(payload);
 
     expect(result.success).toBe(true);
+    expect(unionResult.success).toBe(true);
   });
 
   it("parses a token.usage.recorded event", () => {
-    const result = TokenUsageRecordedEventSchema.safeParse({
+    const payload = {
       event_id: "evt_12",
       session_id: "ses_1",
       timestamp: "2026-05-27T10:00:10.000Z",
@@ -218,9 +226,13 @@ describe("AnyEventSchema", () => {
       cache_read_input_tokens: 16,
       server_tool_use: "{\"web_search_requests\":0}",
       usage_source: "claude-transcript"
-    });
+    };
+
+    const result = TokenUsageRecordedEventSchema.safeParse(payload);
+    const unionResult = AnyEventSchema.safeParse(payload);
 
     expect(result.success).toBe(true);
+    expect(unionResult.success).toBe(true);
   });
 
   it("parses the full AnyEventSchema surface", () => {
