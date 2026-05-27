@@ -35,6 +35,8 @@ export type SessionDetailResponse = {
   }>;
 };
 
+type RowEnvelope<T> = T[] | { rows: T[] };
+
 async function fetchJson<T>(path: string): Promise<T> {
   const response = await fetch(path);
 
@@ -50,11 +52,11 @@ export async function fetchOverview(): Promise<OverviewResponse> {
 }
 
 export async function fetchTools(): Promise<ToolRow[]> {
-  return fetchJson<ToolRow[]>("/api/tools");
+  return rowsFromResponse(await fetchJson<RowEnvelope<ToolRow>>("/api/tools"));
 }
 
 export async function fetchSessions(): Promise<SessionRow[]> {
-  return fetchJson<SessionRow[]>("/api/sessions");
+  return rowsFromResponse(await fetchJson<RowEnvelope<SessionRow>>("/api/sessions"));
 }
 
 export async function fetchSessionDetail(sessionId: string): Promise<SessionDetailResponse> {
@@ -63,4 +65,8 @@ export async function fetchSessionDetail(sessionId: string): Promise<SessionDeta
 
 export function buildExportUrl(format: "csv" | "json"): string {
   return `/api/exports/${format}`;
+}
+
+function rowsFromResponse<T>(response: RowEnvelope<T>): T[] {
+  return Array.isArray(response) ? response : response.rows;
 }

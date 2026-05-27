@@ -184,6 +184,28 @@ function resolveRequestScope(
   };
 }
 
+function withScopeMetadata<T extends object>(
+  payload: T,
+  scope: ResolvedTimeScope & { updatedAt: string }
+): T & {
+  mode: ResolvedTimeScope["mode"];
+  range: ResolvedTimeScope["range"];
+  timezone: string;
+  windowStart: string | null;
+  windowEnd: string | null;
+  updatedAt: string;
+} {
+  return {
+    ...payload,
+    mode: scope.mode,
+    range: scope.range,
+    timezone: scope.timezone,
+    windowStart: scope.windowStart,
+    windowEnd: scope.windowEnd,
+    updatedAt: scope.updatedAt
+  };
+}
+
 function queryRecord(query: unknown): Record<string, unknown> {
   return query && typeof query === "object" ? (query as Record<string, unknown>) : {};
 }
@@ -280,47 +302,26 @@ export function buildApp(input: BuildAppInput): MetricsApp {
     const scope = resolveRequestScope(request.query, input);
     const overviewRows = selectOverviewRows(db, scope);
 
-    return {
-      ...buildOverviewMetrics({
+    return withScopeMetadata(
+      buildOverviewMetrics({
         sessions: overviewRows.sessions,
         toolEvents: overviewRows.toolEvents,
         codeEdits: overviewRows.codeEdits
       }),
-      mode: scope.mode,
-      range: scope.range,
-      timezone: scope.timezone,
-      windowStart: scope.windowStart,
-      windowEnd: scope.windowEnd,
-      updatedAt: scope.updatedAt
-    };
+      scope
+    );
   });
 
   app.get("/api/tools", async (request) => {
     const scope = resolveRequestScope(request.query, input);
 
-    return {
-      rows: selectToolRanking(db, scope),
-      mode: scope.mode,
-      range: scope.range,
-      timezone: scope.timezone,
-      windowStart: scope.windowStart,
-      windowEnd: scope.windowEnd,
-      updatedAt: scope.updatedAt
-    };
+    return withScopeMetadata({ rows: selectToolRanking(db, scope) }, scope);
   });
 
   app.get("/api/sessions", async (request) => {
     const scope = resolveRequestScope(request.query, input);
 
-    return {
-      rows: selectSessions(db, scope),
-      mode: scope.mode,
-      range: scope.range,
-      timezone: scope.timezone,
-      windowStart: scope.windowStart,
-      windowEnd: scope.windowEnd,
-      updatedAt: scope.updatedAt
-    };
+    return withScopeMetadata({ rows: selectSessions(db, scope) }, scope);
   });
 
   app.get("/api/sessions/:id", async (request, reply) => {

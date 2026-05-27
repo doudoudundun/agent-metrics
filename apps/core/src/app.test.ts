@@ -374,6 +374,7 @@ describe("core api", () => {
     await ingestEventLog({ app, eventLogPath: logPath });
 
     const response = await app.inject({ method: "GET", url: "/api/tools?mode=calendar&range=week" });
+    const rollingWeek = await app.inject({ method: "GET", url: "/api/tools?mode=rolling&range=week" });
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({
@@ -388,6 +389,19 @@ describe("core api", () => {
       windowEnd: "2026-05-27T10:30:00.000Z",
       updatedAt: "2026-05-27T10:30:00.000Z"
     });
+    expect(rollingWeek.statusCode).toBe(200);
+    expect(rollingWeek.json()).toEqual({
+      rows: [
+        { toolName: "Read", count: 2, failures: 0, averageDurationMs: 20 },
+        { toolName: "Write", count: 1, failures: 1, averageDurationMs: 20 }
+      ],
+      mode: "rolling",
+      range: "week",
+      timezone: "Asia/Shanghai",
+      windowStart: "2026-05-20T10:30:00.000Z",
+      windowEnd: "2026-05-27T10:30:00.000Z",
+      updatedAt: "2026-05-27T10:30:00.000Z"
+    });
 
     await app.close();
   });
@@ -399,6 +413,7 @@ describe("core api", () => {
     await ingestEventLog({ app, eventLogPath: logPath });
 
     const response = await app.inject({ method: "GET", url: "/api/sessions?mode=calendar&range=day" });
+    const month = await app.inject({ method: "GET", url: "/api/sessions?mode=calendar&range=month" });
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({
@@ -407,6 +422,20 @@ describe("core api", () => {
       range: "day",
       timezone: "Asia/Shanghai",
       windowStart: "2026-05-26T16:00:00.000Z",
+      windowEnd: "2026-05-27T10:30:00.000Z",
+      updatedAt: "2026-05-27T10:30:00.000Z"
+    });
+    expect(month.statusCode).toBe(200);
+    expect(month.json()).toEqual({
+      rows: [
+        { sessionId: "ses_today", workspacePath: "D:/projects/dev/agent-metrics" },
+        { sessionId: "ses_week", workspacePath: "D:/projects/dev/agent-metrics" },
+        { sessionId: "ses_old", workspacePath: "D:/projects/dev/agent-metrics" }
+      ],
+      mode: "calendar",
+      range: "month",
+      timezone: "Asia/Shanghai",
+      windowStart: "2026-04-30T16:00:00.000Z",
       windowEnd: "2026-05-27T10:30:00.000Z",
       updatedAt: "2026-05-27T10:30:00.000Z"
     });
