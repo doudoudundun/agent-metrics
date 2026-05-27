@@ -7,6 +7,7 @@ import Fastify from "fastify";
 import { AnyEventSchema } from "@agent-metrics/event-schema";
 import { toCsv, toJson } from "@agent-metrics/export-kit";
 import { buildOverviewMetrics } from "@agent-metrics/metrics-engine";
+import { resolveTimeScope, type ResolvedTimeScope } from "./time-scope.js";
 
 type MetricsStatement<Result = unknown> = {
   all(...params: unknown[]): Result[];
@@ -22,6 +23,14 @@ type MetricsDatabase = {
 
 type MetricsApp = ReturnType<typeof Fastify> & {
   db: MetricsDatabase;
+};
+
+type BuildAppInput = {
+  dbPath: string;
+  eventLogPath?: string;
+  now?: () => Date;
+  timezone?: string;
+  offsetMinutes?: number;
 };
 
 type SessionOverviewRow = {
@@ -73,16 +82,10 @@ type CodeEditTimelineRow = {
   createdAt: string;
 };
 
-const TOOL_RANKING_QUERY = `
-  SELECT
-    tool_name AS toolName,
-    COUNT(*) AS count,
-    SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failures,
-    COALESCE(CAST(AVG(duration_ms) AS INTEGER), 0) AS averageDurationMs
-  FROM tool_events
-  GROUP BY tool_name
-  ORDER BY count DESC, toolName ASC
-`;
+type TimeWindow = {
+  whereSql: string;
+  params: string[];
+};
 
 export function resolveDefaultDbPath(moduleUrl: string): string {
   return fileURLToPath(new URL("../../../data/sqlite/metrics.sqlite", moduleUrl));
@@ -92,20 +95,28 @@ export function resolveDefaultEventLogPath(moduleUrl: string): string {
   return fileURLToPath(new URL("../../../data/events/events.jsonl", moduleUrl));
 }
 
-function selectOverviewRows(db: MetricsDatabase): {
+function selectOverviewRows(
+  db: MetricsDatabase,
+  scope?: ResolvedTimeScope
+): {
   sessions: SessionOverviewRow[];
   toolEvents: ToolEventOverviewRow[];
   codeEdits: CodeEditOverviewRow[];
 } {
-  const sessions = db.prepare<SessionOverviewRow>("SELECT session_id FROM sessions").all();
+  const sessionWindow = buildTimeWindow("started_at", scope);
+  const toolWindow = buildTimeWindow("created_at", scope);
+  const codeEditWindow = buildTimeWindow("created_at", scope);
+  const sessions = db
+    .prepare<SessionOverviewRow>(`SELECT session_id FROM sessions${sessionWindow.whereSql}`)
+    .all(...sessionWindow.params);
   const toolEvents = db
-    .prepare<ToolEventOverviewRow>("SELECT status, duration_ms FROM tool_events")
-    .all();
+    .prepare<ToolEventOverviewRow>(`SELECT status, duration_ms FROM tool_events${toolWindow.whereSql}`)
+    .all(...toolWindow.params);
   const codeEdits = db
     .prepare<CodeEditOverviewRow>(
-      "SELECT file_count, insertions, deletions, edit_operation_count FROM code_edits"
+      `SELECT file_count, insertions, deletions, edit_operation_count FROM code_edits${codeEditWindow.whereSql}`
     )
-    .all();
+    .all(...codeEditWindow.params);
 
   return {
     sessions,
@@ -114,16 +125,67 @@ function selectOverviewRows(db: MetricsDatabase): {
   };
 }
 
-function selectToolRanking(db: MetricsDatabase): ToolRankingRow[] {
-  return db.prepare<ToolRankingRow>(TOOL_RANKING_QUERY).all();
+function selectToolRanking(db: MetricsDatabase, scope?: ResolvedTimeScope): ToolRankingRow[] {
+  const window = buildTimeWindow("created_at", scope);
+
+  return db
+    .prepare<ToolRankingRow>(`
+      SELECT
+        tool_name AS toolName,
+        COUNT(*) AS count,
+        SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failures,
+        COALESCE(CAST(AVG(duration_ms) AS INTEGER), 0) AS averageDurationMs
+      FROM tool_events
+      ${window.whereSql}
+      GROUP BY tool_name
+      ORDER BY count DESC, toolName ASC
+    `)
+    .all(...window.params);
 }
 
-function selectSessions(db: MetricsDatabase): SessionListRow[] {
+function selectSessions(db: MetricsDatabase, scope?: ResolvedTimeScope): SessionListRow[] {
+  const window = buildTimeWindow("started_at", scope);
+
   return db
     .prepare<SessionListRow>(
-      "SELECT session_id AS sessionId, workspace_path AS workspacePath FROM sessions ORDER BY started_at DESC"
+      `SELECT session_id AS sessionId, workspace_path AS workspacePath FROM sessions${window.whereSql} ORDER BY started_at DESC`
     )
-    .all();
+    .all(...window.params);
+}
+
+function buildTimeWindow(columnName: string, scope?: ResolvedTimeScope): TimeWindow {
+  if (!scope?.windowStart || !scope.windowEnd) {
+    return {
+      whereSql: "",
+      params: []
+    };
+  }
+
+  return {
+    whereSql: ` WHERE ${columnName} >= ? AND ${columnName} <= ?`,
+    params: [scope.windowStart, scope.windowEnd]
+  };
+}
+
+function resolveRequestScope(
+  query: unknown,
+  input: BuildAppInput
+): ResolvedTimeScope & { updatedAt: string } {
+  const now = input.now?.() ?? new Date();
+  const scope = resolveTimeScope(queryRecord(query), {
+    now,
+    timezone: input.timezone,
+    offsetMinutes: input.offsetMinutes
+  });
+
+  return {
+    ...scope,
+    updatedAt: now.toISOString()
+  };
+}
+
+function queryRecord(query: unknown): Record<string, unknown> {
+  return query && typeof query === "object" ? (query as Record<string, unknown>) : {};
 }
 
 function migrateLegacySessionsSchema(db: MetricsDatabase): void {
@@ -154,7 +216,7 @@ function migrateLegacyCodeEditsSchema(db: MetricsDatabase): void {
   }
 }
 
-export function buildApp(input: { dbPath: string; eventLogPath?: string }): MetricsApp {
+export function buildApp(input: BuildAppInput): MetricsApp {
   mkdirSync(dirname(input.dbPath), { recursive: true });
 
   const db = new Database(input.dbPath) as MetricsDatabase;
@@ -214,22 +276,51 @@ export function buildApp(input: { dbPath: string; eventLogPath?: string }): Metr
     await ingestQueue;
   });
 
-  app.get("/api/overview", async () => {
-    const overviewRows = selectOverviewRows(db);
+  app.get("/api/overview", async (request) => {
+    const scope = resolveRequestScope(request.query, input);
+    const overviewRows = selectOverviewRows(db, scope);
 
-    return buildOverviewMetrics({
-      sessions: overviewRows.sessions,
-      toolEvents: overviewRows.toolEvents,
-      codeEdits: overviewRows.codeEdits
-    });
+    return {
+      ...buildOverviewMetrics({
+        sessions: overviewRows.sessions,
+        toolEvents: overviewRows.toolEvents,
+        codeEdits: overviewRows.codeEdits
+      }),
+      mode: scope.mode,
+      range: scope.range,
+      timezone: scope.timezone,
+      windowStart: scope.windowStart,
+      windowEnd: scope.windowEnd,
+      updatedAt: scope.updatedAt
+    };
   });
 
-  app.get("/api/tools", async () => {
-    return selectToolRanking(db);
+  app.get("/api/tools", async (request) => {
+    const scope = resolveRequestScope(request.query, input);
+
+    return {
+      rows: selectToolRanking(db, scope),
+      mode: scope.mode,
+      range: scope.range,
+      timezone: scope.timezone,
+      windowStart: scope.windowStart,
+      windowEnd: scope.windowEnd,
+      updatedAt: scope.updatedAt
+    };
   });
 
-  app.get("/api/sessions", async () => {
-    return selectSessions(db);
+  app.get("/api/sessions", async (request) => {
+    const scope = resolveRequestScope(request.query, input);
+
+    return {
+      rows: selectSessions(db, scope),
+      mode: scope.mode,
+      range: scope.range,
+      timezone: scope.timezone,
+      windowStart: scope.windowStart,
+      windowEnd: scope.windowEnd,
+      updatedAt: scope.updatedAt
+    };
   });
 
   app.get("/api/sessions/:id", async (request, reply) => {
