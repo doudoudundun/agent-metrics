@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import type { SessionDetailResponse } from "../api";
+import type { SessionDetailResponse, SessionTimelineEntry } from "../api";
 
 const TIMELINE_PAGE_SIZE = 8;
+const NUMBER_FORMAT = new Intl.NumberFormat("en-US");
 
 export function SessionTimelinePanel(input: {
   detail: SessionDetailResponse | null;
@@ -39,24 +40,18 @@ export function SessionTimelinePanel(input: {
         <>
           <div className="timeline-list">
             {visibleTimeline.map((entry, index) => (
-            <article className="timeline-row" key={`${entry.type}-${entry.toolName}-${index}`}>
-              <div className="timeline-main">
-                <strong>{entry.type}</strong>
-                <span>{entry.toolName || "Session"}</span>
-              </div>
-              <div className="timeline-meta">
-                <span>{entry.status}</span>
-                <span>{entry.durationMs} ms</span>
-                {entry.filesChanged.length > 0 ? (
-                  <span>{entry.filesChanged.join(", ")}</span>
-                ) : null}
-                {entry.insertions > 0 || entry.deletions > 0 ? (
-                  <span>
-                    +{entry.insertions} / -{entry.deletions}
-                  </span>
-                ) : null}
-              </div>
-            </article>
+              <article className="timeline-row" key={`${entry.type}-${entry.toolName}-${index}`}>
+                <div className="timeline-main">
+                  <span className="timeline-kind">{buildTimelineKindLabel(entry.type)}</span>
+                  <strong>{buildTimelineTitle(entry)}</strong>
+                  <span className="timeline-time">{formatTimestamp(entry.createdAt)}</span>
+                </div>
+                <div className="timeline-meta">
+                  {buildTimelineMeta(entry).map((item) => (
+                    <span key={`${entry.type}-${item}`}>{item}</span>
+                  ))}
+                </div>
+              </article>
             ))}
           </div>
           {detail.timeline.length > TIMELINE_PAGE_SIZE ? (
@@ -85,9 +80,167 @@ export function SessionTimelinePanel(input: {
         </>
       ) : (
         <p className="timeline-empty">
-          {statusMessage ?? (loading ? "Loading session activity..." : "Select a session to inspect its hook timeline.")}
+          {statusMessage ??
+            (loading
+              ? "Loading session activity..."
+              : "Select a session to inspect its hook timeline.")}
         </p>
       )}
     </section>
   );
+}
+
+function buildTimelineKindLabel(type: string): string {
+  if (type.startsWith("prompt.")) {
+    return "Prompt";
+  }
+
+  if (type.startsWith("assistant.")) {
+    return "Assistant";
+  }
+
+  if (type.startsWith("token.")) {
+    return "Token";
+  }
+
+  if (type.startsWith("tool.")) {
+    return "Tool";
+  }
+
+  if (type.startsWith("code.edit.")) {
+    return "Edit";
+  }
+
+  if (type.startsWith("session.")) {
+    return "Session";
+  }
+
+  return "Event";
+}
+
+function buildTimelineTitle(entry: SessionTimelineEntry): string {
+  if (entry.type.startsWith("prompt.")) {
+    return entry.promptId ? `Prompt ${entry.promptId}` : "Prompt submitted";
+  }
+
+  if (entry.type.startsWith("assistant.")) {
+    return entry.messageId ? `Assistant ${entry.messageId}` : "Assistant response";
+  }
+
+  if (entry.type.startsWith("token.")) {
+    return entry.messageId ? `Token usage ${entry.messageId}` : "Token usage";
+  }
+
+  if (entry.type.startsWith("tool.")) {
+    return entry.toolName || entry.type;
+  }
+
+  if (entry.type.startsWith("code.edit.")) {
+    return entry.toolName ? `${entry.toolName} applied changes` : "Edit applied";
+  }
+
+  if (entry.type === "session.started") {
+    return "Session started";
+  }
+
+  if (entry.type === "session.ended") {
+    return "Session ended";
+  }
+
+  return entry.type;
+}
+
+function buildTimelineMeta(entry: SessionTimelineEntry): string[] {
+  const items = [`type ${entry.type}`];
+
+  if (entry.status) {
+    items.push(entry.status);
+  }
+
+  if (entry.durationMs > 0) {
+    items.push(`${NUMBER_FORMAT.format(entry.durationMs)} ms`);
+  }
+
+  if (entry.type.startsWith("prompt.")) {
+    if (entry.promptChars !== null) {
+      items.push(`${NUMBER_FORMAT.format(entry.promptChars)} chars`);
+    }
+
+    return items;
+  }
+
+  if (entry.type.startsWith("assistant.")) {
+    if (entry.model) {
+      items.push(formatModelLabel(entry.model));
+    }
+
+    if (entry.responseChars !== null) {
+      items.push(`${NUMBER_FORMAT.format(entry.responseChars)} chars`);
+    }
+
+    if (entry.stopReason) {
+      items.push(entry.stopReason);
+    }
+
+    return items;
+  }
+
+  if (entry.type.startsWith("token.")) {
+    if (entry.model) {
+      items.push(formatModelLabel(entry.model));
+    }
+
+    if (entry.totalTokens !== null) {
+      items.push(`${NUMBER_FORMAT.format(entry.totalTokens)} total`);
+    }
+
+    if (
+      entry.inputTokens !== null &&
+      entry.outputTokens !== null &&
+      entry.cacheReadTokens !== null &&
+      entry.cacheCreationTokens !== null
+    ) {
+      items.push(
+        `in ${NUMBER_FORMAT.format(entry.inputTokens)} / out ${NUMBER_FORMAT.format(entry.outputTokens)} / cache ${NUMBER_FORMAT.format(entry.cacheReadTokens + entry.cacheCreationTokens)}`
+      );
+    }
+
+    if (entry.usageSource) {
+      items.push(entry.usageSource);
+    }
+
+    return items;
+  }
+
+  if (entry.type.startsWith("code.edit.")) {
+    if (entry.filesChanged.length > 0) {
+      items.push(entry.filesChanged.join(", "));
+    }
+
+    if (entry.insertions > 0 || entry.deletions > 0) {
+      items.push(`+${entry.insertions} / -${entry.deletions}`);
+    }
+
+    return items;
+  }
+
+  return items;
+}
+
+function formatTimestamp(value: string): string {
+  const parsed = new Date(value);
+
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+
+  return parsed.toISOString().slice(0, 19).replace("T", " ");
+}
+
+function formatModelLabel(model: string): string {
+  if (model.trim().length === 0 || model.trim().toLowerCase() === "unknown") {
+    return "Unknown model";
+  }
+
+  return model;
 }

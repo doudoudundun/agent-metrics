@@ -277,7 +277,17 @@ describe("ingestEventLog", () => {
       inputTokens: 10,
       outputTokens: 4,
       cacheReadTokens: 1,
-      cacheCreationTokens: 0
+      cacheCreationTokens: 0,
+      tokensByModel: [
+        {
+          model: "sonnet-test",
+          totalTokens: 15,
+          inputTokens: 10,
+          outputTokens: 4,
+          cacheReadTokens: 1,
+          cacheCreationTokens: 0
+        }
+      ]
     });
     expect(sessions.json()).toMatchObject({
       rows: [
@@ -359,7 +369,13 @@ describe("ingestEventLog", () => {
       totalToolCalls: 0,
       turnCount: 1,
       responseCount: 1,
-      totalTokens: 15
+      totalTokens: 15,
+      tokensByModel: [
+        {
+          model: "sonnet-test",
+          totalTokens: 15
+        }
+      ]
     });
 
     await app.close();
@@ -545,6 +561,7 @@ describe("core api", () => {
       outputTokens: 0,
       cacheReadTokens: 0,
       cacheCreationTokens: 0,
+      tokensByModel: [],
       affectedFileCount: 4,
       insertions: 5,
       deletions: 3,
@@ -744,6 +761,17 @@ describe("core api", () => {
       workspace_path: "D:/projects/dev/agent-metrics",
       type: "session.started"
     });
+    await appendJsonLine(logPath, {
+      event_id: "evt_detail_prompt",
+      session_id: "ses_detail_1",
+      timestamp: "2026-05-25T08:00:00.500Z",
+      source_vendor: "claude-code",
+      source_adapter: "claude",
+      workspace_path: "D:/projects/dev/agent-metrics",
+      type: "prompt.submitted",
+      prompt_id: "prompt_1",
+      prompt_chars: 19
+    });
 
     await appendJsonLine(logPath, {
       event_id: "evt_detail_2",
@@ -756,6 +784,36 @@ describe("core api", () => {
       tool_name: "Read",
       status: "succeeded",
       duration_ms: 14
+    });
+    await appendJsonLine(logPath, {
+      event_id: "evt_detail_assistant",
+      session_id: "ses_detail_1",
+      timestamp: "2026-05-25T08:00:01.500Z",
+      source_vendor: "claude-code",
+      source_adapter: "claude",
+      workspace_path: "D:/projects/dev/agent-metrics",
+      type: "assistant.responded",
+      message_id: "msg_1",
+      model: "gpt-5-codex",
+      stop_reason: "end_turn",
+      response_chars: 42
+    });
+    await appendJsonLine(logPath, {
+      event_id: "evt_detail_usage",
+      session_id: "ses_detail_1",
+      timestamp: "2026-05-25T08:00:01.750Z",
+      source_vendor: "claude-code",
+      source_adapter: "claude",
+      workspace_path: "D:/projects/dev/agent-metrics",
+      type: "token.usage.recorded",
+      message_id: "msg_1",
+      model: null,
+      input_tokens: 120,
+      output_tokens: 34,
+      cache_creation_input_tokens: 12,
+      cache_read_input_tokens: 8,
+      server_tool_use: "{}",
+      usage_source: "claude-transcript"
     });
 
     await appendJsonLine(logPath, {
@@ -795,40 +853,261 @@ describe("core api", () => {
       sessionId: "ses_detail_1",
       timeline: [
         {
+          createdAt: "2026-05-25T08:00:00.000Z",
           filesChanged: [],
           insertions: 0,
           deletions: 0,
           type: "session.started",
           toolName: "",
           status: "started",
-          durationMs: 0
+          durationMs: 0,
+          promptId: null,
+          promptChars: null,
+          messageId: null,
+          model: null,
+          stopReason: null,
+          responseChars: null,
+          inputTokens: null,
+          outputTokens: null,
+          cacheReadTokens: null,
+          cacheCreationTokens: null,
+          totalTokens: null,
+          usageSource: null
         },
         {
+          createdAt: "2026-05-25T08:00:00.500Z",
+          filesChanged: [],
+          insertions: 0,
+          deletions: 0,
+          type: "prompt.submitted",
+          toolName: "",
+          status: "submitted",
+          durationMs: 0,
+          promptId: "prompt_1",
+          promptChars: 19,
+          messageId: null,
+          model: null,
+          stopReason: null,
+          responseChars: null,
+          inputTokens: null,
+          outputTokens: null,
+          cacheReadTokens: null,
+          cacheCreationTokens: null,
+          totalTokens: null,
+          usageSource: null
+        },
+        {
+          createdAt: "2026-05-25T08:00:01.000Z",
           filesChanged: [],
           insertions: 0,
           deletions: 0,
           type: "tool.succeeded",
           toolName: "Read",
           status: "succeeded",
-          durationMs: 14
+          durationMs: 14,
+          promptId: null,
+          promptChars: null,
+          messageId: null,
+          model: null,
+          stopReason: null,
+          responseChars: null,
+          inputTokens: null,
+          outputTokens: null,
+          cacheReadTokens: null,
+          cacheCreationTokens: null,
+          totalTokens: null,
+          usageSource: null
         },
         {
+          createdAt: "2026-05-25T08:00:01.500Z",
+          filesChanged: [],
+          insertions: 0,
+          deletions: 0,
+          type: "assistant.responded",
+          toolName: "",
+          status: "responded",
+          durationMs: 0,
+          messageId: "msg_1",
+          model: "gpt-5-codex",
+          stopReason: "end_turn",
+          responseChars: 42,
+          promptId: null,
+          promptChars: null,
+          inputTokens: null,
+          outputTokens: null,
+          cacheReadTokens: null,
+          cacheCreationTokens: null,
+          totalTokens: null,
+          usageSource: null
+        },
+        {
+          createdAt: "2026-05-25T08:00:01.750Z",
+          filesChanged: [],
+          insertions: 0,
+          deletions: 0,
+          type: "token.usage.recorded",
+          toolName: "",
+          status: "recorded",
+          durationMs: 0,
+          messageId: "msg_1",
+          model: "unknown",
+          inputTokens: 120,
+          outputTokens: 34,
+          cacheReadTokens: 8,
+          cacheCreationTokens: 12,
+          totalTokens: 174,
+          usageSource: "claude-transcript",
+          promptId: null,
+          promptChars: null,
+          stopReason: null,
+          responseChars: null
+        },
+        {
+          createdAt: "2026-05-25T08:00:02.000Z",
           filesChanged: ["src/app.ts"],
           insertions: 3,
           deletions: 1,
           type: "code.edit.applied",
           toolName: "Edit",
           status: "applied",
-          durationMs: 0
+          durationMs: 0,
+          promptId: null,
+          promptChars: null,
+          messageId: null,
+          model: null,
+          stopReason: null,
+          responseChars: null,
+          inputTokens: null,
+          outputTokens: null,
+          cacheReadTokens: null,
+          cacheCreationTokens: null,
+          totalTokens: null,
+          usageSource: null
         },
         {
+          createdAt: "2026-05-25T08:00:03.000Z",
           filesChanged: [],
           insertions: 0,
           deletions: 0,
           type: "session.ended",
           toolName: "",
           status: "ended",
-          durationMs: 0
+          durationMs: 0,
+          promptId: null,
+          promptChars: null,
+          messageId: null,
+          model: null,
+          stopReason: null,
+          responseChars: null,
+          inputTokens: null,
+          outputTokens: null,
+          cacheReadTokens: null,
+          cacheCreationTokens: null,
+          totalTokens: null,
+          usageSource: null
+        }
+      ]
+    });
+
+    await app.close();
+  });
+
+  it("aggregates overview tokens by model with an unknown fallback sorted by total tokens", async () => {
+    for (const event of [
+      {
+        event_id: "evt_model_started",
+        session_id: "ses_model",
+        timestamp: "2026-05-27T10:00:00.000Z",
+        source_vendor: "claude-code",
+        source_adapter: "claude",
+        workspace_path: "D:/projects/dev/agent-metrics",
+        type: "session.started"
+      },
+      {
+        event_id: "evt_model_a",
+        session_id: "ses_model",
+        timestamp: "2026-05-27T10:00:01.000Z",
+        source_vendor: "claude-code",
+        source_adapter: "claude",
+        workspace_path: "D:/projects/dev/agent-metrics",
+        type: "token.usage.recorded",
+        message_id: "msg_model_a",
+        model: "sonnet-test",
+        input_tokens: 20,
+        output_tokens: 6,
+        cache_creation_input_tokens: 3,
+        cache_read_input_tokens: 1,
+        server_tool_use: "{}",
+        usage_source: "claude-transcript"
+      },
+      {
+        event_id: "evt_model_b",
+        session_id: "ses_model",
+        timestamp: "2026-05-27T10:00:02.000Z",
+        source_vendor: "claude-code",
+        source_adapter: "claude",
+        workspace_path: "D:/projects/dev/agent-metrics",
+        type: "token.usage.recorded",
+        message_id: "msg_model_b",
+        model: null,
+        input_tokens: 5,
+        output_tokens: 2,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0,
+        server_tool_use: "{}",
+        usage_source: "claude-transcript"
+      },
+      {
+        event_id: "evt_model_c",
+        session_id: "ses_model",
+        timestamp: "2026-05-27T10:00:03.000Z",
+        source_vendor: "claude-code",
+        source_adapter: "claude",
+        workspace_path: "D:/projects/dev/agent-metrics",
+        type: "token.usage.recorded",
+        message_id: "msg_model_c",
+        model: "haiku-test",
+        input_tokens: 4,
+        output_tokens: 1,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0,
+        server_tool_use: "{}",
+        usage_source: "claude-transcript"
+      }
+    ]) {
+      await appendJsonLine(logPath, event);
+    }
+
+    const app = buildApp({ dbPath, ...scopedAppInput });
+    await ingestEventLog({ app, eventLogPath: logPath });
+    const response = await app.inject({ method: "GET", url: "/api/overview?mode=calendar&range=day" });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      tokensByModel: [
+        {
+          model: "sonnet-test",
+          totalTokens: 30,
+          inputTokens: 20,
+          outputTokens: 6,
+          cacheReadTokens: 1,
+          cacheCreationTokens: 3
+        },
+        {
+          model: "unknown",
+          totalTokens: 7,
+          inputTokens: 5,
+          outputTokens: 2,
+          cacheReadTokens: 0,
+          cacheCreationTokens: 0
+        },
+        {
+          model: "haiku-test",
+          totalTokens: 5,
+          inputTokens: 4,
+          outputTokens: 1,
+          cacheReadTokens: 0,
+          cacheCreationTokens: 0
         }
       ]
     });

@@ -500,6 +500,49 @@ body::before {
   max-height: 240px;
 }
 
+.model-usage-panel {
+  min-height: 180px;
+}
+
+.model-usage-list {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.model-usage-row {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid rgba(226, 236, 247, 0.08);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.model-usage-main,
+.model-usage-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px 12px;
+}
+
+.model-usage-main strong {
+  font-size: 0.92rem;
+}
+
+.model-usage-main span,
+.model-usage-meta {
+  color: #c4d3e5;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
@@ -589,6 +632,19 @@ tbody tr[data-selected="true"] .session-select {
   font-size: 11px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+.timeline-kind,
+.timeline-time {
+  color: #95a7c0;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.timeline-time {
+  margin-left: auto;
 }
 
 .timeline-meta {

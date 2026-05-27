@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fetchOverview, fetchSessions, fetchTools, type OverviewResponse } from "./api";
+import {
+  fetchOverview,
+  fetchSessionDetail,
+  fetchSessions,
+  fetchTools,
+  type OverviewResponse,
+  type SessionDetailResponse
+} from "./api";
 
 function stubFetchJson(payload: unknown): void {
   vi.stubGlobal(
@@ -32,6 +39,7 @@ describe("api client", () => {
       outputTokens: 0,
       cacheReadTokens: 0,
       cacheCreationTokens: 0,
+      tokensByModel: [],
       totalToolCalls: 0,
       successfulExecutions: 0,
       failedExecutions: 0,
@@ -63,6 +71,16 @@ describe("api client", () => {
       outputTokens: 19876,
       cacheReadTokens: 2345,
       cacheCreationTokens: 1112,
+      tokensByModel: [
+        {
+          model: "gpt-5-codex",
+          totalTokens: 30000,
+          inputTokens: 15000,
+          outputTokens: 12000,
+          cacheReadTokens: 2000,
+          cacheCreationTokens: 1000
+        }
+      ],
       totalToolCalls: 12,
       successfulExecutions: 10,
       failedExecutions: 2,
@@ -219,5 +237,61 @@ describe("api client", () => {
     await expect(fetchSessions()).rejects.toThrow(
       "Request failed: scoped aggregate metadata missing for /api/sessions"
     );
+  });
+
+  it("returns transcript-enriched session detail payloads", async () => {
+    const payload: SessionDetailResponse = {
+      sessionId: "ses_1",
+      timeline: [
+        {
+          type: "prompt.submitted",
+          createdAt: "2026-05-27T10:00:00.000Z",
+          toolName: "",
+          status: "submitted",
+          durationMs: 0,
+          filesChanged: [],
+          insertions: 0,
+          deletions: 0,
+          promptId: "prompt_1",
+          promptChars: 24,
+          messageId: null,
+          model: null,
+          stopReason: null,
+          responseChars: null,
+          inputTokens: null,
+          outputTokens: null,
+          cacheReadTokens: null,
+          cacheCreationTokens: null,
+          totalTokens: null,
+          usageSource: null
+        },
+        {
+          type: "token.usage.recorded",
+          createdAt: "2026-05-27T10:00:01.000Z",
+          toolName: "",
+          status: "recorded",
+          durationMs: 0,
+          filesChanged: [],
+          insertions: 0,
+          deletions: 0,
+          messageId: "msg_1",
+          model: "unknown",
+          inputTokens: 10,
+          outputTokens: 4,
+          cacheReadTokens: 1,
+          cacheCreationTokens: 0,
+          totalTokens: 15,
+          usageSource: "claude-transcript",
+          promptId: null,
+          promptChars: null,
+          stopReason: null,
+          responseChars: null
+        }
+      ]
+    };
+
+    stubFetchJson(payload);
+    await expect(fetchSessionDetail("ses_1")).resolves.toEqual(payload);
+    expect(fetch).toHaveBeenCalledWith("/api/sessions/ses_1");
   });
 });

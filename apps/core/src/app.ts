@@ -62,10 +62,20 @@ type AssistantResponseOverviewRow = {
 };
 
 type TokenUsageOverviewRow = {
+  model: string | null;
   input_tokens: number;
   output_tokens: number;
   cache_creation_input_tokens: number;
   cache_read_input_tokens: number;
+};
+
+type TokensByModelRow = {
+  model: string;
+  totalTokens: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
 };
 
 type ToolRankingRow = {
@@ -102,6 +112,54 @@ type CodeEditTimelineRow = {
   insertions: number;
   deletions: number;
   createdAt: string;
+};
+
+type PromptTimelineRow = {
+  promptId: string;
+  promptChars: number;
+  createdAt: string;
+};
+
+type AssistantTimelineRow = {
+  messageId: string;
+  model: string | null;
+  stopReason: string | null;
+  responseChars: number;
+  createdAt: string;
+};
+
+type TokenUsageTimelineRow = {
+  messageId: string;
+  model: string | null;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  usageSource: string;
+  createdAt: string;
+};
+
+type SessionTimelineEntry = {
+  createdAt: string;
+  type: string;
+  toolName: string;
+  status: string;
+  durationMs: number;
+  filesChanged: string[];
+  insertions: number;
+  deletions: number;
+  promptId: string | null;
+  promptChars: number | null;
+  messageId: string | null;
+  model: string | null;
+  stopReason: string | null;
+  responseChars: number | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  cacheReadTokens: number | null;
+  cacheCreationTokens: number | null;
+  totalTokens: number | null;
+  usageSource: string | null;
 };
 
 type TimeWindow = {
@@ -184,7 +242,7 @@ function selectOverviewRows(
     .all(...responseWindow.params);
   const tokenUsage = db
     .prepare<TokenUsageOverviewRow>(
-      `SELECT input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens FROM token_usage_events${tokenUsageWindow.whereSql}`
+      `SELECT model, input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens FROM token_usage_events${tokenUsageWindow.whereSql}`
     )
     .all(...tokenUsageWindow.params);
   const codeEdits = db
@@ -214,6 +272,31 @@ function selectOverviewRows(
     tokenUsage,
     codeEdits
   };
+}
+
+function selectTokensByModel(db: MetricsDatabase, scope?: ResolvedTimeScope): TokensByModelRow[] {
+  const window = buildTimeWindow("created_at", scope);
+
+  return db
+    .prepare<TokensByModelRow>(`
+      SELECT
+        COALESCE(model, 'unknown') AS model,
+        SUM(
+          input_tokens +
+          output_tokens +
+          cache_creation_input_tokens +
+          cache_read_input_tokens
+        ) AS totalTokens,
+        SUM(input_tokens) AS inputTokens,
+        SUM(output_tokens) AS outputTokens,
+        SUM(cache_read_input_tokens) AS cacheReadTokens,
+        SUM(cache_creation_input_tokens) AS cacheCreationTokens
+      FROM token_usage_events
+      ${window.whereSql}
+      GROUP BY COALESCE(model, 'unknown')
+      ORDER BY totalTokens DESC, model ASC
+    `)
+    .all(...window.params);
 }
 
 function selectToolRanking(db: MetricsDatabase, scope?: ResolvedTimeScope): ToolRankingRow[] {
@@ -482,14 +565,17 @@ export function buildApp(input: BuildAppInput): MetricsApp {
     const overviewRows = selectOverviewRows(db, scope);
 
     return withScopeMetadata(
-      buildOverviewMetrics({
-        sessions: overviewRows.sessions,
-        toolEvents: overviewRows.toolEvents,
-        prompts: overviewRows.prompts,
-        responses: overviewRows.responses,
-        tokenUsage: overviewRows.tokenUsage,
-        codeEdits: overviewRows.codeEdits
-      }),
+      {
+        ...buildOverviewMetrics({
+          sessions: overviewRows.sessions,
+          toolEvents: overviewRows.toolEvents,
+          prompts: overviewRows.prompts,
+          responses: overviewRows.responses,
+          tokenUsage: overviewRows.tokenUsage,
+          codeEdits: overviewRows.codeEdits
+        }),
+        tokensByModel: selectTokensByModel(db, scope)
+      },
       scope
     );
   });
@@ -524,14 +610,29 @@ export function buildApp(input: BuildAppInput): MetricsApp {
         "SELECT tool_name AS toolName, status, duration_ms AS durationMs, created_at AS createdAt FROM tool_events WHERE session_id = ? ORDER BY created_at ASC"
       )
       .all(params.id);
+    const promptRows = db
+      .prepare<PromptTimelineRow>(
+        "SELECT prompt_id AS promptId, prompt_chars AS promptChars, created_at AS createdAt FROM prompt_events WHERE session_id = ? ORDER BY created_at ASC"
+      )
+      .all(params.id);
+    const assistantRows = db
+      .prepare<AssistantTimelineRow>(
+        "SELECT message_id AS messageId, model, stop_reason AS stopReason, response_chars AS responseChars, created_at AS createdAt FROM assistant_responses WHERE session_id = ? ORDER BY created_at ASC"
+      )
+      .all(params.id);
+    const tokenUsageRows = db
+      .prepare<TokenUsageTimelineRow>(
+        "SELECT message_id AS messageId, model, input_tokens AS inputTokens, output_tokens AS outputTokens, cache_read_input_tokens AS cacheReadTokens, cache_creation_input_tokens AS cacheCreationTokens, usage_source AS usageSource, created_at AS createdAt FROM token_usage_events WHERE session_id = ? ORDER BY created_at ASC"
+      )
+      .all(params.id);
     const codeEditRows = db
       .prepare<CodeEditTimelineRow>(
         "SELECT tool_name AS toolName, files_changed AS filesChanged, insertions, deletions, created_at AS createdAt FROM code_edits WHERE session_id = ? ORDER BY created_at ASC"
       )
       .all(params.id);
 
-    const timeline = [
-      {
+    const timeline: SessionTimelineEntry[] = [
+      createTimelineEntry({
         createdAt: session.startedAt,
         type: "session.started",
         toolName: "",
@@ -540,8 +641,23 @@ export function buildApp(input: BuildAppInput): MetricsApp {
         filesChanged: [],
         insertions: 0,
         deletions: 0
-      },
-      ...toolRows.map((row) => ({
+      }),
+      ...promptRows.map((row) =>
+        createTimelineEntry({
+          createdAt: row.createdAt,
+          type: "prompt.submitted",
+          toolName: "",
+          status: "submitted",
+          durationMs: 0,
+          filesChanged: [],
+          insertions: 0,
+          deletions: 0,
+          promptId: row.promptId,
+          promptChars: row.promptChars
+        })
+      ),
+      ...toolRows.map((row) =>
+        createTimelineEntry({
         createdAt: row.createdAt,
         type: `tool.${row.status}`,
         toolName: row.toolName,
@@ -550,8 +666,50 @@ export function buildApp(input: BuildAppInput): MetricsApp {
         filesChanged: [],
         insertions: 0,
         deletions: 0
-      })),
-      ...codeEditRows.map((row) => ({
+        })
+      ),
+      ...assistantRows.map((row) =>
+        createTimelineEntry({
+          createdAt: row.createdAt,
+          type: "assistant.responded",
+          toolName: "",
+          status: "responded",
+          durationMs: 0,
+          filesChanged: [],
+          insertions: 0,
+          deletions: 0,
+          messageId: row.messageId,
+          model: row.model,
+          stopReason: row.stopReason,
+          responseChars: row.responseChars
+        })
+      ),
+      ...tokenUsageRows.map((row) =>
+        createTimelineEntry({
+          createdAt: row.createdAt,
+          type: "token.usage.recorded",
+          toolName: "",
+          status: "recorded",
+          durationMs: 0,
+          filesChanged: [],
+          insertions: 0,
+          deletions: 0,
+          messageId: row.messageId,
+          model: row.model ?? "unknown",
+          inputTokens: row.inputTokens,
+          outputTokens: row.outputTokens,
+          cacheReadTokens: row.cacheReadTokens,
+          cacheCreationTokens: row.cacheCreationTokens,
+          totalTokens:
+            row.inputTokens +
+            row.outputTokens +
+            row.cacheReadTokens +
+            row.cacheCreationTokens,
+          usageSource: row.usageSource
+        })
+      ),
+      ...codeEditRows.map((row) =>
+        createTimelineEntry({
         createdAt: row.createdAt,
         type: "code.edit.applied",
         toolName: row.toolName,
@@ -560,10 +718,11 @@ export function buildApp(input: BuildAppInput): MetricsApp {
         filesChanged: parseFilesChanged(row.filesChanged),
         insertions: row.insertions,
         deletions: row.deletions
-      })),
+        })
+      ),
       ...(session.endedAt
         ? [
-            {
+            createTimelineEntry({
               createdAt: session.endedAt,
               type: "session.ended",
               toolName: "",
@@ -572,14 +731,14 @@ export function buildApp(input: BuildAppInput): MetricsApp {
               filesChanged: [],
               insertions: 0,
               deletions: 0
-            }
+            })
           ]
         : [])
     ].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
 
     return {
       sessionId: params.id,
-      timeline: timeline.map(({ createdAt: _createdAt, ...entry }) => entry)
+      timeline
     };
   });
 
@@ -722,6 +881,57 @@ function parseFilesChanged(value: string): string[] {
   } catch {
     return [];
   }
+}
+
+function createTimelineEntry(
+  input: Omit<
+    SessionTimelineEntry,
+    | "promptId"
+    | "promptChars"
+    | "messageId"
+    | "model"
+    | "stopReason"
+    | "responseChars"
+    | "inputTokens"
+    | "outputTokens"
+    | "cacheReadTokens"
+    | "cacheCreationTokens"
+    | "totalTokens"
+    | "usageSource"
+  > &
+    Partial<
+      Pick<
+        SessionTimelineEntry,
+        | "promptId"
+        | "promptChars"
+        | "messageId"
+        | "model"
+        | "stopReason"
+        | "responseChars"
+        | "inputTokens"
+        | "outputTokens"
+        | "cacheReadTokens"
+        | "cacheCreationTokens"
+        | "totalTokens"
+        | "usageSource"
+      >
+    >
+): SessionTimelineEntry {
+  return {
+    promptId: null,
+    promptChars: null,
+    messageId: null,
+    model: null,
+    stopReason: null,
+    responseChars: null,
+    inputTokens: null,
+    outputTokens: null,
+    cacheReadTokens: null,
+    cacheCreationTokens: null,
+    totalTokens: null,
+    usageSource: null,
+    ...input
+  };
 }
 
 function isMissingFileError(error: unknown): boolean {

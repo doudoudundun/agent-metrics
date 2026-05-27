@@ -53,11 +53,9 @@ describe("App", () => {
   it("does not refetch when clicking the already selected scope", async () => {
     const view = render(<App />);
 
-    await waitFor(() => {
-      expect(
-        screen.queryByText("Loading local activity signals from the metrics core.")
-      ).not.toBeInTheDocument();
-    });
+    expect(
+      await screen.findByRole("region", { name: "Overview metrics for Today" })
+    ).toBeInTheDocument();
     expect(screen.getByText("Total Tokens")).toBeInTheDocument();
     await nextTick();
     vi.mocked(fetchOverview).mockClear();
@@ -143,12 +141,29 @@ describe("App", () => {
     expect(within(overviewRegion).getByText("12 responses")).toBeInTheDocument();
     expect(within(overviewRegion).getByText(/10 ok \/ 2 failed/)).toBeInTheDocument();
     expect(screen.queryByText("Estimated Tokens")).not.toBeInTheDocument();
-    expect(await screen.findByRole("heading", { name: "Recent Sessions" })).toBeInTheDocument();
-    expect(await screen.findByText("ses_1")).toBeInTheDocument();
-    expect(await screen.findByText("gpt-5-codex")).toBeInTheDocument();
-    expect(await screen.findByRole("heading", { name: "Session Timeline" })).toBeInTheDocument();
-    expect(await screen.findByText("session.started")).toBeInTheDocument();
-    expect(await screen.findByText("2026-05-27 18:30:00")).toBeInTheDocument();
+    const modelUsagePanel = (await screen.findByRole("heading", { name: "Model Usage" })).closest(
+      "section"
+    );
+    expect(modelUsagePanel).not.toBeNull();
+    expect(within(modelUsagePanel!).getByText("gpt-5-codex")).toBeInTheDocument();
+    expect(within(modelUsagePanel!).getByText("Unknown model")).toBeInTheDocument();
+
+    const recentSessionsPanel = (
+      await screen.findByRole("heading", { name: "Recent Sessions" })
+    ).closest("section");
+    expect(recentSessionsPanel).not.toBeNull();
+    expect(within(recentSessionsPanel!).getByText("ses_1")).toBeInTheDocument();
+    expect(within(recentSessionsPanel!).getByText("gpt-5-codex")).toBeInTheDocument();
+
+    const timelinePanel = (await screen.findByRole("heading", { name: "Session Timeline" })).closest(
+      "section"
+    );
+    expect(timelinePanel).not.toBeNull();
+    expect(await within(timelinePanel!).findByText("174 total")).toBeInTheDocument();
+    expect(within(timelinePanel!).getByText("Session")).toBeInTheDocument();
+    expect(within(timelinePanel!).getByText("Assistant")).toBeInTheDocument();
+    expect(within(timelinePanel!).getByText("Token")).toBeInTheDocument();
+    expect(within(timelinePanel!).getAllByText("2026-05-25 08:00:01").length).toBeGreaterThan(0);
     expect(fetchOverview).toHaveBeenCalledWith({ mode: "calendar", range: "day" });
     expect(fetchTools).toHaveBeenCalledWith({ mode: "calendar", range: "day" });
     expect(fetchSessions).toHaveBeenCalledWith({ mode: "calendar", range: "day" });
@@ -479,6 +494,24 @@ function seedApiMocks(): void {
     outputTokens: 19876,
     cacheReadTokens: 2345,
     cacheCreationTokens: 1112,
+    tokensByModel: [
+      {
+        model: "gpt-5-codex",
+        totalTokens: 33000,
+        inputTokens: 15000,
+        outputTokens: 12000,
+        cacheReadTokens: 4000,
+        cacheCreationTokens: 2000
+      },
+      {
+        model: "unknown",
+        totalTokens: 12678,
+        inputTokens: 7345,
+        outputTokens: 7876,
+        cacheReadTokens: 345,
+        cacheCreationTokens: 112
+      }
+    ],
     totalToolCalls: 12,
     successfulExecutions: 10,
     failedExecutions: 2,
@@ -518,22 +551,114 @@ function seedApiMocks(): void {
     sessionId: "ses_1",
     timeline: [
       {
+        createdAt: "2026-05-25T08:00:00.000Z",
         type: "session.started",
         toolName: "",
         status: "started",
         durationMs: 0,
         filesChanged: [],
         insertions: 0,
-        deletions: 0
+        deletions: 0,
+        promptId: null,
+        promptChars: null,
+        messageId: null,
+        model: null,
+        stopReason: null,
+        responseChars: null,
+        inputTokens: null,
+        outputTokens: null,
+        cacheReadTokens: null,
+        cacheCreationTokens: null,
+        totalTokens: null,
+        usageSource: null
       },
       {
+        createdAt: "2026-05-25T08:00:00.500Z",
+        type: "prompt.submitted",
+        toolName: "",
+        status: "submitted",
+        durationMs: 0,
+        filesChanged: [],
+        insertions: 0,
+        deletions: 0,
+        promptId: "prompt_1",
+        promptChars: 19,
+        messageId: null,
+        model: null,
+        stopReason: null,
+        responseChars: null,
+        inputTokens: null,
+        outputTokens: null,
+        cacheReadTokens: null,
+        cacheCreationTokens: null,
+        totalTokens: null,
+        usageSource: null
+      },
+      {
+        createdAt: "2026-05-25T08:00:01.000Z",
         type: "tool.succeeded",
         toolName: "Read",
         status: "succeeded",
         durationMs: 12,
         filesChanged: [],
         insertions: 0,
-        deletions: 0
+        deletions: 0,
+        promptId: null,
+        promptChars: null,
+        messageId: null,
+        model: null,
+        stopReason: null,
+        responseChars: null,
+        inputTokens: null,
+        outputTokens: null,
+        cacheReadTokens: null,
+        cacheCreationTokens: null,
+        totalTokens: null,
+        usageSource: null
+      },
+      {
+        createdAt: "2026-05-25T08:00:01.500Z",
+        type: "assistant.responded",
+        toolName: "",
+        status: "responded",
+        durationMs: 0,
+        filesChanged: [],
+        insertions: 0,
+        deletions: 0,
+        promptId: null,
+        promptChars: null,
+        messageId: "msg_1",
+        model: "gpt-5-codex",
+        stopReason: "end_turn",
+        responseChars: 42,
+        inputTokens: null,
+        outputTokens: null,
+        cacheReadTokens: null,
+        cacheCreationTokens: null,
+        totalTokens: null,
+        usageSource: null
+      },
+      {
+        createdAt: "2026-05-25T08:00:01.750Z",
+        type: "token.usage.recorded",
+        toolName: "",
+        status: "recorded",
+        durationMs: 0,
+        filesChanged: [],
+        insertions: 0,
+        deletions: 0,
+        promptId: null,
+        promptChars: null,
+        messageId: "msg_1",
+        model: "unknown",
+        stopReason: null,
+        responseChars: null,
+        inputTokens: 120,
+        outputTokens: 34,
+        cacheReadTokens: 8,
+        cacheCreationTokens: 12,
+        totalTokens: 174,
+        usageSource: "claude-transcript"
       }
     ]
   });

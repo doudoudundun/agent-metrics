@@ -13,6 +13,15 @@ export type AggregateMeta = {
   updatedAt: string;
 };
 
+export type TokensByModelRow = {
+  model: string;
+  totalTokens: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+};
+
 export type OverviewResponse = {
   sessionCount: number;
   turnCount: number;
@@ -22,6 +31,7 @@ export type OverviewResponse = {
   outputTokens: number;
   cacheReadTokens: number;
   cacheCreationTokens: number;
+  tokensByModel: TokensByModelRow[];
   totalToolCalls: number;
   successfulExecutions: number;
   failedExecutions: number;
@@ -49,15 +59,30 @@ export type SessionRow = {
 
 export type SessionDetailResponse = {
   sessionId: string;
-  timeline: Array<{
-    type: string;
-    toolName: string;
-    status: string;
-    durationMs: number;
-    filesChanged: string[];
-    insertions: number;
-    deletions: number;
-  }>;
+  timeline: SessionTimelineEntry[];
+};
+
+export type SessionTimelineEntry = {
+  createdAt: string;
+  type: string;
+  toolName: string;
+  status: string;
+  durationMs: number;
+  filesChanged: string[];
+  insertions: number;
+  deletions: number;
+  promptId: string | null;
+  promptChars: number | null;
+  messageId: string | null;
+  model: string | null;
+  stopReason: string | null;
+  responseChars: number | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  cacheReadTokens: number | null;
+  cacheCreationTokens: number | null;
+  totalTokens: number | null;
+  usageSource: string | null;
 };
 
 export type AggregateRowsResponse<T> = AggregateMeta & {

@@ -8,6 +8,7 @@ import {
   fetchTools
 } from "./api";
 import { KpiGrid } from "./components/KpiGrid";
+import { ModelUsagePanel } from "./components/ModelUsagePanel";
 import { RecentSessionsTable } from "./components/RecentSessionsTable";
 import { SessionTimelinePanel } from "./components/SessionTimelinePanel";
 import { TimeScopeToolbar } from "./components/TimeScopeToolbar";
@@ -534,6 +535,7 @@ export function App() {
             rows={sessionRows}
             selectedSessionId={selectedSessionId}
           />
+          <ModelUsagePanel rows={overview.tokensByModel ?? []} />
           <SessionTimelinePanel
             detail={selectedSession}
             loading={sessionDetailLoading}
