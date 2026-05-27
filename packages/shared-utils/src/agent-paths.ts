@@ -13,26 +13,26 @@ export type AgentMetricsPaths = {
 
 export function getAgentMetricsPaths(repoRoot: string): AgentMetricsPaths {
   return {
-    rawHookLogPath: toContractPath(repoRoot, "data", "hooks", "raw", "claude-code.jsonl"),
-    eventLogPath: toContractPath(repoRoot, "data", "events", "events.jsonl"),
-    snapshotRoot: toContractPath(repoRoot, "data", "hooks", "snapshots"),
-    parserStatePath: toContractPath(repoRoot, "data", "hooks", "state", "parser-state.json"),
-    parserSeenPath: toContractPath(repoRoot, "data", "hooks", "state", "seen-raw-ids.json"),
-    transcriptManifestPath: toContractPath(
+    rawHookLogPath: buildAgentMetricsPath(repoRoot, "data", "hooks", "raw", "claude-code.jsonl"),
+    eventLogPath: buildAgentMetricsPath(repoRoot, "data", "events", "events.jsonl"),
+    snapshotRoot: buildAgentMetricsPath(repoRoot, "data", "hooks", "snapshots"),
+    parserStatePath: buildAgentMetricsPath(repoRoot, "data", "hooks", "state", "parser-state.json"),
+    parserSeenPath: buildAgentMetricsPath(repoRoot, "data", "hooks", "state", "seen-raw-ids.json"),
+    transcriptManifestPath: buildAgentMetricsPath(
       repoRoot,
       "data",
       "hooks",
       "state",
       "transcript-manifest.json"
     ),
-    transcriptCursorPath: toContractPath(
+    transcriptCursorPath: buildAgentMetricsPath(
       repoRoot,
       "data",
       "hooks",
       "state",
       "transcript-cursors.json"
     ),
-    transcriptLedgerPath: toContractPath(
+    transcriptLedgerPath: buildAgentMetricsPath(
       repoRoot,
       "data",
       "hooks",
@@ -42,6 +42,16 @@ export function getAgentMetricsPaths(repoRoot: string): AgentMetricsPaths {
   };
 }
 
-function toContractPath(...segments: string[]): string {
-  return join(...segments).replaceAll("\\", "/");
+function buildAgentMetricsPath(repoRoot: string, ...segments: string[]): string {
+  const path = join(repoRoot, ...segments);
+
+  if (usesForwardSlashRoot(repoRoot)) {
+    return path.replaceAll("\\", "/");
+  }
+
+  return path;
+}
+
+function usesForwardSlashRoot(repoRoot: string): boolean {
+  return repoRoot.includes("/") && !repoRoot.includes("\\");
 }
