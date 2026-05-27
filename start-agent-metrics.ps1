@@ -12,6 +12,9 @@ $DashboardPort = 4173
 $CoreUrl = "http://127.0.0.1:$CorePort/api/overview"
 $DashboardUrl = "http://127.0.0.1:$DashboardPort"
 $RuntimeDir = Join-Path $RepoRoot ".runtime"
+$HookWatcherOutLog = Join-Path $RuntimeDir "hook-watcher.out.log"
+$HookWatcherErrLog = Join-Path $RuntimeDir "hook-watcher.err.log"
+$HookWatcherPidPath = Join-Path $RuntimeDir "hook-watcher.pid"
 $ParserOutLog = Join-Path $RuntimeDir "parser.out.log"
 $ParserErrLog = Join-Path $RuntimeDir "parser.err.log"
 $ParserPidPath = Join-Path $RuntimeDir "parser.pid"
@@ -94,6 +97,77 @@ function Ensure-Bootstrap() {
       Pop-Location
     }
   }
+}
+
+function Ensure-ClaudeHooks() {
+  Write-Step "Ensuring Claude hooks"
+  Push-Location $CliWorkingDir
+  try {
+    Invoke-RepoCommand -Command @("node", "dist/index.js", "hooks", "ensure", "--scope", "global", "--repo-root", $RepoRoot)
+  } finally {
+    Pop-Location
+  }
+}
+
+function Get-ManagedHookWatcherPid() {
+  if (-not (Test-Path $HookWatcherPidPath)) {
+    return $null
+  }
+
+  $rawPid = (Get-Content $HookWatcherPidPath -Raw).Trim()
+
+  if ($rawPid -notmatch '^\d+$') {
+    Remove-Item $HookWatcherPidPath -ErrorAction SilentlyContinue
+    return $null
+  }
+
+  $managedPid = [int]$rawPid
+  $process = Get-CimInstance Win32_Process -Filter "ProcessId = $managedPid" -ErrorAction SilentlyContinue
+
+  if (
+    $null -eq $process -or
+    $process.Name -ne "node.exe" -or
+    $process.CommandLine -notmatch "hooks\s+watch" -or
+    $process.CommandLine -notlike "*$RepoRoot*"
+  ) {
+    Remove-Item $HookWatcherPidPath -ErrorAction SilentlyContinue
+    return $null
+  }
+
+  return $managedPid
+}
+
+function Start-HookWatcherIfNeeded() {
+  $existingPid = Get-ManagedHookWatcherPid
+
+  if ($null -ne $existingPid) {
+    Write-Step "Hook watcher already running with PID $existingPid"
+    return
+  }
+
+  Write-Step "Starting Claude hook watcher"
+  $process = Start-Process -FilePath "node" `
+    -ArgumentList @("dist/index.js", "hooks", "watch", "--scope", "global", "--repo-root", $RepoRoot) `
+    -WorkingDirectory $CliWorkingDir `
+    -RedirectStandardOutput $HookWatcherOutLog `
+    -RedirectStandardError $HookWatcherErrLog `
+    -WindowStyle Hidden `
+    -PassThru
+
+  Start-Sleep -Seconds 1
+
+  if ($process.HasExited) {
+    if (Test-Path $HookWatcherErrLog) {
+      Write-Host ""
+      Write-Host "Hook watcher log tail:"
+      Get-Content $HookWatcherErrLog -Tail 40
+    }
+
+    throw "Claude hook watcher did not stay running."
+  }
+
+  Set-Content -Path $HookWatcherPidPath -Value "$($process.Id)" -NoNewline
+  Write-Step "Hook watcher started with PID $($process.Id)"
 }
 
 function Get-ManagedParserPid() {
@@ -228,18 +302,21 @@ if (-not (Test-Path $RuntimeDir)) {
 }
 
 Ensure-Bootstrap
+Ensure-ClaudeHooks
+Start-HookWatcherIfNeeded
 Start-ParserIfNeeded
 Start-CoreIfNeeded
 Start-DashboardIfNeeded
 
 Write-Host ""
+Write-Host "Hooks:     ensured + watcher active"
 Write-Host "Parser:    raw hook bus -> normalized events"
 Write-Host "Dashboard: $DashboardUrl"
 Write-Host "API:       $CoreUrl"
 Write-Host "Logs:      $RuntimeDir"
 Write-Host ""
-Write-Host "Next step: run .\install-claude-hooks.ps1 once to register global Claude hooks."
-Write-Host "Then open Claude Code in a test workspace and trigger Read, Search/Grep, Edit, and Bash."
+Write-Host "Next step: open Claude Code in a test workspace and trigger Read, Search/Grep, Edit, and Bash."
+Write-Host "Manual fallback: .\install-claude-hooks.ps1"
 Write-Host "Expected logs:"
 Write-Host "  data\hooks\raw\claude-code.jsonl"
 Write-Host "  data\events\events.jsonl"

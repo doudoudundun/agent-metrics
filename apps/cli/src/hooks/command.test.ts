@@ -65,6 +65,35 @@ describe("hooks CLI commands", () => {
     expect(installed.hooks?.PostToolUseFailure).toBeDefined();
   });
 
+  it("runs hooks ensure through Commander and reports the first-write status", async () => {
+    const repoRoot = await mkdtemp(join(tmpdir(), "agent-metrics-cli-"));
+    const settingsRoot = await mkdtemp(join(tmpdir(), "agent-metrics-settings-"));
+    const settingsPath = join(settingsRoot, "settings.json");
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+
+    await buildProgram().parseAsync([
+      "node",
+      "agent-metrics",
+      "hooks",
+      "ensure",
+      "--scope",
+      "global",
+      "--repo-root",
+      repoRoot,
+      "--settings-path",
+      settingsPath
+    ]);
+
+    const printed = stdout.mock.calls.map(([chunk]) => String(chunk)).join("");
+    const installed = JSON.parse(await readFile(settingsPath, "utf8")) as {
+      hooks?: Record<string, unknown>;
+    };
+
+    expect(printed).toContain("created");
+    expect(printed).toContain(settingsPath);
+    expect(installed.hooks?.PreToolUse).toBeDefined();
+  });
+
   it("runs hooks collect through Commander and appends a raw envelope only", async () => {
     const repoRoot = await mkdtemp(join(tmpdir(), "agent-metrics-cli-"));
     const stdin = Readable.from([

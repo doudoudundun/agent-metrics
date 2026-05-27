@@ -11,9 +11,9 @@ try {
     throw "Command failed: corepack pnpm --filter @agent-metrics/cli build"
   }
 
-  & node ".\apps\cli\dist\index.js" hooks install --scope global --repo-root $RepoRoot
+  & node ".\apps\cli\dist\index.js" hooks ensure --scope global --repo-root $RepoRoot
   if ($LASTEXITCODE -ne 0) {
-    throw "Command failed: node .\\apps\\cli\\dist\\index.js hooks install --scope global --repo-root $RepoRoot"
+    throw "Command failed: node .\\apps\\cli\\dist\\index.js hooks ensure --scope global --repo-root $RepoRoot"
   }
 } finally {
   Pop-Location

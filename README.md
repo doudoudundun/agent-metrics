@@ -8,10 +8,11 @@ Local-first metrics dashboard for Claude Code hooks.
 cd D:\projects\dev\agent-metrics
 corepack pnpm install
 .\start-agent-metrics.ps1
-.\install-claude-hooks.ps1
 ```
 
-After the one-time hook install, open Claude Code in any workspace and trigger a few real tools such as `Read`, `Search/Grep`, `Edit`, and `Bash`.
+`start-agent-metrics.ps1` now ensures the Claude user hooks and starts a runtime watcher that restores missing `agent-metrics` hooks if another tool rewrites `~/.claude/settings.json`.
+
+After startup, open Claude Code in any workspace and trigger a few real tools such as `Read`, `Search/Grep`, `Edit`, and `Bash`.
 
 ## How Collection Works
 
@@ -34,21 +35,24 @@ After the one-time hook install, open Claude Code in any workspace and trigger a
 - `corepack pnpm build`
 - `corepack pnpm lint`
 - `node .\apps\cli\dist\index.js hooks print-config --repo-root D:\projects\dev\agent-metrics`
+- `node .\apps\cli\dist\index.js hooks ensure --scope global --repo-root D:\projects\dev\agent-metrics`
 - `node .\apps\cli\dist\index.js hooks install --scope global --repo-root D:\projects\dev\agent-metrics`
+- `node .\apps\cli\dist\index.js hooks watch --scope global --repo-root D:\projects\dev\agent-metrics`
 
 ## Manual Install
 
 - Manual sample config: `docs/manual/claude-hooks-global.sample.json`
-- One-click Windows installer: `.\install-claude-hooks.ps1`
+- One-click Windows fallback: `.\install-claude-hooks.ps1`
 - Parser runtime notes: `docs/manual/phase2-parser-flow.md`
 
 ## Hooks-First Verification
 
 1. Run `.\start-agent-metrics.ps1`
-2. Run `.\install-claude-hooks.ps1`
+2. Confirm the startup output reports Claude hook ensure and watcher startup
 3. Open Claude Code in a test workspace
 4. Trigger `Read`, `Search/Grep`, `Edit`, and `Bash`
-5. Confirm:
+5. Optionally rewrite `~/.claude/settings.json` without the `agent-metrics` hooks and confirm they are restored
+6. Confirm:
    - the app starts and the dashboard is serving
    - the default dashboard view is the current calendar day
    - switching the hero toolbar to calendar week updates the global scope

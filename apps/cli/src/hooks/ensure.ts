@@ -1,11 +1,11 @@
 import { resolve } from "node:path";
 import type { Command } from "commander";
-import { ensureClaudeHooks, getDefaultClaudeSettingsPath, installClaudeHooks } from "./settings.js";
+import { ensureClaudeHooks, getDefaultClaudeSettingsPath } from "./settings.js";
 
-export function registerInstallCommand(hooks: Command): void {
+export function registerEnsureCommand(hooks: Command): void {
   hooks
-    .command("install")
-    .description("Install agent-metrics Claude hooks into Claude settings.")
+    .command("ensure")
+    .description("Ensure agent-metrics Claude hooks exist in Claude settings.")
     .option("--repo-root <path>", "Path to the agent-metrics repository root.", process.cwd())
     .option("--settings-path <path>", "Claude settings JSON path.", getDefaultClaudeSettingsPath())
     .option("--scope <scope>", "Settings scope to install into.", "global")
@@ -14,15 +14,11 @@ export function registerInstallCommand(hooks: Command): void {
         throw new Error(`Unsupported Claude settings scope: ${options.scope}`);
       }
 
-      const settingsPath = resolve(options.settingsPath);
-
       const result = await ensureClaudeHooks({
         repoRoot: options.repoRoot,
-        settingsPath
+        settingsPath: resolve(options.settingsPath)
       });
 
-      process.stdout.write(`Installed Claude hooks into ${settingsPath} (${result.status})\n`);
+      process.stdout.write(`Claude hooks ensure: ${result.status} ${result.settingsPath}\n`);
     });
 }
-
-export { getDefaultClaudeSettingsPath, installClaudeHooks } from "./settings.js";
