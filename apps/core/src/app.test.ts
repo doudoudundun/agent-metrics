@@ -38,11 +38,13 @@ const scopedAppInput = {
 beforeEach(async () => {
   vi.restoreAllMocks();
   delete process.env.AGENT_METRICS_OPENCODE_DB_PATH;
+  delete process.env.AGENT_METRICS_OPENCODE_MODELS_PATH;
   delete process.env.AGENT_METRICS_CODEX_SESSIONS_ROOT;
   delete process.env.AGENT_METRICS_CODEX_LOGS_DB_PATH;
   delete process.env.AGENT_METRICS_CODEX_CONFIG_PATH;
   const root = await mkdtemp(join(tmpdir(), "agent-metrics-core-"));
   process.env.AGENT_METRICS_OPENCODE_DB_PATH = join(root, "missing-opencode.db");
+  process.env.AGENT_METRICS_OPENCODE_MODELS_PATH = join(root, "missing-models.json");
   process.env.AGENT_METRICS_CODEX_SESSIONS_ROOT = join(root, "missing-codex-sessions");
   process.env.AGENT_METRICS_CODEX_LOGS_DB_PATH = join(root, "missing-logs_2.sqlite");
   process.env.AGENT_METRICS_CODEX_CONFIG_PATH = join(root, "missing-config.toml");
@@ -540,7 +542,9 @@ describe("ingestEventLog", () => {
   it("syncs OpenCode database state before overview reads when repoRoot is provided", async () => {
     const repoRoot = await mkdtemp(join(tmpdir(), "agent-metrics-opencode-core-"));
     const paths = getAgentMetricsPaths(repoRoot);
-    process.env.AGENT_METRICS_OPENCODE_DB_PATH = await createOpenCodeFixtureDb(repoRoot);
+    const fixture = await createOpenCodeFixture(repoRoot);
+    process.env.AGENT_METRICS_OPENCODE_DB_PATH = fixture.dbPath;
+    process.env.AGENT_METRICS_OPENCODE_MODELS_PATH = fixture.modelsPath;
 
     const app = buildApp({
       dbPath,
@@ -574,6 +578,13 @@ describe("ingestEventLog", () => {
           toolCalls: 1
         }
       ],
+      providerBreakdown: [
+        {
+          providerId: "opencode",
+          providerHost: "opencode.ai",
+          totalTokens: 29725
+        }
+      ],
       tokensByModel: [
         {
           model: "hy3-preview-free",
@@ -589,7 +600,7 @@ describe("ingestEventLog", () => {
           sourceVendor: "opencode",
           sourceAdapter: "opencode-db",
           providerId: "opencode",
-          providerHost: null,
+          providerHost: "opencode.ai",
           totalTokens: 29725,
           lastModel: "hy3-preview-free"
         }
@@ -664,24 +675,37 @@ describe("ingestEventLog", () => {
       method: "GET",
       url: "/api/sessions?mode=calendar&range=day&sourceVendor=codex"
     });
+    const tools = await app.inject({
+      method: "GET",
+      url: "/api/tools?mode=calendar&range=day&sourceVendor=codex"
+    });
+    const session = await app.inject({
+      method: "GET",
+      url: "/api/sessions/019e5dc9-b10c-7371-8edd-066e8db7e50d"
+    });
 
     expect(overview.statusCode).toBe(200);
     expect(overview.json()).toMatchObject({
       sessionCount: 1,
-      turnCount: 0,
-      responseCount: 0,
+      turnCount: 1,
+      responseCount: 1,
       totalTokens: 19623,
       inputTokens: 15928,
       outputTokens: 239,
       cacheReadTokens: 3456,
       cacheCreationTokens: 0,
+      totalToolCalls: 2,
+      successfulExecutions: 2,
+      failedExecutions: 0,
+      editOperationCount: 1,
+      affectedFileCount: 1,
       sourceBreakdown: [
         {
           sourceVendor: "codex",
           sessionCount: 1,
-          turnCount: 0,
+          turnCount: 1,
           totalTokens: 19623,
-          toolCalls: 0
+          toolCalls: 2
         }
       ],
       providerBreakdown: [
@@ -707,10 +731,54 @@ describe("ingestEventLog", () => {
           sourceAdapter: "codex-rollout",
           providerId: "ai",
           providerHost: "api.psydo.top",
+          turnCount: 1,
           totalTokens: 19623,
           lastModel: "gpt-5.4"
         }
       ]
+    });
+    expect(tools.statusCode).toBe(200);
+    expect(tools.json()).toMatchObject({
+      rows: expect.arrayContaining([
+        expect.objectContaining({
+          toolName: "apply_patch",
+          count: 1
+        }),
+        expect.objectContaining({
+          toolName: "WebSearch",
+          count: 1
+        })
+      ])
+    });
+    expect(session.statusCode).toBe(200);
+    expect(session.json()).toMatchObject({
+      timeline: expect.arrayContaining([
+        expect.objectContaining({
+          type: "prompt.submitted",
+          sourceVendor: "codex"
+        }),
+        expect.objectContaining({
+          type: "assistant.responded",
+          sourceVendor: "codex",
+          providerHost: "api.psydo.top",
+          model: "gpt-5.4"
+        }),
+        expect.objectContaining({
+          type: "tool.succeeded",
+          sourceVendor: "codex",
+          toolName: "apply_patch"
+        }),
+        expect.objectContaining({
+          type: "tool.succeeded",
+          sourceVendor: "codex",
+          toolName: "WebSearch"
+        }),
+        expect.objectContaining({
+          type: "code.edit.applied",
+          sourceVendor: "codex",
+          toolName: "apply_patch"
+        })
+      ])
     });
 
     await app.close();
@@ -1847,6 +1915,34 @@ async function createOpenCodeFixtureDb(root: string): Promise<string> {
   return opencodeDbPath;
 }
 
+async function createOpenCodeFixture(root: string): Promise<{
+  dbPath: string;
+  modelsPath: string;
+}> {
+  const dbPath = await createOpenCodeFixtureDb(root);
+  const modelsPath = join(root, "models.json");
+
+  await writeFile(
+    modelsPath,
+    JSON.stringify(
+      {
+        opencode: {
+          id: "opencode",
+          api: "https://opencode.ai/zen/v1"
+        }
+      },
+      null,
+      2
+    ),
+    "utf8"
+  );
+
+  return {
+    dbPath,
+    modelsPath
+  };
+}
+
 async function createCodexFixture(root: string): Promise<{
   sessionsRoot: string;
   logsDbPath: string;
@@ -1883,6 +1979,53 @@ async function createCodexFixture(root: string): Promise<{
           timestamp: "2026-05-27T10:00:00.000Z",
           cwd: root,
           model_provider: "ai"
+        }
+      }),
+      JSON.stringify({
+        timestamp: "2026-05-27T10:00:01.000Z",
+        type: "event_msg",
+        payload: {
+          type: "user_message",
+          message: "Review the telemetry changes."
+        }
+      }),
+      JSON.stringify({
+        timestamp: "2026-05-27T10:00:02.000Z",
+        type: "event_msg",
+        payload: {
+          type: "agent_message",
+          message: "Reading the diff now.",
+          phase: "commentary"
+        }
+      }),
+      JSON.stringify({
+        timestamp: "2026-05-27T10:00:03.000Z",
+        type: "event_msg",
+        payload: {
+          type: "patch_apply_end",
+          call_id: "call_patch_1",
+          success: true,
+          stdout: "Success. Updated the following files:\nM src/app.ts\n",
+          stderr: "",
+          changes: {
+            [join(root, "src", "app.ts")]: {
+              type: "update",
+              unified_diff:
+                "@@ -1,2 +1,3 @@\n import x\n+const y = 1;\n-old\n+new\n"
+            }
+          }
+        }
+      }),
+      JSON.stringify({
+        timestamp: "2026-05-27T10:00:04.000Z",
+        type: "event_msg",
+        payload: {
+          type: "web_search_end",
+          call_id: "call_web_1",
+          query: "codex rollout patch_apply_end",
+          action: {
+            type: "search"
+          }
         }
       }),
       JSON.stringify({
