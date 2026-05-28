@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { syncCodexRollouts } from "./codex-sync.js";
 
 describe("syncCodexRollouts", () => {
-  it("syncs rollout token snapshots with model and provider metadata and skips unchanged reruns", async () => {
+  it("syncs turn, tool, edit, and token events and skips unchanged reruns", async () => {
     const root = await mkdtemp(join(tmpdir(), "agent-metrics-codex-"));
     const sessionsRoot = join(root, "sessions");
     const dayRoot = join(sessionsRoot, "2026", "05", "27");
@@ -32,6 +32,79 @@ describe("syncCodexRollouts", () => {
             timestamp: "2026-05-27T10:00:00.000Z",
             cwd: "D:/projects/dev",
             model_provider: "ai"
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-05-27T10:00:01.000Z",
+          type: "event_msg",
+          payload: {
+            type: "user_message",
+            message: "Review the telemetry changes."
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-05-27T10:00:02.000Z",
+          type: "event_msg",
+          payload: {
+            type: "agent_message",
+            message: "Reading the diff now.",
+            phase: "commentary"
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-05-27T10:00:03.000Z",
+          type: "response_item",
+          payload: {
+            type: "custom_tool_call",
+            status: "completed",
+            call_id: "call_apply_patch_legacy_1",
+            name: "apply_patch",
+            input: "*** Begin Patch\n*** End Patch\n"
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-05-27T10:00:04.000Z",
+          type: "response_item",
+          payload: {
+            type: "custom_tool_call_output",
+            call_id: "call_apply_patch_legacy_1",
+            output: JSON.stringify({
+              output: "Success. Updated the following files:\nM src/app.ts\n",
+              metadata: {
+                exit_code: 0,
+                duration_seconds: 0.4
+              }
+            })
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-05-27T10:00:05.000Z",
+          type: "event_msg",
+          payload: {
+            type: "patch_apply_end",
+            call_id: "call_patch_1",
+            success: true,
+            stdout: "Success. Updated the following files:\nM src/app.ts\n",
+            stderr: "",
+            changes: {
+              "D:/projects/dev/src/app.ts": {
+                type: "update",
+                unified_diff:
+                  "@@ -1,2 +1,3 @@\n import x\n+const y = 1;\n-old\n+new\n"
+              }
+            }
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-05-27T10:00:06.000Z",
+          type: "event_msg",
+          payload: {
+            type: "web_search_end",
+            call_id: "call_web_1",
+            query: "codex rollout patch_apply_end",
+            action: {
+              type: "search"
+            }
           }
         }),
         JSON.stringify({
@@ -145,6 +218,37 @@ describe("syncCodexRollouts", () => {
       expect.objectContaining({
         event_id: "codex:session:019e5dc9-b10c-7371-8edd-066e8db7e50d:started",
         type: "session.started"
+      }),
+      expect.objectContaining({
+        type: "prompt.submitted"
+      }),
+      expect.objectContaining({
+        type: "assistant.responded"
+      }),
+      expect.objectContaining({
+        type: "tool.called",
+        tool_name: "apply_patch"
+      }),
+      expect.objectContaining({
+        type: "tool.succeeded",
+        tool_name: "apply_patch",
+        duration_ms: 400
+      }),
+      expect.objectContaining({
+        type: "tool.succeeded",
+        tool_name: "apply_patch"
+      }),
+      expect.objectContaining({
+        type: "code.edit.applied",
+        tool_name: "apply_patch",
+        file_count: 1,
+        insertions: 2,
+        deletions: 1,
+        edit_operation_count: 1
+      }),
+      expect.objectContaining({
+        type: "tool.succeeded",
+        tool_name: "WebSearch"
       }),
       expect.objectContaining({
         event_id: "codex:session:019e5dc9-b10c-7371-8edd-066e8db7e50d:usage:30321",
