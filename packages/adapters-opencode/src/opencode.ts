@@ -34,6 +34,13 @@ export type OpenCodePartRow = {
   data: string;
 };
 
+export type OpenCodeProviderMetadata = {
+  baseUrl: string | null;
+  host: string | null;
+};
+
+export type OpenCodeProviderRegistry = Record<string, OpenCodeProviderMetadata>;
+
 type OpenCodeTokenPayload = {
   inputTokens: number;
   outputTokens: number;
@@ -75,6 +82,7 @@ export function normalizeOpenCodeMessageRow(input: {
   sessionDirectory?: string | null;
   sessionModel?: string | null;
   partRows?: OpenCodePartRow[];
+  providerRegistry?: OpenCodeProviderRegistry;
 }): AnyEvent[] {
   const parsed = parseJsonRecord(input.row.data);
   if (parsed === null) {
@@ -111,6 +119,7 @@ export function normalizeOpenCodeMessageRow(input: {
     normalizeOptionalString(parsed.providerID) ??
     normalizeOptionalString(readNestedValue(parsed, "model", "providerID")) ??
     null;
+  const providerMetadata = providerId !== null ? input.providerRegistry?.[providerId] : undefined;
   const model =
     normalizeOptionalString(parsed.modelID) ??
     normalizeOptionalString(readNestedValue(parsed, "model", "modelID")) ??
@@ -136,8 +145,8 @@ export function normalizeOpenCodeMessageRow(input: {
       stop_reason: stopReason,
       response_chars: responseChars,
       provider_id: providerId,
-      provider_base_url: null,
-      provider_host: null
+      provider_base_url: providerMetadata?.baseUrl ?? null,
+      provider_host: providerMetadata?.host ?? null
     }
   ];
   const tokenPayload = extractTokenPayload(parsed);
@@ -160,8 +169,8 @@ export function normalizeOpenCodeMessageRow(input: {
       server_tool_use: "{}",
       usage_source: "opencode-message",
       provider_id: providerId,
-      provider_base_url: null,
-      provider_host: null
+      provider_base_url: providerMetadata?.baseUrl ?? null,
+      provider_host: providerMetadata?.host ?? null
     });
   }
 

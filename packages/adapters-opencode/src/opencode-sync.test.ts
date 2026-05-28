@@ -1,4 +1,4 @@
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import Database from "better-sqlite3";
@@ -12,6 +12,7 @@ describe("syncOpenCodeDatabase", () => {
     const eventLogPath = join(root, "events.jsonl");
     const cursorPath = join(root, "opencode-cursor.json");
     const ledgerPath = join(root, "opencode-ledger.json");
+    const modelsPath = join(root, "models.json");
     const db = new Database(dbPath);
 
     db.exec(`
@@ -173,18 +174,33 @@ describe("syncOpenCodeDatabase", () => {
       })
     );
     db.close();
+    await writeFile(
+      modelsPath,
+      JSON.stringify(
+        {
+          opencode: {
+            api: "https://opencode.ai/zen/v1"
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
 
     await syncOpenCodeDatabase({
       dbPath,
       eventLogPath,
       cursorPath,
-      ledgerPath
+      ledgerPath,
+      modelsPath
     });
     await syncOpenCodeDatabase({
       dbPath,
       eventLogPath,
       cursorPath,
-      ledgerPath
+      ledgerPath,
+      modelsPath
     });
 
     const events = (await readFile(eventLogPath, "utf8"))
@@ -200,5 +216,21 @@ describe("syncOpenCodeDatabase", () => {
       "opencode:message:msg_assistant_1:assistant",
       "opencode:message:msg_assistant_1:usage"
     ]);
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          event_id: "opencode:message:msg_assistant_1:assistant",
+          provider_id: "opencode",
+          provider_base_url: "https://opencode.ai/zen/v1",
+          provider_host: "opencode.ai"
+        }),
+        expect.objectContaining({
+          event_id: "opencode:message:msg_assistant_1:usage",
+          provider_id: "opencode",
+          provider_base_url: "https://opencode.ai/zen/v1",
+          provider_host: "opencode.ai"
+        })
+      ])
+    );
   });
 });

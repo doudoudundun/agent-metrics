@@ -11,6 +11,7 @@ import {
   normalizeOpenCodeToolPartRow,
   type OpenCodeMessageRow,
   type OpenCodePartRow,
+  type OpenCodeProviderRegistry,
   type OpenCodeSessionRow
 } from "./opencode.js";
 
@@ -41,16 +42,25 @@ export function resolveDefaultOpenCodeDbPath(): string {
   return join(homedir(), ".local", "share", "opencode", "opencode.db");
 }
 
+export function resolveDefaultOpenCodeModelsPath(): string {
+  return join(homedir(), ".cache", "opencode", "models.json");
+}
+
 export async function syncOpenCodeDatabase(input: {
   eventLogPath: string;
   cursorPath: string;
   ledgerPath: string;
   dbPath?: string;
+  modelsPath?: string;
 }): Promise<void> {
   const dbPath =
     input.dbPath ??
     process.env.AGENT_METRICS_OPENCODE_DB_PATH ??
     resolveDefaultOpenCodeDbPath();
+  const modelsPath =
+    input.modelsPath ??
+    process.env.AGENT_METRICS_OPENCODE_MODELS_PATH ??
+    resolveDefaultOpenCodeModelsPath();
 
   if (!existsSync(dbPath)) {
     return;
@@ -58,6 +68,7 @@ export async function syncOpenCodeDatabase(input: {
 
   const cursor = await loadCursor(input.cursorPath);
   const ledger = await loadLedger(input.ledgerPath);
+  const providerRegistry = await loadProviderRegistry(modelsPath);
   const seenEventIds = await loadEventIdsFromEventLog(input.eventLogPath, "opencode:");
   const baselineEventCount = seenEventIds.size;
 
@@ -147,7 +158,8 @@ export async function syncOpenCodeDatabase(input: {
           row,
           sessionDirectory: session?.directory ?? null,
           sessionModel: session?.model ?? null,
-          partRows: partRowsByMessageId.get(row.id) ?? []
+          partRows: partRowsByMessageId.get(row.id) ?? [],
+          providerRegistry
         });
       }),
       ...updatedToolRows.flatMap((row) => {
@@ -341,4 +353,54 @@ function isSameCursor(left: SyncCursor, right: SyncCursor): boolean {
     left.messageUpdatedAt === right.messageUpdatedAt &&
     left.partUpdatedAt === right.partUpdatedAt
   );
+}
+
+async function loadProviderRegistry(modelsPath: string): Promise<OpenCodeProviderRegistry> {
+  if (!existsSync(modelsPath)) {
+    return {};
+  }
+
+  const parsed = await readJsonFile(modelsPath);
+  if (parsed === null) {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(parsed).flatMap(([providerId, value]) => {
+      if (!isRecord(value)) {
+        return [];
+      }
+
+      const baseUrl = normalizeNonEmptyString(value.api);
+      return [
+        [
+          providerId,
+          {
+            baseUrl,
+            host: extractHost(baseUrl)
+          }
+        ] as const
+      ];
+    })
+  );
+}
+
+function extractHost(value: string | null): string | null {
+  if (value === null) {
+    return null;
+  }
+
+  try {
+    return new URL(value).host || null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeNonEmptyString(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

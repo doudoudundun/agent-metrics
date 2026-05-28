@@ -162,6 +162,75 @@ describe("normalizeOpenCodeMessageRow", () => {
       expect(AnyEventSchema.safeParse(event).success).toBe(true);
     }
   });
+
+  it("enriches assistant and usage events from a provider registry", () => {
+    const assistantRow: OpenCodeMessageRow = {
+      id: "msg_assistant_registry",
+      session_id: "ses_open_registry",
+      time_created: 1777355829153,
+      time_updated: 1777355842420,
+      data: JSON.stringify({
+        role: "assistant",
+        time: {
+          created: 1777355829153,
+          completed: 1777355842420
+        },
+        providerID: "opencode",
+        modelID: "hy3-preview-free",
+        finish: "stop",
+        tokens: {
+          input: 10,
+          output: 4,
+          reasoning: 1,
+          cache: {
+            read: 2,
+            write: 3
+          }
+        }
+      })
+    };
+    const assistantParts: OpenCodePartRow[] = [
+      {
+        id: "prt_assistant_registry_text",
+        message_id: "msg_assistant_registry",
+        session_id: "ses_open_registry",
+        time_created: 1777355840641,
+        time_updated: 1777355840641,
+        data: JSON.stringify({
+          type: "text",
+          text: "Done."
+        })
+      }
+    ];
+
+    const events = normalizeOpenCodeMessageRow({
+      row: assistantRow,
+      sessionDirectory: "D:/projects/dev/agent-metrics",
+      sessionModel: null,
+      partRows: assistantParts,
+      providerRegistry: {
+        opencode: {
+          baseUrl: "https://opencode.ai/zen/v1",
+          host: "opencode.ai"
+        }
+      }
+    });
+
+    expect(events).toEqual([
+      expect.objectContaining({
+        event_id: "opencode:message:msg_assistant_registry:assistant",
+        provider_id: "opencode",
+        provider_base_url: "https://opencode.ai/zen/v1",
+        provider_host: "opencode.ai"
+      }),
+      expect.objectContaining({
+        event_id: "opencode:message:msg_assistant_registry:usage",
+        provider_id: "opencode",
+        provider_base_url: "https://opencode.ai/zen/v1",
+        provider_host: "opencode.ai"
+      })
+    ]);
+  });
 });
 
 describe("normalizeOpenCodeToolPartRow", () => {
