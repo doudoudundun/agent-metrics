@@ -106,6 +106,14 @@ type ToolRankingRow = {
   averageDurationMs: number;
 };
 
+type RawToolRankingRow = {
+  sourceVendor: SourceVendor;
+  toolName: string;
+  count: number;
+  failures: number;
+  totalDurationMs: number;
+};
+
 type SessionListRow = {
   sessionId: string;
   workspacePath: string;
@@ -382,19 +390,148 @@ function selectToolRanking(
 ): ToolRankingRow[] {
   const window = buildTimeWindow("created_at", scope, sourceVendor);
 
-  return db
-    .prepare<ToolRankingRow>(`
+  const rows = db
+    .prepare<RawToolRankingRow>(`
       SELECT
+        source_vendor AS sourceVendor,
         tool_name AS toolName,
         COUNT(*) AS count,
         SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failures,
-        COALESCE(CAST(AVG(duration_ms) AS INTEGER), 0) AS averageDurationMs
+        COALESCE(SUM(duration_ms), 0) AS totalDurationMs
       FROM tool_events
       ${window.whereSql}
-      GROUP BY tool_name
+      GROUP BY source_vendor, tool_name
       ORDER BY count DESC, toolName ASC
     `)
     .all(...window.params);
+
+  return normalizeToolRankingRows(rows);
+}
+
+function normalizeToolRankingRows(rows: RawToolRankingRow[]): ToolRankingRow[] {
+  const grouped = new Map<
+    string,
+    {
+      count: number;
+      failures: number;
+      totalDurationMs: number;
+    }
+  >();
+
+  for (const row of rows) {
+    const toolName = normalizeToolRankingName(row.toolName, row.sourceVendor);
+    if (toolName === null) {
+      continue;
+    }
+    const current = grouped.get(toolName) ?? {
+      count: 0,
+      failures: 0,
+      totalDurationMs: 0
+    };
+
+    current.count += row.count;
+    current.failures += row.failures;
+    current.totalDurationMs += row.totalDurationMs;
+    grouped.set(toolName, current);
+  }
+
+  return Array.from(grouped.entries())
+    .map(([toolName, value]) => ({
+      toolName,
+      count: value.count,
+      failures: value.failures,
+      averageDurationMs:
+        value.count > 0 ? Math.round(value.totalDurationMs / value.count) : 0
+    }))
+    .sort((left, right) => right.count - left.count || left.toolName.localeCompare(right.toolName));
+}
+
+function normalizeToolRankingName(toolName: string, sourceVendor: SourceVendor): string | null {
+  if (sourceVendor !== "codex") {
+    return toolName;
+  }
+
+  const normalized = normalizeCodexToolRankingToken(toolName);
+  if (normalized === null) {
+    return null;
+  }
+
+  if (normalized === "apply_patch") {
+    return "Edit";
+  }
+
+  if (normalized === "websearch") {
+    return "WebSearch";
+  }
+
+  if (["rg", "grep", "findstr", "select-string"].includes(normalized)) {
+    return "Search";
+  }
+
+  if (["get-content", "cat", "type", "more", "less"].includes(normalized)) {
+    return "Read";
+  }
+
+  if (["get-childitem", "dir", "ls", "tree"].includes(normalized)) {
+    return "List";
+  }
+
+  if (normalized === "git") {
+    return "Git";
+  }
+
+  if (["corepack", "pnpm", "npm", "yarn", "bun"].includes(normalized)) {
+    return "Build";
+  }
+
+  if (["invoke-restmethod", "invoke-webrequest", "curl", "wget"].includes(normalized)) {
+    return "HTTP";
+  }
+
+  if (["get-process", "get-ciminstance", "get-nettcpconnection", "tasklist", "ps"].includes(normalized)) {
+    return "Inspect";
+  }
+
+  if (["powershell", "bash", "cmd", "python", "node", "add-type", "start-sleep"].includes(normalized)) {
+    return "Shell";
+  }
+
+  return "Shell";
+}
+
+const IGNORED_CODEX_TOOL_RANKING_NAMES = new Set([
+  "close_agent",
+  "resume_agent",
+  "send_input",
+  "spawn_agent",
+  "update_plan",
+  "wait_agent"
+]);
+
+function normalizeCodexToolRankingToken(toolName: string): string | null {
+  let cleaned = toolName.trim().toLowerCase();
+  if (cleaned.length === 0) {
+    return null;
+  }
+
+  cleaned = cleaned.replace(/^[&([{]+/u, "");
+  cleaned = cleaned.replace(/^[`'"]+/u, "");
+  cleaned = cleaned.replace(/[;|)\]}]+$/u, "");
+  cleaned = cleaned.replace(/[`'"]+$/u, "");
+
+  if (cleaned.length === 0 || cleaned.startsWith("$")) {
+    return null;
+  }
+
+  if (IGNORED_CODEX_TOOL_RANKING_NAMES.has(cleaned)) {
+    return null;
+  }
+
+  if (cleaned.includes(".ts") || cleaned.includes(".json") || cleaned.includes(".md") || cleaned.includes(".pid")) {
+    return null;
+  }
+
+  return cleaned;
 }
 
 function selectSessions(

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { AnyEventSchema } from "@agent-metrics/event-schema";
 import {
+  normalizeOpenCodePartRow,
   normalizeOpenCodeMessageRow,
   normalizeOpenCodeSessionRow,
   normalizeOpenCodeToolPartRow,
@@ -231,6 +232,122 @@ describe("normalizeOpenCodeMessageRow", () => {
       })
     ]);
   });
+
+  it("suppresses message-level usage when a step-finish part already carries tokens", () => {
+    const assistantRow: OpenCodeMessageRow = {
+      id: "msg_assistant_step_finish",
+      session_id: "ses_open_step_finish",
+      time_created: 1777355829153,
+      time_updated: 1777355842420,
+      data: JSON.stringify({
+        role: "assistant",
+        time: {
+          created: 1777355829153,
+          completed: 1777355842420
+        },
+        providerID: "opencode",
+        modelID: "hy3-preview-free",
+        finish: "stop",
+        tokens: {
+          input: 220,
+          output: 84,
+          reasoning: 12,
+          cache: {
+            read: 5,
+            write: 0
+          }
+        }
+      })
+    };
+    const assistantParts: OpenCodePartRow[] = [
+      {
+        id: "prt_assistant_step_finish_text",
+        message_id: "msg_assistant_step_finish",
+        session_id: "ses_open_step_finish",
+        time_created: 1777355840641,
+        time_updated: 1777355840641,
+        data: JSON.stringify({
+          type: "text",
+          text: "Done."
+        })
+      },
+      {
+        id: "prt_assistant_step_finish_usage",
+        message_id: "msg_assistant_step_finish",
+        session_id: "ses_open_step_finish",
+        time_created: 1777355842000,
+        time_updated: 1777355842100,
+        data: JSON.stringify({
+          type: "step-finish",
+          tokens: {
+            input: 220,
+            output: 84,
+            reasoning: 12,
+            cache: {
+              read: 5,
+              write: 0
+            }
+          }
+        })
+      }
+    ];
+
+    const events = normalizeOpenCodeMessageRow({
+      row: assistantRow,
+      sessionDirectory: "D:/projects/dev/agent-metrics",
+      sessionModel: null,
+      partRows: assistantParts
+    });
+
+    expect(events).toEqual([
+      expect.objectContaining({
+        event_id: "opencode:message:msg_assistant_step_finish:assistant",
+        type: "assistant.responded"
+      })
+    ]);
+  });
+
+  it("does not emit message-level usage for zero-token placeholders", () => {
+    const assistantRow: OpenCodeMessageRow = {
+      id: "msg_assistant_zero_tokens",
+      session_id: "ses_open_zero_tokens",
+      time_created: 1777355829153,
+      time_updated: 1777355842420,
+      data: JSON.stringify({
+        role: "assistant",
+        time: {
+          created: 1777355829153,
+          completed: 1777355842420
+        },
+        providerID: "opencode",
+        modelID: "hy3-preview-free",
+        finish: "stop",
+        tokens: {
+          input: 0,
+          output: 0,
+          reasoning: 0,
+          cache: {
+            read: 0,
+            write: 0
+          }
+        }
+      })
+    };
+
+    const events = normalizeOpenCodeMessageRow({
+      row: assistantRow,
+      sessionDirectory: "D:/projects/dev/agent-metrics",
+      sessionModel: null,
+      partRows: []
+    });
+
+    expect(events).toEqual([
+      expect.objectContaining({
+        event_id: "opencode:message:msg_assistant_zero_tokens:assistant",
+        type: "assistant.responded"
+      })
+    ]);
+  });
 });
 
 describe("normalizeOpenCodeToolPartRow", () => {
@@ -277,6 +394,79 @@ describe("normalizeOpenCodeToolPartRow", () => {
         tool_name: "read",
         status: "failed",
         duration_ms: 14
+      })
+    ]);
+
+    for (const event of events) {
+      expect(AnyEventSchema.safeParse(event).success).toBe(true);
+    }
+  });
+
+  it("maps step-finish parts into token usage events with provider metadata", () => {
+    const messageRow: OpenCodeMessageRow = {
+      id: "msg_assistant_usage_part",
+      session_id: "ses_open_usage_part",
+      time_created: 1777355829153,
+      time_updated: 1777355842420,
+      data: JSON.stringify({
+        role: "assistant",
+        time: {
+          created: 1777355829153,
+          completed: 1777355842420
+        },
+        providerID: "opencode",
+        modelID: "hy3-preview-free",
+        path: {
+          root: "D:/projects/dev/agent-metrics"
+        }
+      })
+    };
+    const partRow: OpenCodePartRow = {
+      id: "prt_step_finish_usage",
+      message_id: "msg_assistant_usage_part",
+      session_id: "ses_open_usage_part",
+      time_created: 1777355841852,
+      time_updated: 1777355841866,
+      data: JSON.stringify({
+        type: "step-finish",
+        tokens: {
+          input: 220,
+          output: 84,
+          reasoning: 12,
+          cache: {
+            read: 5,
+            write: 0
+          }
+        }
+      })
+    };
+
+    const events = normalizeOpenCodePartRow({
+      row: partRow,
+      sessionDirectory: "D:/projects/dev/agent-metrics",
+      sessionModel: "hy3-preview-free",
+      messageRow,
+      providerRegistry: {
+        opencode: {
+          baseUrl: "https://opencode.ai/zen/v1",
+          host: "opencode.ai"
+        }
+      }
+    });
+
+    expect(events).toEqual([
+      expect.objectContaining({
+        event_id: "opencode:message:msg_assistant_usage_part:usage",
+        session_id: "ses_open_usage_part",
+        type: "token.usage.recorded",
+        model: "hy3-preview-free",
+        input_tokens: 220,
+        output_tokens: 96,
+        cache_read_input_tokens: 5,
+        usage_source: "opencode-step-finish",
+        provider_id: "opencode",
+        provider_base_url: "https://opencode.ai/zen/v1",
+        provider_host: "opencode.ai"
       })
     ]);
 

@@ -12,6 +12,8 @@ corepack pnpm install
 
 `start-agent-metrics.ps1` now ensures the Claude user hooks and starts a runtime watcher that restores missing `agent-metrics` hooks if another tool rewrites `~/.claude/settings.json`.
 
+Ignoring local runtime data in `.gitignore` does not break startup. If someone clones the repo fresh, the app recreates the needed local data files and state directories on first run.
+
 After startup, open Claude Code in any workspace and trigger a few real tools such as `Read`, `Search/Grep`, `Edit`, and `Bash`.
 
 ## How Collection Works
@@ -44,6 +46,22 @@ After startup, open Claude Code in any workspace and trigger a few real tools su
 - Manual sample config: `docs/manual/claude-hooks-global.sample.json`
 - One-click Windows fallback: `.\install-claude-hooks.ps1`
 - Parser runtime notes: `docs/manual/phase2-parser-flow.md`
+
+## Safe Sharing
+
+- `git clone` remains runnable after ignoring local telemetry data.
+- A fresh machine can still start with:
+
+```powershell
+corepack pnpm install
+.\start-agent-metrics.ps1
+```
+
+- To create a share-safe source package without local SQLite, event logs, or hook state:
+
+```powershell
+.\export-agent-metrics-share.ps1 -Zip
+```
 
 ## Hooks-First Verification
 

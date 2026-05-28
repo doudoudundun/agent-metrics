@@ -112,6 +112,28 @@ export function extractCodexEventsFromRollout(input: {
         continue;
       }
 
+      if (sessionId !== null && payloadType === "function_call") {
+        const callId = normalizeOptionalString(payload.call_id);
+        if (callId === null) {
+          continue;
+        }
+
+        const functionName = normalizeOptionalString(payload.name) ?? "unknown";
+        if (!shouldTrackFunctionCall(functionName)) {
+          continue;
+        }
+        const argumentText = normalizeOptionalString(payload.arguments);
+
+        pendingToolCalls.set(callId, {
+          sessionId,
+          workspacePath: sessionMeta?.workspacePath ?? ".",
+          timestamp,
+          toolName: inferFunctionCallToolName(functionName, argumentText),
+          argumentSummary: summarizeFunctionCallArguments(functionName, argumentText)
+        });
+        continue;
+      }
+
       if (payloadType === "custom_tool_call_output") {
         const callId = normalizeOptionalString(payload.call_id);
         const pending = callId ? pendingToolCalls.get(callId) : null;
@@ -138,6 +160,47 @@ export function extractCodexEventsFromRollout(input: {
         } else {
           events.push({
             event_id: `codex:session:${pending.sessionId}:tool:${callId}:failed`,
+            session_id: pending.sessionId,
+            timestamp,
+            source_vendor: CODEX_SOURCE_VENDOR,
+            source_adapter: CODEX_ROLLOUT_ADAPTER,
+            workspace_path: pending.workspacePath,
+            type: "tool.failed",
+            tool_name: pending.toolName,
+            status: "failed",
+            duration_ms: result.durationMs
+          });
+        }
+        pendingToolCalls.delete(callId);
+        continue;
+      }
+
+      if (payloadType === "function_call_output") {
+        const callId = normalizeOptionalString(payload.call_id);
+        const pending = callId ? pendingToolCalls.get(callId) : null;
+
+        if (callId === null || pending == null) {
+          continue;
+        }
+
+        const result = parseFunctionCallOutput(normalizeOptionalString(payload.output));
+
+        if (result.success) {
+          events.push({
+            event_id: `codex:session:${pending.sessionId}:function:${callId}:succeeded`,
+            session_id: pending.sessionId,
+            timestamp,
+            source_vendor: CODEX_SOURCE_VENDOR,
+            source_adapter: CODEX_ROLLOUT_ADAPTER,
+            workspace_path: pending.workspacePath,
+            type: "tool.succeeded",
+            tool_name: pending.toolName,
+            status: "succeeded",
+            duration_ms: result.durationMs
+          });
+        } else {
+          events.push({
+            event_id: `codex:session:${pending.sessionId}:function:${callId}:failed`,
             session_id: pending.sessionId,
             timestamp,
             source_vendor: CODEX_SOURCE_VENDOR,
@@ -222,6 +285,41 @@ export function extractCodexEventsFromRollout(input: {
           status: "succeeded",
           duration_ms: 0
         });
+        continue;
+      }
+
+      if (sessionId !== null && payloadType === "exec_command_end") {
+        const callId = buildEventKey(
+          parsed,
+          payloadType,
+          lineIndex,
+          normalizeOptionalString(payload.call_id)
+        );
+        const exitCode = normalizeInteger(payload.exit_code);
+        const baseEvent = {
+          event_id: `codex:session:${sessionId}:exec:${callId}:tool`,
+          session_id: sessionId,
+          timestamp,
+          source_vendor: CODEX_SOURCE_VENDOR,
+          source_adapter: CODEX_ROLLOUT_ADAPTER,
+          workspace_path: sessionMeta?.workspacePath ?? ".",
+          tool_name: inferExecCommandToolName(payload.command),
+          duration_ms: getExecCommandDurationMs(payload)
+        };
+
+        if (exitCode === 0) {
+          events.push({
+            ...baseEvent,
+            type: "tool.succeeded",
+            status: "succeeded"
+          });
+        } else {
+          events.push({
+            ...baseEvent,
+            type: "tool.failed",
+            status: "failed"
+          });
+        }
         continue;
       }
 
@@ -437,11 +535,23 @@ function parseCustomToolOutput(value: string | null): {
   success: boolean;
   durationMs: number;
 } {
+  const structured = tryParseStructuredToolOutput(value);
+  if (structured !== null) {
+    return structured;
+  }
+
+  return {
+    success: false,
+    durationMs: 0
+  };
+}
+
+function tryParseStructuredToolOutput(value: string | null): {
+  success: boolean;
+  durationMs: number;
+} | null {
   if (value === null) {
-    return {
-      success: false,
-      durationMs: 0
-    };
+    return null;
   }
 
   try {
@@ -458,9 +568,48 @@ function parseCustomToolOutput(value: string | null): {
       };
     }
   } catch {
+    return null;
+  }
+
+  return null;
+}
+
+function parseFunctionCallOutput(value: string | null): {
+  success: boolean;
+  durationMs: number;
+} {
+  const structured = tryParseStructuredToolOutput(value);
+  if (structured !== null) {
+    return structured;
+  }
+
+  if (value === null) {
     return {
       success: false,
       durationMs: 0
+    };
+  }
+
+  const exitCodeMatch = /Exit code:\s*(-?\d+)/iu.exec(value);
+  const wallTimeMatch =
+    /Wall time:\s*([0-9]+(?:\.[0-9]+)?)\s*(milliseconds?|ms|seconds?|s)/iu.exec(value);
+
+  if (exitCodeMatch !== null) {
+    const exitCode = Number.parseInt(exitCodeMatch[1], 10);
+    let durationMs = 0;
+
+    if (wallTimeMatch !== null) {
+      const durationValue = Number.parseFloat(wallTimeMatch[1]);
+      const unit = wallTimeMatch[2].toLowerCase();
+
+      durationMs = unit.startsWith("ms") || unit.startsWith("millisecond")
+        ? Math.round(durationValue)
+        : Math.round(durationValue * 1000);
+    }
+
+    return {
+      success: exitCode === 0,
+      durationMs
     };
   }
 
@@ -544,6 +693,247 @@ function countContentLines(value: string | null): number {
 
 function normalizeNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+function getExecCommandDurationMs(payload: Record<string, unknown>): number {
+  const duration = asRecord(payload.duration);
+  const seconds = normalizeInteger(duration?.secs) ?? 0;
+  const nanoseconds = normalizeInteger(duration?.nanos) ?? 0;
+
+  return Math.round(seconds * 1000 + nanoseconds / 1_000_000);
+}
+
+function inferExecCommandToolName(command: unknown): string {
+  if (!Array.isArray(command) || command.length === 0) {
+    return "ExecCommand";
+  }
+
+  const executable = normalizeOptionalString(command[0]);
+  if (executable === null) {
+    return "ExecCommand";
+  }
+
+  const normalized = basename(executable).toLowerCase();
+  switch (normalized) {
+    case "powershell.exe":
+    case "pwsh.exe":
+      return "PowerShell";
+    case "bash.exe":
+    case "bash":
+      return "Bash";
+    case "cmd.exe":
+      return "Cmd";
+    default: {
+      const withoutExtension = normalized.endsWith(".exe")
+        ? normalized.slice(0, -4)
+        : normalized;
+
+      return withoutExtension.length > 0
+        ? `${withoutExtension[0]?.toUpperCase() ?? ""}${withoutExtension.slice(1)}`
+        : "ExecCommand";
+    }
+  }
+}
+
+function shouldTrackFunctionCall(functionName: string): boolean {
+  return functionName === "shell_command";
+}
+
+function inferFunctionCallToolName(functionName: string, argumentText: string | null): string {
+  if (functionName !== "shell_command") {
+    return functionName;
+  }
+
+  const argumentsRecord = argumentText ? parseJsonRecord(argumentText) : null;
+  const command = normalizeOptionalString(argumentsRecord?.command);
+
+  return command !== null ? inferCommandStringToolName(command) : functionName;
+}
+
+function summarizeFunctionCallArguments(functionName: string, argumentText: string | null): string {
+  if (argumentText === null) {
+    return "{}";
+  }
+
+  if (functionName !== "shell_command") {
+    return argumentText;
+  }
+
+  const argumentsRecord = parseJsonRecord(argumentText);
+  return normalizeOptionalString(argumentsRecord?.command) ?? argumentText;
+}
+
+function inferCommandStringToolName(command: string): string {
+  const normalized = findCommandStringToolToken(command);
+
+  switch (normalized) {
+    case null:
+      return "PowerShell";
+    case "powershell.exe":
+    case "powershell":
+    case "pwsh.exe":
+    case "pwsh":
+      return "PowerShell";
+    case "bash.exe":
+    case "bash":
+      return "Bash";
+    case "cmd.exe":
+    case "cmd":
+      return "Cmd";
+    default:
+      return normalized.endsWith(".exe") ? normalized.slice(0, -4) : normalized;
+  }
+}
+
+const SHELL_CONTROL_KEYWORDS = new Set([
+  "if",
+  "else",
+  "elseif",
+  "for",
+  "foreach",
+  "while",
+  "switch",
+  "try",
+  "catch",
+  "finally",
+  "function",
+  "param",
+  "return",
+  "throw",
+  "do",
+  "until",
+  "where-object",
+  "select-object",
+  "measure-object"
+]);
+
+const NON_COMMAND_FILE_EXTENSIONS = new Set([
+  ".json",
+  ".jsonl",
+  ".md",
+  ".pid",
+  ".sqlite",
+  ".test.ts",
+  ".toml",
+  ".ts",
+  ".tsx",
+  ".txt",
+  ".yaml",
+  ".yml"
+]);
+
+function findCommandStringToolToken(command: string): string | null {
+  const tokens = command.split(/\s+/u).filter((token) => token.length > 0);
+  let hereStringTerminator: "'@" | '"@' | null = null;
+
+  for (const rawToken of tokens) {
+    if (hereStringTerminator !== null) {
+      if (rawToken.endsWith(hereStringTerminator)) {
+        hereStringTerminator = null;
+      }
+      continue;
+    }
+
+    if (rawToken.startsWith("@'")) {
+      if (!rawToken.endsWith("'@") || rawToken === "@'") {
+        hereStringTerminator = "'@";
+      }
+      continue;
+    }
+
+    if (rawToken.startsWith('@"')) {
+      if (!rawToken.endsWith('"@') || rawToken === '@"') {
+        hereStringTerminator = '"@';
+      }
+      continue;
+    }
+
+    const normalized = normalizeCommandToken(rawToken);
+    if (normalized !== null) {
+      return normalized;
+    }
+  }
+
+  return null;
+}
+
+function normalizeCommandToken(rawToken: string): string | null {
+  const candidates = [rawToken, extractAssignedCommand(rawToken)];
+
+  for (const candidate of candidates) {
+    if (candidate === null) {
+      continue;
+    }
+
+    const normalized = normalizeCommandCandidate(candidate);
+    if (normalized !== null) {
+      return normalized;
+    }
+  }
+
+  return null;
+}
+
+function extractAssignedCommand(rawToken: string): string | null {
+  const match = /^\$[A-Za-z0-9_:.{}-]+=(.+)$/u.exec(rawToken);
+  if (match === null) {
+    return null;
+  }
+
+  return match[1] ?? null;
+}
+
+function normalizeCommandCandidate(candidate: string): string | null {
+  let cleaned = candidate.trim();
+  if (cleaned.length === 0) {
+    return null;
+  }
+
+  cleaned = cleaned.replace(/^[&([{]+/u, "");
+  cleaned = cleaned.replace(/^[`'"]+/u, "");
+  cleaned = cleaned.replace(/[;|)\]}]+$/u, "");
+  cleaned = cleaned.replace(/[`'"]+$/u, "");
+  cleaned = cleaned.replace(/^[@(]+/u, "");
+
+  if (cleaned.length === 0 || cleaned === "-" || cleaned === "=") {
+    return null;
+  }
+
+  if (/^(?:https?:\/\/|sk-[A-Za-z0-9_-]{8,}|[0-9.]+)$/u.test(cleaned)) {
+    return null;
+  }
+
+  const extension = inferFileExtension(cleaned);
+  if (cleaned.includes(":") || cleaned.includes("\\") || cleaned.includes("/")) {
+    if (extension !== ".exe" && extension !== ".cmd" && extension !== ".bat") {
+      return null;
+    }
+  }
+
+  const normalized = basename(cleaned).toLowerCase();
+  if (normalized.length === 0 || normalized.startsWith("$")) {
+    return null;
+  }
+
+  if (SHELL_CONTROL_KEYWORDS.has(normalized)) {
+    return null;
+  }
+
+  if (NON_COMMAND_FILE_EXTENSIONS.has(extension)) {
+    return null;
+  }
+
+  return normalized;
+}
+
+function inferFileExtension(value: string): string {
+  const normalized = value.toLowerCase();
+  if (normalized.endsWith(".test.ts")) {
+    return ".test.ts";
+  }
+
+  const lastDot = normalized.lastIndexOf(".");
+  return lastDot >= 0 ? normalized.slice(lastDot) : "";
 }
 
 function serializeArgumentSummary(value: unknown): string {

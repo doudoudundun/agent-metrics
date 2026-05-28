@@ -21,6 +21,7 @@ $ParserErrLog = Join-Path $RuntimeDir "parser.err.log"
 $ParserPidPath = Join-Path $RuntimeDir "parser.pid"
 $CoreOutLog = Join-Path $RuntimeDir "core.out.log"
 $CoreErrLog = Join-Path $RuntimeDir "core.err.log"
+$CorePidPath = Join-Path $RuntimeDir "core.pid"
 $DashboardOutLog = Join-Path $RuntimeDir "dashboard.out.log"
 $DashboardErrLog = Join-Path $RuntimeDir "dashboard.err.log"
 $CliWorkingDir = Join-Path $RepoRoot "apps\\cli"
@@ -32,6 +33,18 @@ $ViteEntry = Join-Path $RepoRoot "node_modules\\vite\\bin\\vite.js"
 
 function Write-Step([string]$Message) {
   Write-Host "==> $Message"
+}
+
+function Test-OverviewContract($Json) {
+  return (
+    $null -ne $Json -and
+    $null -ne $Json.sessionCount -and
+    $null -ne $Json.turnCount -and
+    $null -ne $Json.totalTokens -and
+    ($Json.PSObject.Properties.Name -contains "tokensByModel") -and
+    $null -ne $Json.tokensByModel -and
+    $Json.tokensByModel -is [System.Array]
+  )
 }
 
 function Test-HttpHealthy([string]$Url, [scriptblock]$Validator) {
@@ -75,7 +88,7 @@ function Test-DashboardHealthy() {
   return Test-HttpHealthy -Url $DashboardApiUrl -Validator {
     param($Response)
     $json = $Response.Content | ConvertFrom-Json
-    return $null -ne $json.sessionCount
+    return Test-OverviewContract $json
   }
 }
 
@@ -249,16 +262,67 @@ function Start-ParserIfNeeded() {
   Write-Step "Parser started with PID $($process.Id)"
 }
 
+function Get-ManagedCorePid() {
+  if (Test-Path $CorePidPath) {
+    $rawPid = (Get-Content $CorePidPath -Raw).Trim()
+
+    if ($rawPid -match '^\d+$') {
+      $managedPid = [int]$rawPid
+      $process = Get-CimInstance Win32_Process -Filter "ProcessId = $managedPid" -ErrorAction SilentlyContinue
+
+      if (
+        $null -ne $process -and
+        $process.Name -eq "node.exe" -and
+        $process.CommandLine -match "dist[\\/]+server\.js"
+      ) {
+        return $managedPid
+      }
+    }
+
+    Remove-Item $CorePidPath -ErrorAction SilentlyContinue
+  }
+
+  $connection = Get-NetTCPConnection -LocalPort $CorePort -State Listen -ErrorAction SilentlyContinue |
+    Select-Object -First 1
+
+  if ($null -eq $connection) {
+    return $null
+  }
+
+  $managedPid = [int]$connection.OwningProcess
+  $process = Get-CimInstance Win32_Process -Filter "ProcessId = $managedPid" -ErrorAction SilentlyContinue
+
+  if (
+    $null -eq $process -or
+    $process.Name -ne "node.exe" -or
+    $process.CommandLine -notmatch "dist[\\/]+server\.js"
+  ) {
+    return $null
+  }
+
+  return $managedPid
+}
+
 function Start-CoreIfNeeded() {
   $coreHealthy = Test-HttpHealthy -Url $CoreUrl -Validator {
     param($Response)
     $json = $Response.Content | ConvertFrom-Json
-    return $null -ne $json.sessionCount
+    return Test-OverviewContract $json
   }
 
   if ($coreHealthy) {
     Write-Step "Core API already running at $CoreUrl"
     return
+  }
+
+  if (Get-NetTCPConnection -LocalPort $CorePort -State Listen -ErrorAction SilentlyContinue) {
+    $managedPid = Get-ManagedCorePid
+
+    if ($null -ne $managedPid) {
+      Write-Step "Stopping stale core process with PID $managedPid"
+      Stop-Process -Id $managedPid -Force
+      Start-Sleep -Seconds 1
+    }
   }
 
   if (Get-NetTCPConnection -LocalPort $CorePort -State Listen -ErrorAction SilentlyContinue) {
@@ -277,9 +341,10 @@ function Start-CoreIfNeeded() {
   Wait-UntilHealthy -Name "Core API" -Url $CoreUrl -Validator {
     param($Response)
     $json = $Response.Content | ConvertFrom-Json
-    return $null -ne $json.sessionCount
+    return Test-OverviewContract $json
   } -LogPath $CoreErrLog
 
+  Set-Content -Path $CorePidPath -Value "$($process.Id)" -NoNewline
   Write-Step "Core API started with PID $($process.Id)"
 }
 
@@ -340,7 +405,7 @@ function Start-DashboardIfNeeded() {
   Wait-UntilHealthy -Name "Dashboard" -Url $DashboardApiUrl -Validator {
     param($Response)
     $json = $Response.Content | ConvertFrom-Json
-    return $null -ne $json.sessionCount
+    return Test-OverviewContract $json
   } -LogPath $DashboardErrLog
 
   Write-Step "Dashboard started with PID $($process.Id)"

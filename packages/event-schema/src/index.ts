@@ -15,6 +15,7 @@ export const SourceAdapterSchema = z.enum([
 export const UsageSourceSchema = z.enum([
   "claude-transcript",
   "opencode-message",
+  "opencode-step-finish",
   "codex-rollout",
   "codex-logs"
 ]);

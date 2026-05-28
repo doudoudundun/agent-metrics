@@ -694,8 +694,8 @@ describe("ingestEventLog", () => {
       outputTokens: 239,
       cacheReadTokens: 3456,
       cacheCreationTokens: 0,
-      totalToolCalls: 2,
-      successfulExecutions: 2,
+      totalToolCalls: 4,
+      successfulExecutions: 4,
       failedExecutions: 0,
       editOperationCount: 1,
       affectedFileCount: 1,
@@ -705,7 +705,7 @@ describe("ingestEventLog", () => {
           sessionCount: 1,
           turnCount: 1,
           totalTokens: 19623,
-          toolCalls: 2
+          toolCalls: 4
         }
       ],
       providerBreakdown: [
@@ -741,11 +741,19 @@ describe("ingestEventLog", () => {
     expect(tools.json()).toMatchObject({
       rows: expect.arrayContaining([
         expect.objectContaining({
-          toolName: "apply_patch",
+          toolName: "Edit",
+          count: 1
+        }),
+        expect.objectContaining({
+          toolName: "Search",
           count: 1
         }),
         expect.objectContaining({
           toolName: "WebSearch",
+          count: 1
+        }),
+        expect.objectContaining({
+          toolName: "Shell",
           count: 1
         })
       ])
@@ -766,12 +774,24 @@ describe("ingestEventLog", () => {
         expect.objectContaining({
           type: "tool.succeeded",
           sourceVendor: "codex",
+          toolName: "rg",
+          durationMs: 2300
+        }),
+        expect.objectContaining({
+          type: "tool.succeeded",
+          sourceVendor: "codex",
           toolName: "apply_patch"
         }),
         expect.objectContaining({
           type: "tool.succeeded",
           sourceVendor: "codex",
           toolName: "WebSearch"
+        }),
+        expect.objectContaining({
+          type: "tool.succeeded",
+          sourceVendor: "codex",
+          toolName: "PowerShell",
+          durationMs: 2285
         }),
         expect.objectContaining({
           type: "code.edit.applied",
@@ -1194,6 +1214,176 @@ describe("core api", () => {
       windowStart: "2026-05-20T10:30:00.000Z",
       windowEnd: "2026-05-27T10:30:00.000Z",
       updatedAt: "2026-05-27T10:30:00.000Z"
+    });
+
+    await app.close();
+  });
+
+  it("groups Codex tool rankings into broader dashboard categories", async () => {
+    await appendJsonLine(logPath, {
+      event_id: "evt_codex_rank_0",
+      session_id: "ses_codex_rank_1",
+      timestamp: "2026-05-25T08:00:00.000Z",
+      source_vendor: "codex",
+      source_adapter: "codex-rollout",
+      workspace_path: "D:/projects/dev/agent-metrics",
+      type: "session.started"
+    });
+
+    await appendJsonLine(logPath, {
+      event_id: "evt_codex_rank_1",
+      session_id: "ses_codex_rank_1",
+      timestamp: "2026-05-25T08:00:01.000Z",
+      source_vendor: "codex",
+      source_adapter: "codex-rollout",
+      workspace_path: "D:/projects/dev/agent-metrics",
+      type: "tool.succeeded",
+      tool_name: "get-content",
+      status: "succeeded",
+      duration_ms: 10
+    });
+
+    await appendJsonLine(logPath, {
+      event_id: "evt_codex_rank_2",
+      session_id: "ses_codex_rank_1",
+      timestamp: "2026-05-25T08:00:02.000Z",
+      source_vendor: "codex",
+      source_adapter: "codex-rollout",
+      workspace_path: "D:/projects/dev/agent-metrics",
+      type: "tool.failed",
+      tool_name: "get-content",
+      status: "failed",
+      duration_ms: 30
+    });
+
+    await appendJsonLine(logPath, {
+      event_id: "evt_codex_rank_3",
+      session_id: "ses_codex_rank_1",
+      timestamp: "2026-05-25T08:00:03.000Z",
+      source_vendor: "codex",
+      source_adapter: "codex-rollout",
+      workspace_path: "D:/projects/dev/agent-metrics",
+      type: "tool.succeeded",
+      tool_name: "get-childitem",
+      status: "succeeded",
+      duration_ms: 50
+    });
+
+    await appendJsonLine(logPath, {
+      event_id: "evt_codex_rank_4",
+      session_id: "ses_codex_rank_1",
+      timestamp: "2026-05-25T08:00:04.000Z",
+      source_vendor: "codex",
+      source_adapter: "codex-rollout",
+      workspace_path: "D:/projects/dev/agent-metrics",
+      type: "tool.succeeded",
+      tool_name: "invoke-restmethod",
+      status: "succeeded",
+      duration_ms: 70
+    });
+
+    await appendJsonLine(logPath, {
+      event_id: "evt_codex_rank_4b",
+      session_id: "ses_codex_rank_1",
+      timestamp: "2026-05-25T08:00:04.500Z",
+      source_vendor: "codex",
+      source_adapter: "codex-rollout",
+      workspace_path: "D:/projects/dev/agent-metrics",
+      type: "tool.succeeded",
+      tool_name: "(invoke-webrequest",
+      status: "succeeded",
+      duration_ms: 60
+    });
+
+    await appendJsonLine(logPath, {
+      event_id: "evt_codex_rank_4c",
+      session_id: "ses_codex_rank_1",
+      timestamp: "2026-05-25T08:00:04.700Z",
+      source_vendor: "codex",
+      source_adapter: "codex-rollout",
+      workspace_path: "D:/projects/dev/agent-metrics",
+      type: "tool.succeeded",
+      tool_name: "update_plan",
+      status: "succeeded",
+      duration_ms: 0
+    });
+
+    await appendJsonLine(logPath, {
+      event_id: "evt_codex_rank_4d",
+      session_id: "ses_codex_rank_1",
+      timestamp: "2026-05-25T08:00:04.800Z",
+      source_vendor: "codex",
+      source_adapter: "codex-rollout",
+      workspace_path: "D:/projects/dev/agent-metrics",
+      type: "tool.succeeded",
+      tool_name: "$json",
+      status: "succeeded",
+      duration_ms: 0
+    });
+
+    await appendJsonLine(logPath, {
+      event_id: "evt_codex_rank_5",
+      session_id: "ses_codex_rank_1",
+      timestamp: "2026-05-25T08:00:05.000Z",
+      source_vendor: "codex",
+      source_adapter: "codex-rollout",
+      workspace_path: "D:/projects/dev/agent-metrics",
+      type: "tool.succeeded",
+      tool_name: "PowerShell",
+      status: "succeeded",
+      duration_ms: 40
+    });
+
+    await appendJsonLine(logPath, {
+      event_id: "evt_codex_rank_6",
+      session_id: "ses_codex_rank_1",
+      timestamp: "2026-05-25T08:00:06.000Z",
+      source_vendor: "codex",
+      source_adapter: "codex-rollout",
+      workspace_path: "D:/projects/dev/agent-metrics",
+      type: "tool.succeeded",
+      tool_name: "rg",
+      status: "succeeded",
+      duration_ms: 20
+    });
+
+    await appendJsonLine(logPath, {
+      event_id: "evt_codex_rank_7",
+      session_id: "ses_codex_rank_1",
+      timestamp: "2026-05-25T08:00:07.000Z",
+      source_vendor: "codex",
+      source_adapter: "codex-rollout",
+      workspace_path: "D:/projects/dev/agent-metrics",
+      type: "tool.succeeded",
+      tool_name: "apply_patch",
+      status: "succeeded",
+      duration_ms: 0
+    });
+
+    const app = buildApp({ dbPath, ...may25AppInput });
+    await ingestEventLog({ app, eventLogPath: logPath });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/tools?mode=calendar&range=day&sourceVendor=codex"
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      rows: [
+        { toolName: "HTTP", count: 2, failures: 0, averageDurationMs: 65 },
+        { toolName: "Read", count: 2, failures: 1, averageDurationMs: 20 },
+        { toolName: "Edit", count: 1, failures: 0, averageDurationMs: 0 },
+        { toolName: "List", count: 1, failures: 0, averageDurationMs: 50 },
+        { toolName: "Search", count: 1, failures: 0, averageDurationMs: 20 },
+        { toolName: "Shell", count: 1, failures: 0, averageDurationMs: 40 }
+      ],
+      mode: "calendar",
+      range: "day",
+      timezone: "UTC",
+      windowStart: "2026-05-25T00:00:00.000Z",
+      windowEnd: "2026-05-25T09:00:00.000Z",
+      updatedAt: "2026-05-25T09:00:00.000Z"
     });
 
     await app.close();
@@ -1999,6 +2189,34 @@ async function createCodexFixture(root: string): Promise<{
         }
       }),
       JSON.stringify({
+        timestamp: "2026-05-27T10:00:02.500Z",
+        type: "response_item",
+        payload: {
+          type: "function_call",
+          call_id: "call_shell_fn_1",
+          name: "shell_command",
+          arguments: JSON.stringify({
+            command: "rg -n \"patch_apply_end\" D:/projects/dev/agent-metrics -S",
+            workdir: root,
+            timeout_ms: 10000
+          })
+        }
+      }),
+      JSON.stringify({
+        timestamp: "2026-05-27T10:00:02.800Z",
+        type: "response_item",
+        payload: {
+          type: "function_call_output",
+          call_id: "call_shell_fn_1",
+          output: [
+            "Exit code: 0",
+            "Wall time: 2.3 seconds",
+            "Output:",
+            "D:/projects/dev/agent-metrics/src/app.ts:1:..."
+          ].join("\n")
+        }
+      }),
+      JSON.stringify({
         timestamp: "2026-05-27T10:00:03.000Z",
         type: "event_msg",
         payload: {
@@ -2026,6 +2244,28 @@ async function createCodexFixture(root: string): Promise<{
           action: {
             type: "search"
           }
+        }
+      }),
+      JSON.stringify({
+        timestamp: "2026-05-27T10:00:05.000Z",
+        type: "event_msg",
+        payload: {
+          type: "exec_command_end",
+          call_id: "call_shell_1",
+          command: [
+            "C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe",
+            "-Command",
+            "git diff --stat"
+          ],
+          cwd: root,
+          stdout: "",
+          stderr: "",
+          exit_code: 0,
+          duration: {
+            secs: 2,
+            nanos: 284934500
+          },
+          status: "completed"
         }
       }),
       JSON.stringify({

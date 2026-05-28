@@ -254,7 +254,7 @@ describe("AnyEventSchema", () => {
       cache_creation_input_tokens: 0,
       cache_read_input_tokens: 12,
       server_tool_use: "{}",
-      usage_source: "opencode-message"
+      usage_source: "opencode-step-finish"
     };
 
     const result = TokenUsageRecordedEventSchema.safeParse(payload);

@@ -131,6 +131,7 @@ export function normalizeOpenCodeMessageRow(input: {
     normalizeOptionalString(readNestedValue(parsed, "error", "data", "message")) ??
     null;
   const responseChars = sumTextPartChars(partRows);
+  const usagePart = findStepFinishUsagePart(partRows);
   const events: AnyEvent[] = [
     {
       event_id: `opencode:message:${input.row.id}:assistant`,
@@ -151,7 +152,7 @@ export function normalizeOpenCodeMessageRow(input: {
   ];
   const tokenPayload = extractTokenPayload(parsed);
 
-  if (tokenPayload !== null) {
+  if (tokenPayload !== null && usagePart === null) {
     events.push({
       event_id: `opencode:message:${input.row.id}:usage`,
       session_id: input.row.session_id,
@@ -177,12 +178,31 @@ export function normalizeOpenCodeMessageRow(input: {
   return events;
 }
 
-export function normalizeOpenCodeToolPartRow(input: {
+export function normalizeOpenCodePartRow(input: {
   row: OpenCodePartRow;
   sessionDirectory?: string | null;
+  sessionModel?: string | null;
+  messageRow?: OpenCodeMessageRow | null;
+  providerRegistry?: OpenCodeProviderRegistry;
 }): AnyEvent[] {
   const parsed = parseJsonRecord(input.row.data);
-  if (parsed === null || normalizeOptionalString(parsed.type) !== "tool") {
+  if (parsed === null) {
+    return [];
+  }
+
+  const partType = normalizeOptionalString(parsed.type);
+  if (partType === "step-finish") {
+    return normalizeOpenCodeStepFinishPart({
+      row: input.row,
+      part: parsed,
+      sessionDirectory: input.sessionDirectory,
+      sessionModel: input.sessionModel,
+      messageRow: input.messageRow,
+      providerRegistry: input.providerRegistry
+    });
+  }
+
+  if (partType !== "tool") {
     return [];
   }
 
@@ -245,6 +265,13 @@ export function normalizeOpenCodeToolPartRow(input: {
   return events;
 }
 
+export function normalizeOpenCodeToolPartRow(input: {
+  row: OpenCodePartRow;
+  sessionDirectory?: string | null;
+}): AnyEvent[] {
+  return normalizeOpenCodePartRow(input);
+}
+
 function extractTokenPayload(message: Record<string, unknown>): OpenCodeTokenPayload | null {
   const tokens = asRecord(message.tokens);
   if (tokens === null) {
@@ -252,13 +279,80 @@ function extractTokenPayload(message: Record<string, unknown>): OpenCodeTokenPay
   }
 
   const cache = asRecord(tokens.cache);
+  const inputTokens = normalizeInteger(tokens.input) ?? 0;
+  const outputTokens = (normalizeInteger(tokens.output) ?? 0) + (normalizeInteger(tokens.reasoning) ?? 0);
+  const cacheCreationTokens = normalizeInteger(cache?.write) ?? 0;
+  const cacheReadTokens = normalizeInteger(cache?.read) ?? 0;
+
+  if (inputTokens === 0 && outputTokens === 0 && cacheCreationTokens === 0 && cacheReadTokens === 0) {
+    return null;
+  }
 
   return {
-    inputTokens: normalizeInteger(tokens.input) ?? 0,
-    outputTokens: (normalizeInteger(tokens.output) ?? 0) + (normalizeInteger(tokens.reasoning) ?? 0),
-    cacheCreationTokens: normalizeInteger(cache?.write) ?? 0,
-    cacheReadTokens: normalizeInteger(cache?.read) ?? 0
+    inputTokens,
+    outputTokens,
+    cacheCreationTokens,
+    cacheReadTokens
   };
+}
+
+function normalizeOpenCodeStepFinishPart(input: {
+  row: OpenCodePartRow;
+  part: Record<string, unknown>;
+  sessionDirectory?: string | null;
+  sessionModel?: string | null;
+  messageRow?: OpenCodeMessageRow | null;
+  providerRegistry?: OpenCodeProviderRegistry;
+}): AnyEvent[] {
+  const tokenPayload = extractTokenPayload(input.part);
+  if (tokenPayload === null) {
+    return [];
+  }
+
+  const messageRecord =
+    input.messageRow !== null && input.messageRow !== undefined
+      ? parseJsonRecord(input.messageRow.data)
+      : null;
+  const providerId =
+    (messageRecord !== null
+      ? normalizeOptionalString(messageRecord.providerID) ??
+        normalizeOptionalString(readNestedValue(messageRecord, "model", "providerID"))
+      : undefined) ?? null;
+  const providerMetadata = providerId !== null ? input.providerRegistry?.[providerId] : undefined;
+  const model =
+    (messageRecord !== null
+      ? normalizeOptionalString(messageRecord.modelID) ??
+        normalizeOptionalString(readNestedValue(messageRecord, "model", "modelID"))
+      : undefined) ??
+    normalizeOptionalString(input.sessionModel) ??
+    null;
+  const workspacePath =
+    messageRecord !== null
+      ? resolveWorkspacePath(messageRecord, input.sessionDirectory)
+      : normalizeWorkspacePath(input.sessionDirectory);
+
+  return [
+    {
+      event_id: `opencode:message:${input.row.message_id}:usage`,
+      session_id: input.row.session_id,
+      timestamp: toIsoTimestamp(input.row.time_updated),
+      source_vendor: OPENCODE_SOURCE_VENDOR,
+      source_adapter: OPENCODE_SOURCE_ADAPTER,
+      workspace_path: workspacePath,
+      type: "token.usage.recorded",
+      message_id: input.row.message_id,
+      model,
+      input_tokens: tokenPayload.inputTokens,
+      output_tokens: tokenPayload.outputTokens,
+      cache_creation_input_tokens: tokenPayload.cacheCreationTokens,
+      cache_read_input_tokens: tokenPayload.cacheReadTokens,
+      server_tool_use: "{}",
+      usage_source: "opencode-step-finish",
+      provider_id: providerId,
+      provider_base_url: providerMetadata?.baseUrl ?? null,
+      provider_host: providerMetadata?.host ?? null
+    }
+  ];
 }
 
 function sumTextPartChars(partRows: OpenCodePartRow[]): number {
@@ -274,6 +368,21 @@ function sumTextPartChars(partRows: OpenCodePartRow[]): number {
   }
 
   return total;
+}
+
+function findStepFinishUsagePart(partRows: OpenCodePartRow[]): OpenCodePartRow | null {
+  for (const row of partRows) {
+    const parsed = parseJsonRecord(row.data);
+    if (parsed === null || normalizeOptionalString(parsed.type) !== "step-finish") {
+      continue;
+    }
+
+    if (extractTokenPayload(parsed) !== null) {
+      return row;
+    }
+  }
+
+  return null;
 }
 
 function resolveWorkspacePath(message: Record<string, unknown>, sessionDirectory?: string | null): string {

@@ -60,6 +60,7 @@ const TrendChart = lazy(async () => {
 
 const DEFAULT_TOOL_EMPTY_MESSAGE = "No tool activity in this scope.";
 const SOURCE_UNAVAILABLE_MESSAGE = "Not available for this source yet.";
+const LIVE_REFRESH_MS = 2000;
 const SOURCE_OPTIONS: Array<{ value: SourceVendor; label: string }> = [
   { value: "all", label: "All" },
   { value: "claude-code", label: "Claude Code" },
@@ -136,7 +137,7 @@ export function App() {
     void loadOverview();
     const timer = window.setInterval(() => {
       void loadOverview();
-    }, 5000);
+    }, LIVE_REFRESH_MS);
 
     return () => {
       active = false;
@@ -185,7 +186,7 @@ export function App() {
     void loadTools();
     const timer = window.setInterval(() => {
       void loadTools();
-    }, 5000);
+    }, LIVE_REFRESH_MS);
 
     return () => {
       active = false;
@@ -234,7 +235,7 @@ export function App() {
     void loadSessions();
     const timer = window.setInterval(() => {
       void loadSessions();
-    }, 5000);
+    }, LIVE_REFRESH_MS);
 
     return () => {
       active = false;
@@ -288,7 +289,7 @@ export function App() {
     void loadTools();
     const timer = window.setInterval(() => {
       void loadTools();
-    }, 5000);
+    }, LIVE_REFRESH_MS);
 
     return () => {
       active = false;
@@ -342,7 +343,7 @@ export function App() {
     void loadTools();
     const timer = window.setInterval(() => {
       void loadTools();
-    }, 5000);
+    }, LIVE_REFRESH_MS);
 
     return () => {
       active = false;

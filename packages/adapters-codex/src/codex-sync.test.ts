@@ -52,6 +52,34 @@ describe("syncCodexRollouts", () => {
           }
         }),
         JSON.stringify({
+          timestamp: "2026-05-27T10:00:02.500Z",
+          type: "response_item",
+          payload: {
+            type: "function_call",
+            call_id: "call_shell_fn_1",
+            name: "shell_command",
+            arguments: JSON.stringify({
+              command: "rg -n \"patch_apply_end\" D:/projects/dev/agent-metrics -S",
+              workdir: "D:/projects/dev",
+              timeout_ms: 10000
+            })
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-05-27T10:00:02.800Z",
+          type: "response_item",
+          payload: {
+            type: "function_call_output",
+            call_id: "call_shell_fn_1",
+            output: [
+              "Exit code: 0",
+              "Wall time: 2.3 seconds",
+              "Output:",
+              "D:/projects/dev/agent-metrics/src/app.ts:1:..."
+            ].join("\n")
+          }
+        }),
+        JSON.stringify({
           timestamp: "2026-05-27T10:00:03.000Z",
           type: "response_item",
           payload: {
@@ -105,6 +133,28 @@ describe("syncCodexRollouts", () => {
             action: {
               type: "search"
             }
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-05-27T10:00:07.000Z",
+          type: "event_msg",
+          payload: {
+            type: "exec_command_end",
+            call_id: "call_shell_1",
+            command: [
+              "C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe",
+              "-Command",
+              "git diff --stat"
+            ],
+            cwd: "D:/projects/dev",
+            stdout: "",
+            stderr: "",
+            exit_code: 0,
+            duration: {
+              secs: 2,
+              nanos: 284934500
+            },
+            status: "completed"
           }
         }),
         JSON.stringify({
@@ -226,6 +276,11 @@ describe("syncCodexRollouts", () => {
         type: "assistant.responded"
       }),
       expect.objectContaining({
+        type: "tool.succeeded",
+        tool_name: "rg",
+        duration_ms: 2300
+      }),
+      expect.objectContaining({
         type: "tool.called",
         tool_name: "apply_patch"
       }),
@@ -249,6 +304,11 @@ describe("syncCodexRollouts", () => {
       expect.objectContaining({
         type: "tool.succeeded",
         tool_name: "WebSearch"
+      }),
+      expect.objectContaining({
+        type: "tool.succeeded",
+        tool_name: "PowerShell",
+        duration_ms: 2285
       }),
       expect.objectContaining({
         event_id: "codex:session:019e5dc9-b10c-7371-8edd-066e8db7e50d:usage:30321",

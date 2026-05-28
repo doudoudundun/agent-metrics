@@ -6,9 +6,9 @@ import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
 import { appendJsonLine } from "@agent-metrics/shared-utils";
 import {
+  normalizeOpenCodePartRow,
   normalizeOpenCodeMessageRow,
   normalizeOpenCodeSessionRow,
-  normalizeOpenCodeToolPartRow,
   type OpenCodeMessageRow,
   type OpenCodePartRow,
   type OpenCodeProviderRegistry,
@@ -19,6 +19,7 @@ type SyncCursor = {
   sessionUpdatedAt: number;
   messageUpdatedAt: number;
   partUpdatedAt: number;
+  pendingMessageIds: string[];
 };
 
 type EventLedger = {
@@ -111,6 +112,12 @@ export async function syncOpenCodeDatabase(input: {
         ORDER BY time_updated ASC, id ASC`
       )
       .all(cursor.messageUpdatedAt);
+    const pendingMessageRows = selectMessagesByIds(
+      db,
+      cursor.pendingMessageIds,
+      new Set(messageRows.map((row) => row.id))
+    );
+    const allMessageRows = dedupeMessageRows([...messageRows, ...pendingMessageRows]);
     const updatedToolRows = db
       .prepare<OpenCodePartRow>(
         `SELECT
@@ -125,18 +132,22 @@ export async function syncOpenCodeDatabase(input: {
         ORDER BY time_updated ASC, id ASC`
       )
       .all(cursor.partUpdatedAt);
-    const messagePartRows = selectPartsByMessageIds(
+    const partMessageRows = selectMessagesByIds(
       db,
-      messageRows.map((row) => row.id)
+      [...new Set(updatedToolRows.map((row) => row.message_id))],
+      new Set(allMessageRows.map((row) => row.id))
     );
+    const allKnownMessageRows = dedupeMessageRows([...allMessageRows, ...partMessageRows]);
+    const messagePartRows = selectPartsByMessageIds(db, allKnownMessageRows.map((row) => row.id));
     const sessionLookup = loadSessionLookup(
       db,
       new Set([
         ...sessionRows.map((row) => row.id),
-        ...messageRows.map((row) => row.session_id),
+        ...allKnownMessageRows.map((row) => row.session_id),
         ...updatedToolRows.map((row) => row.session_id)
       ])
     );
+    const messageLookup = new Map(allKnownMessageRows.map((row) => [row.id, row]));
 
     const partRowsByMessageId = new Map<string, OpenCodePartRow[]>();
 
@@ -151,7 +162,7 @@ export async function syncOpenCodeDatabase(input: {
 
     const events = [
       ...sessionRows.flatMap((row) => normalizeOpenCodeSessionRow(row)),
-      ...messageRows.flatMap((row) => {
+      ...allMessageRows.flatMap((row) => {
         const session = sessionLookup.get(row.session_id);
 
         return normalizeOpenCodeMessageRow({
@@ -164,10 +175,14 @@ export async function syncOpenCodeDatabase(input: {
       }),
       ...updatedToolRows.flatMap((row) => {
         const session = sessionLookup.get(row.session_id);
+        const message = messageLookup.get(row.message_id) ?? null;
 
-        return normalizeOpenCodeToolPartRow({
+        return normalizeOpenCodePartRow({
           row,
-          sessionDirectory: session?.directory ?? null
+          sessionDirectory: session?.directory ?? null,
+          sessionModel: session?.model ?? null,
+          messageRow: message,
+          providerRegistry
         });
       })
     ].sort((left, right) =>
@@ -191,7 +206,8 @@ export async function syncOpenCodeDatabase(input: {
     const nextCursor = {
       sessionUpdatedAt: maxCursorValue(cursor.sessionUpdatedAt, sessionRows.map((row) => row.time_updated)),
       messageUpdatedAt: maxCursorValue(cursor.messageUpdatedAt, messageRows.map((row) => row.time_updated)),
-      partUpdatedAt: maxCursorValue(cursor.partUpdatedAt, updatedToolRows.map((row) => row.time_updated))
+      partUpdatedAt: maxCursorValue(cursor.partUpdatedAt, updatedToolRows.map((row) => row.time_updated)),
+      pendingMessageIds: collectPendingMessageIds(allMessageRows, seenEventIds)
     } satisfies SyncCursor;
 
     if (!isSameCursor(nextCursor, cursor)) {
@@ -231,6 +247,47 @@ function selectPartsByMessageIds(db: ReadOnlyDatabase, messageIds: string[]): Op
     .all(...messageIds);
 }
 
+function selectMessagesByIds(
+  db: ReadOnlyDatabase,
+  messageIds: string[],
+  excludeMessageIds?: Set<string>
+): OpenCodeMessageRow[] {
+  const ids = messageIds.filter((messageId) => !excludeMessageIds?.has(messageId));
+  if (ids.length === 0) {
+    return [];
+  }
+
+  const placeholders = ids.map(() => "?").join(", ");
+
+  return db
+    .prepare<OpenCodeMessageRow>(
+      `SELECT
+        id,
+        session_id,
+        time_created,
+        time_updated,
+        data
+      FROM message
+      WHERE id IN (${placeholders})
+      ORDER BY time_updated ASC, id ASC`
+    )
+    .all(...ids);
+}
+
+function dedupeMessageRows(rows: OpenCodeMessageRow[]): OpenCodeMessageRow[] {
+  const deduped = new Map<string, OpenCodeMessageRow>();
+
+  for (const row of rows) {
+    deduped.set(row.id, row);
+  }
+
+  return [...deduped.values()].sort((left, right) =>
+    left.time_updated === right.time_updated
+      ? left.id.localeCompare(right.id)
+      : left.time_updated - right.time_updated
+  );
+}
+
 function loadSessionLookup(db: ReadOnlyDatabase, sessionIds: Set<string>): Map<string, SessionLookupRow> {
   if (sessionIds.size === 0) {
     return new Map();
@@ -253,7 +310,8 @@ async function loadCursor(cursorPath: string): Promise<SyncCursor> {
   return {
     sessionUpdatedAt: normalizeCursorValue(parsed, "sessionUpdatedAt"),
     messageUpdatedAt: normalizeCursorValue(parsed, "messageUpdatedAt"),
-    partUpdatedAt: normalizeCursorValue(parsed, "partUpdatedAt")
+    partUpdatedAt: normalizeCursorValue(parsed, "partUpdatedAt"),
+    pendingMessageIds: normalizeStringArray(parsed, "pendingMessageIds")
   };
 }
 
@@ -343,6 +401,20 @@ function normalizeCursorValue(
   return typeof raw === "number" && Number.isInteger(raw) && raw >= 0 ? raw : 0;
 }
 
+function normalizeStringArray(
+  value: Record<string, unknown> | null,
+  key: "pendingMessageIds"
+): string[] {
+  if (!value) {
+    return [];
+  }
+
+  const raw = value[key];
+  return Array.isArray(raw)
+    ? raw.filter((entry): entry is string => typeof entry === "string").sort()
+    : [];
+}
+
 function maxCursorValue(current: number, values: number[]): number {
   return values.reduce((max, value) => (value > max ? value : max), current);
 }
@@ -351,8 +423,91 @@ function isSameCursor(left: SyncCursor, right: SyncCursor): boolean {
   return (
     left.sessionUpdatedAt === right.sessionUpdatedAt &&
     left.messageUpdatedAt === right.messageUpdatedAt &&
-    left.partUpdatedAt === right.partUpdatedAt
+    left.partUpdatedAt === right.partUpdatedAt &&
+    isSameStringArray(left.pendingMessageIds, right.pendingMessageIds)
   );
+}
+
+function isSameStringArray(left: string[], right: string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function collectPendingMessageIds(
+  messageRows: OpenCodeMessageRow[],
+  seenEventIds: Set<string>
+): string[] {
+  const pending = new Set<string>();
+
+  for (const row of messageRows) {
+    if (shouldRetryMessageForTokens(row, seenEventIds)) {
+      pending.add(row.id);
+    }
+  }
+
+  return [...pending].sort();
+}
+
+function shouldRetryMessageForTokens(
+  row: OpenCodeMessageRow,
+  seenEventIds: Set<string>
+): boolean {
+  const inspection = inspectOpenCodeMessage(row.data);
+  if (inspection.role !== "assistant" || inspection.hasTokens) {
+    return false;
+  }
+
+  return !seenEventIds.has(buildOpenCodeUsageEventId(row.id));
+}
+
+function inspectOpenCodeMessage(data: string): {
+  role: string | null;
+  hasTokens: boolean;
+} {
+  try {
+    const parsed = JSON.parse(data) as unknown;
+    const record = isRecord(parsed) ? parsed : null;
+    if (record === null) {
+      return {
+        role: null,
+        hasTokens: false
+      };
+    }
+
+    return {
+      role: normalizeNonEmptyString(record.role),
+      hasTokens: hasOpenCodeTokenPayload(record)
+    };
+  } catch {
+    return {
+      role: null,
+      hasTokens: false
+    };
+  }
+}
+
+function hasOpenCodeTokenPayload(message: Record<string, unknown>): boolean {
+  const tokens = isRecord(message.tokens) ? message.tokens : null;
+  if (tokens === null) {
+    return false;
+  }
+
+  const cache = isRecord(tokens.cache) ? tokens.cache : null;
+  const inputTokens = normalizeInteger(tokens.input) ?? 0;
+  const outputTokens =
+    (normalizeInteger(tokens.output) ?? 0) + (normalizeInteger(tokens.reasoning) ?? 0);
+  const cacheCreationTokens = normalizeInteger(cache?.write) ?? 0;
+  const cacheReadTokens = normalizeInteger(cache?.read) ?? 0;
+
+  return (
+    inputTokens > 0 ||
+    outputTokens > 0 ||
+    cacheCreationTokens > 0 ||
+    cacheReadTokens > 0
+  );
+}
+
+function buildOpenCodeUsageEventId(messageId: string): string {
+  return `opencode:message:${messageId}:usage`;
 }
 
 async function loadProviderRegistry(modelsPath: string): Promise<OpenCodeProviderRegistry> {
@@ -399,6 +554,10 @@ function extractHost(value: string | null): string | null {
 
 function normalizeNonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function normalizeInteger(value: unknown): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
