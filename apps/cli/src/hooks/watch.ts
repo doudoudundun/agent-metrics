@@ -1,6 +1,5 @@
-import { watch } from "node:fs";
-import { readFile } from "node:fs/promises";
-import { basename, dirname, resolve } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
+import { resolve } from "node:path";
 import type { Command } from "commander";
 import { ensureClaudeHooks, getDefaultClaudeSettingsPath } from "./settings.js";
 
@@ -31,14 +30,9 @@ export async function watchClaudeSettings(input: {
   log?: (message: string) => void;
 }): Promise<void> {
   const settingsPath = resolve(input.settingsPath ?? getDefaultClaudeSettingsPath());
-  const settingsDir = dirname(settingsPath);
-  const settingsName = basename(settingsPath);
   const debounceMs = input.debounceMs ?? 250;
   const log = input.log ?? ((message: string) => process.stdout.write(`${message}\n`));
 
-  let timer: NodeJS.Timeout | null = null;
-  let poller: NodeJS.Timeout | null = null;
-  let lastSettledContents = await tryReadContents(settingsPath);
   let inFlight = false;
 
   const runEnsure = async () => {
@@ -49,20 +43,10 @@ export async function watchClaudeSettings(input: {
     inFlight = true;
 
     try {
-      const currentContents = await tryReadContents(settingsPath);
-
-      if (currentContents !== null && currentContents === lastSettledContents) {
-        return;
-      }
-
       const result = await ensureClaudeHooks({
         repoRoot: input.repoRoot,
         settingsPath
       });
-
-      if (result.status !== "invalid-json") {
-        lastSettledContents = await tryReadContents(settingsPath);
-      }
 
       log(`hooks watch: ${result.status}`);
     } catch (error) {
@@ -73,72 +57,17 @@ export async function watchClaudeSettings(input: {
     }
   };
 
-  const schedule = () => {
-    if (timer !== null) {
-      clearTimeout(timer);
-    }
-
-    timer = setTimeout(() => {
-      void runEnsure();
-    }, debounceMs);
-  };
-
-  const pollForChanges = async () => {
-    const currentContents = await tryReadContents(settingsPath);
-
-    if (currentContents !== lastSettledContents) {
-      schedule();
-    }
-  };
-
   if (input.signal?.aborted) {
     return;
   }
 
-  await new Promise<void>((resolvePromise, reject) => {
-    const watchers = [
-      watch(settingsDir, { persistent: true }, (_eventType, filename) => {
-        if (filename === null || filename === undefined || filename.toString() === settingsName) {
-          schedule();
-        }
-      }),
-      watch(settingsPath, { persistent: true }, () => {
-        schedule();
-      })
-    ];
+  while (!input.signal?.aborted) {
+    await runEnsure();
 
-    for (const watcher of watchers) {
-      watcher.on("error", reject);
+    try {
+      await delay(debounceMs, undefined, { signal: input.signal });
+    } catch {
+      break;
     }
-
-    poller = setInterval(() => {
-      void pollForChanges();
-    }, debounceMs);
-
-    input.signal?.addEventListener(
-      "abort",
-      () => {
-        if (timer !== null) {
-          clearTimeout(timer);
-        }
-        if (poller !== null) {
-          clearInterval(poller);
-        }
-
-        for (const watcher of watchers) {
-          watcher.close();
-        }
-        resolvePromise();
-      },
-      { once: true }
-    );
-  });
-}
-
-async function tryReadContents(filePath: string): Promise<string | null> {
-  try {
-    return await readFile(filePath, "utf8");
-  } catch {
-    return null;
   }
 }

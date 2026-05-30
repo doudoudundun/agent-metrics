@@ -1389,6 +1389,54 @@ describe("core api", () => {
     await app.close();
   });
 
+  it("groups Codex macOS and Windows file-reading commands under Read", async () => {
+    await appendJsonLine(logPath, {
+      event_id: "evt_codex_read_1",
+      session_id: "ses_codex_read_1",
+      timestamp: "2026-05-25T08:10:00.000Z",
+      source_vendor: "codex",
+      source_adapter: "codex-rollout",
+      workspace_path: "/Users/test/dev/agent-metrics",
+      type: "session.started"
+    });
+
+    for (const [index, toolName] of ["sed", "get-content", "head", "tail", "nl"].entries()) {
+      await appendJsonLine(logPath, {
+        event_id: `evt_codex_read_tool_${index + 1}`,
+        session_id: "ses_codex_read_1",
+        timestamp: `2026-05-25T08:10:0${index + 1}.000Z`,
+        source_vendor: "codex",
+        source_adapter: "codex-rollout",
+        workspace_path: "/Users/test/dev/agent-metrics",
+        type: "tool.succeeded",
+        tool_name: toolName,
+        status: "succeeded",
+        duration_ms: 10
+      });
+    }
+
+    const app = buildApp({ dbPath, ...may25AppInput });
+    await ingestEventLog({ app, eventLogPath: logPath });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/tools?mode=calendar&range=day&sourceVendor=codex"
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      rows: [{ toolName: "Read", count: 5, failures: 0, averageDurationMs: 10 }],
+      mode: "calendar",
+      range: "day",
+      timezone: "UTC",
+      windowStart: "2026-05-25T00:00:00.000Z",
+      windowEnd: "2026-05-25T09:00:00.000Z",
+      updatedAt: "2026-05-25T09:00:00.000Z"
+    });
+
+    await app.close();
+  });
+
   it("returns scoped sessions and metadata", async () => {
     await seedScopedAggregateDataset();
 

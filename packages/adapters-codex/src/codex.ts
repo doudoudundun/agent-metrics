@@ -591,11 +591,21 @@ function parseFunctionCallOutput(value: string | null): {
   }
 
   const exitCodeMatch = /Exit code:\s*(-?\d+)/iu.exec(value);
+  const processExitCodeMatch = /Process exited with code\s*(-?\d+)/iu.exec(value);
   const wallTimeMatch =
     /Wall time:\s*([0-9]+(?:\.[0-9]+)?)\s*(milliseconds?|ms|seconds?|s)/iu.exec(value);
+  const runningSessionMatch = /Process running with session ID\s+\d+/iu.exec(value);
 
-  if (exitCodeMatch !== null) {
-    const exitCode = Number.parseInt(exitCodeMatch[1], 10);
+  if (runningSessionMatch !== null) {
+    return {
+      success: true,
+      durationMs: 0
+    };
+  }
+
+  const normalizedExitCode = exitCodeMatch?.[1] ?? processExitCodeMatch?.[1] ?? null;
+  if (normalizedExitCode !== null) {
+    const exitCode = Number.parseInt(normalizedExitCode, 10);
     let durationMs = 0;
 
     if (wallTimeMatch !== null) {
@@ -714,14 +724,23 @@ function inferExecCommandToolName(command: unknown): string {
   }
 
   const normalized = basename(executable).toLowerCase();
+  const wrappedCommand = findWrappedCommandArgument(command.slice(1));
+  if (wrappedCommand !== null) {
+    return inferCommandStringToolName(wrappedCommand);
+  }
+
   switch (normalized) {
     case "powershell.exe":
+    case "powershell":
     case "pwsh.exe":
+    case "pwsh":
       return "PowerShell";
     case "bash.exe":
     case "bash":
+    case "zsh":
       return "Bash";
     case "cmd.exe":
+    case "cmd":
       return "Cmd";
     default: {
       const withoutExtension = normalized.endsWith(".exe")
@@ -736,18 +755,25 @@ function inferExecCommandToolName(command: unknown): string {
 }
 
 function shouldTrackFunctionCall(functionName: string): boolean {
-  return functionName === "shell_command";
+  return functionName === "shell_command" || functionName === "exec_command";
 }
 
 function inferFunctionCallToolName(functionName: string, argumentText: string | null): string {
-  if (functionName !== "shell_command") {
-    return functionName;
+  if (functionName === "shell_command") {
+    const argumentsRecord = argumentText ? parseJsonRecord(argumentText) : null;
+    const command = normalizeOptionalString(argumentsRecord?.command);
+
+    return command !== null ? inferCommandStringToolName(command) : functionName;
   }
 
-  const argumentsRecord = argumentText ? parseJsonRecord(argumentText) : null;
-  const command = normalizeOptionalString(argumentsRecord?.command);
+  if (functionName === "exec_command") {
+    const argumentsRecord = argumentText ? parseJsonRecord(argumentText) : null;
+    const command = normalizeOptionalString(argumentsRecord?.cmd);
 
-  return command !== null ? inferCommandStringToolName(command) : functionName;
+    return command !== null ? inferCommandStringToolName(command) : functionName;
+  }
+
+  return functionName;
 }
 
 function summarizeFunctionCallArguments(functionName: string, argumentText: string | null): string {
@@ -755,12 +781,17 @@ function summarizeFunctionCallArguments(functionName: string, argumentText: stri
     return "{}";
   }
 
-  if (functionName !== "shell_command") {
-    return argumentText;
+  if (functionName === "shell_command") {
+    const argumentsRecord = parseJsonRecord(argumentText);
+    return normalizeOptionalString(argumentsRecord?.command) ?? argumentText;
   }
 
-  const argumentsRecord = parseJsonRecord(argumentText);
-  return normalizeOptionalString(argumentsRecord?.command) ?? argumentText;
+  if (functionName === "exec_command") {
+    const argumentsRecord = parseJsonRecord(argumentText);
+    return normalizeOptionalString(argumentsRecord?.cmd) ?? argumentText;
+  }
+
+  return argumentText;
 }
 
 function inferCommandStringToolName(command: string): string {
@@ -851,6 +882,27 @@ function findCommandStringToolToken(command: string): string | null {
     const normalized = normalizeCommandToken(rawToken);
     if (normalized !== null) {
       return normalized;
+    }
+  }
+
+  return null;
+}
+
+function findWrappedCommandArgument(commandArgs: unknown[]): string | null {
+  for (let index = 0; index < commandArgs.length; index += 1) {
+    const token = normalizeOptionalString(commandArgs[index]);
+    if (token === null) {
+      continue;
+    }
+
+    const normalized = token.toLowerCase();
+    if (
+      normalized === "-c" ||
+      normalized === "-lc" ||
+      normalized === "-command" ||
+      normalized === "/c"
+    ) {
+      return normalizeOptionalString(commandArgs[index + 1]);
     }
   }
 

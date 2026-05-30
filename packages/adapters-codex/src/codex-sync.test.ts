@@ -307,7 +307,7 @@ describe("syncCodexRollouts", () => {
       }),
       expect.objectContaining({
         type: "tool.succeeded",
-        tool_name: "PowerShell",
+        tool_name: "git",
         duration_ms: 2285
       }),
       expect.objectContaining({

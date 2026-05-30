@@ -13,8 +13,8 @@ export type ClaudeHookEventName = (typeof CLAUDE_HOOK_EVENTS)[number];
 
 export type ClaudeCommandHook = {
   type: "command";
-  command: "node";
-  args: string[];
+  command: string;
+  args?: string[];
 };
 
 export type ClaudeHookMatcher = {
@@ -37,16 +37,11 @@ export function buildClaudeHooksConfig(input: { repoRoot: string }): ClaudeHooks
           hooks: [
             {
               type: "command",
-              command: "node",
-              args: [
+              command: buildHookCommand({
                 cliPath,
-                "hooks",
-                "collect",
-                "--hook-event-name",
                 eventName,
-                "--repo-root",
                 repoRoot
-              ]
+              })
             }
           ]
         }
@@ -75,4 +70,25 @@ export function registerPrintConfigCommand(hooks: Command): void {
 
 function toPortablePath(filePath: string): string {
   return filePath.replace(/\\/g, "/");
+}
+
+function buildHookCommand(input: {
+  cliPath: string;
+  eventName: string;
+  repoRoot: string;
+}): string {
+  return [
+    "node",
+    quoteShellArgument(input.cliPath),
+    "hooks",
+    "collect",
+    "--hook-event-name",
+    quoteShellArgument(input.eventName),
+    "--repo-root",
+    quoteShellArgument(input.repoRoot)
+  ].join(" ");
+}
+
+function quoteShellArgument(value: string): string {
+  return `"${value.replace(/(["\\$`])/g, "\\$1")}"`;
 }

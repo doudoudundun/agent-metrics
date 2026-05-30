@@ -468,7 +468,7 @@ function normalizeToolRankingName(toolName: string, sourceVendor: SourceVendor):
     return "Search";
   }
 
-  if (["get-content", "cat", "type", "more", "less"].includes(normalized)) {
+  if (["get-content", "cat", "type", "more", "less", "sed", "head", "tail", "nl", "bat"].includes(normalized)) {
     return "Read";
   }
 

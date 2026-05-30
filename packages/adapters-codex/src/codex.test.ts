@@ -187,7 +187,7 @@ describe("extractCodexEventsFromRollout", () => {
     expect(events).toContainEqual(
       expect.objectContaining({
         type: "tool.succeeded",
-        tool_name: "PowerShell",
+        tool_name: "git",
         status: "succeeded",
         duration_ms: 2285
       })
@@ -255,6 +255,63 @@ describe("extractCodexEventsFromRollout", () => {
     for (const event of events) {
       expect(AnyEventSchema.safeParse(event).success).toBe(true);
     }
+  });
+
+  it("maps exec_command function calls into normalized tool events on macOS", () => {
+    const events = extractCodexEventsFromRollout({
+      filePath: "/Users/test/.codex/sessions/2026/05/28/rollout-exec-command.jsonl",
+      contents: [
+        JSON.stringify({
+          timestamp: "2026-05-28T10:00:00.000Z",
+          type: "session_meta",
+          payload: {
+            id: "ses_exec_fn",
+            timestamp: "2026-05-28T10:00:00.000Z",
+            cwd: "/Users/test/dev",
+            model_provider: "ai"
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-05-28T10:00:03.000Z",
+          type: "response_item",
+          payload: {
+            type: "function_call",
+            call_id: "call_exec_fn_1",
+            name: "exec_command",
+            arguments: JSON.stringify({
+              cmd: "sed -n '1,120p' README.md",
+              workdir: "/Users/test/dev",
+              yield_time_ms: 1000,
+              max_output_tokens: 4000
+            })
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-05-28T10:00:05.000Z",
+          type: "response_item",
+          payload: {
+            type: "function_call_output",
+            call_id: "call_exec_fn_1",
+            output: [
+              "Chunk ID: test123",
+              "Wall time: 0.0004 seconds",
+              "Process exited with code 0",
+              "Output:",
+              "# Agent Metrics"
+            ].join("\n")
+          }
+        })
+      ].join("\n")
+    });
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "tool.succeeded",
+        tool_name: "sed",
+        status: "succeeded",
+        duration_ms: 0
+      })
+    );
   });
 
   it("ignores non-shell function calls and keeps only real command-backed tools", () => {
@@ -379,6 +436,75 @@ describe("extractCodexEventsFromRollout", () => {
         type: "tool.succeeded",
         tool_name: "get-nettcpconnection",
         duration_ms: 4900
+      })
+    );
+  });
+
+  it("extracts the real command name from exec_command_end shell wrappers on macOS and Windows", () => {
+    const events = extractCodexEventsFromRollout({
+      filePath: "/Users/test/.codex/sessions/2026/05/28/rollout-exec-command-end.jsonl",
+      contents: [
+        JSON.stringify({
+          timestamp: "2026-05-28T10:00:00.000Z",
+          type: "session_meta",
+          payload: {
+            id: "ses_exec_end",
+            timestamp: "2026-05-28T10:00:00.000Z",
+            cwd: "/Users/test/dev",
+            model_provider: "ai"
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-05-28T10:00:03.000Z",
+          type: "event_msg",
+          payload: {
+            type: "exec_command_end",
+            call_id: "call_exec_end_1",
+            command: ["/bin/zsh", "-lc", "sed -n '1,120p' README.md"],
+            cwd: "/Users/test/dev",
+            stdout: "",
+            stderr: "",
+            exit_code: 0,
+            duration: { secs: 0, nanos: 20000000 },
+            status: "completed"
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-05-28T10:00:04.000Z",
+          type: "event_msg",
+          payload: {
+            type: "exec_command_end",
+            call_id: "call_exec_end_2",
+            command: [
+              "C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe",
+              "-Command",
+              "Get-Content README.md"
+            ],
+            cwd: "D:/projects/dev",
+            stdout: "",
+            stderr: "",
+            exit_code: 0,
+            duration: { secs: 0, nanos: 30000000 },
+            status: "completed"
+          }
+        })
+      ].join("\n")
+    });
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "tool.succeeded",
+        tool_name: "sed",
+        status: "succeeded",
+        duration_ms: 20
+      })
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "tool.succeeded",
+        tool_name: "get-content",
+        status: "succeeded",
+        duration_ms: 30
       })
     );
   });

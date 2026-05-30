@@ -24,12 +24,7 @@ describe("watchClaudeSettings", () => {
     });
 
     await writeFile(settingsPath, JSON.stringify({ theme: "light" }, null, 2), "utf8");
-    await delay(300);
-
-    const repaired = JSON.parse(await readFile(settingsPath, "utf8")) as {
-      theme?: string;
-      hooks?: Record<string, unknown>;
-    };
+    const repaired = await waitForHooks(settingsPath);
 
     expect(repaired.theme).toBe("light");
     expect(repaired.hooks?.PreToolUse).toBeDefined();
@@ -55,9 +50,7 @@ describe("watchClaudeSettings", () => {
     });
 
     await writeFile(settingsPath, JSON.stringify({ theme: "dark" }, null, 2), "utf8");
-    await delay(500);
-
-    const repaired = JSON.parse(await readFile(settingsPath, "utf8")) as {
+    const repaired = (await waitForHooks(settingsPath)) as {
       hooks: {
         PreToolUse: Array<{
           hooks: unknown[];
@@ -72,3 +65,28 @@ describe("watchClaudeSettings", () => {
     await watchPromise;
   });
 });
+
+async function waitForHooks(settingsPath: string): Promise<{
+  theme?: string;
+  hooks?: Record<string, unknown>;
+}> {
+  const deadline = Date.now() + 2000;
+
+  while (Date.now() < deadline) {
+    const repaired = JSON.parse(await readFile(settingsPath, "utf8")) as {
+      theme?: string;
+      hooks?: Record<string, unknown>;
+    };
+
+    if (repaired.hooks?.PreToolUse !== undefined) {
+      return repaired;
+    }
+
+    await delay(50);
+  }
+
+  return JSON.parse(await readFile(settingsPath, "utf8")) as {
+    theme?: string;
+    hooks?: Record<string, unknown>;
+  };
+}

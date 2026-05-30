@@ -25,16 +25,8 @@ describe("buildClaudeHooksConfig", () => {
           hooks: [
             {
               type: "command",
-              command: "node",
-              args: [
-                `${portableRepoRoot}/apps/cli/dist/index.js`,
-                "hooks",
-                "collect",
-                "--hook-event-name",
-                eventName,
-                "--repo-root",
-                portableRepoRoot
-              ]
+              command:
+                `node "${portableRepoRoot}/apps/cli/dist/index.js" hooks collect --hook-event-name "${eventName}" --repo-root "${portableRepoRoot}"`
             }
           ]
         }

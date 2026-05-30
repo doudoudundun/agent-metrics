@@ -116,16 +116,8 @@ describe("installClaudeHooks", () => {
         },
         {
           type: "command",
-          command: "node",
-          args: [
-            `${portableRepoRoot}/apps/cli/dist/index.js`,
-            "hooks",
-            "collect",
-            "--hook-event-name",
-            "PreToolUse",
-            "--repo-root",
-            portableRepoRoot
-          ]
+          command:
+            `node "${portableRepoRoot}/apps/cli/dist/index.js" hooks collect --hook-event-name "PreToolUse" --repo-root "${portableRepoRoot}"`
         }
       ]
     });
@@ -158,16 +150,8 @@ describe("installClaudeHooks", () => {
         hooks: [
           {
             type: "command",
-            command: "node",
-            args: [
-              `${portableSecondRepoRoot}/apps/cli/dist/index.js`,
-              "hooks",
-              "collect",
-              "--hook-event-name",
-              "PreToolUse",
-              "--repo-root",
-              portableSecondRepoRoot
-            ]
+            command:
+              `node "${portableSecondRepoRoot}/apps/cli/dist/index.js" hooks collect --hook-event-name "PreToolUse" --repo-root "${portableSecondRepoRoot}"`
           }
         ]
       }

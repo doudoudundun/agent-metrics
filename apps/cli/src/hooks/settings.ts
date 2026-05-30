@@ -196,11 +196,17 @@ function isSameCommandHook(value: unknown, expected: ClaudeCommandHook): boolean
     return false;
   }
 
-  if (!Array.isArray(value.args) || value.args.length !== expected.args.length) {
+  const expectedArgs = expected.args;
+
+  if (expectedArgs === undefined) {
+    return value.args === undefined;
+  }
+
+  if (!Array.isArray(value.args) || value.args.length !== expectedArgs.length) {
     return false;
   }
 
-  return value.args.every((arg, index) => typeof arg === "string" && arg === expected.args[index]);
+  return value.args.every((arg, index) => typeof arg === "string" && arg === expectedArgs[index]);
 }
 
 function cloneHookEntry(entry: ClaudeHookMatcher): ClaudeHookMatcher {
@@ -214,7 +220,7 @@ function cloneCommandHook(hook: ClaudeCommandHook): ClaudeCommandHook {
   return {
     type: hook.type,
     command: hook.command,
-    args: [...hook.args]
+    ...(hook.args ? { args: [...hook.args] } : {})
   };
 }
 
@@ -242,12 +248,31 @@ function isManagedAgentMetricsHook(
   value: unknown,
   eventName: keyof ClaudeHooksConfig
 ): boolean {
-  if (!isRecord(value) || value.type !== "command" || value.command !== "node" || !Array.isArray(value.args)) {
+  if (!isRecord(value) || value.type !== "command") {
+    return false;
+  }
+
+  if (typeof value.command === "string" && isManagedAgentMetricsCommandString(value.command, eventName)) {
+    return true;
+  }
+
+  if (value.command !== "node" || !Array.isArray(value.args)) {
     return false;
   }
 
   const args = value.args.filter((arg): arg is string => typeof arg === "string");
 
+  return isManagedAgentMetricsArgs(args, eventName);
+}
+
+function isAgentMetricsCliPath(filePath: string): boolean {
+  return filePath.replace(/\\/g, "/").endsWith("/apps/cli/dist/index.js");
+}
+
+function isManagedAgentMetricsArgs(
+  args: string[],
+  eventName: keyof ClaudeHooksConfig
+): boolean {
   return (
     args.length >= 7 &&
     isAgentMetricsCliPath(args[0]) &&
@@ -259,8 +284,19 @@ function isManagedAgentMetricsHook(
   );
 }
 
-function isAgentMetricsCliPath(filePath: string): boolean {
-  return filePath.replace(/\\/g, "/").endsWith("/apps/cli/dist/index.js");
+function isManagedAgentMetricsCommandString(
+  command: string,
+  eventName: keyof ClaudeHooksConfig
+): boolean {
+  const normalized = command.replace(/\\"/g, "\"");
+
+  return (
+    normalized.startsWith("node ") &&
+    normalized.includes("/apps/cli/dist/index.js") &&
+    normalized.includes(" hooks collect ") &&
+    normalized.includes(`--hook-event-name "${eventName}"`) &&
+    normalized.includes("--repo-root ")
+  );
 }
 
 function isRecord(value: unknown): value is JsonObject {
