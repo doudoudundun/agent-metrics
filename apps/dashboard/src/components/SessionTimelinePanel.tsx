@@ -38,6 +38,15 @@ export function SessionTimelinePanel(input: {
       </div>
       {detail ? (
         <>
+          <div className="timeline-context">
+            <span>{detail.sourceVendor}</span>
+            <span>{detail.sourceAdapter}</span>
+            <span>{detail.workspacePath}</span>
+            {detail.context?.executionPath ? <span>{detail.context.executionPath}</span> : null}
+            {detail.context?.skillsLoaded
+              ? <span>skills: {detail.context.skillNames.join(", ") || "loaded"}</span>
+              : null}
+          </div>
           <div className="timeline-list">
             {visibleTimeline.map((entry, index) => (
               <article className="timeline-row" key={`${entry.type}-${entry.toolName}-${index}`}>

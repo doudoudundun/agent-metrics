@@ -356,6 +356,14 @@ describe("api client", () => {
   it("returns transcript-enriched session detail payloads", async () => {
     const payload: SessionDetailResponse = {
       sessionId: "ses_1",
+      workspacePath: "/Users/test/dev/agent-metrics",
+      sourceVendor: "claude-code",
+      sourceAdapter: "claude-transcript",
+      context: {
+        executionPath: "/Users/test/dev/agent-metrics/.claude/tmp",
+        skillsLoaded: true,
+        skillNames: ["commit-analyzer"]
+      },
       timeline: [
         {
           type: "prompt.submitted",

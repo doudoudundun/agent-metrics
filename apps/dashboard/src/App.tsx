@@ -13,12 +13,18 @@ import {
   fetchSessions,
   fetchTools
 } from "./api";
+import { FloatingDashboard } from "./components/FloatingDashboard";
 import { KpiGrid } from "./components/KpiGrid";
 import { ModelUsagePanel } from "./components/ModelUsagePanel";
 import { RecentSessionsTable } from "./components/RecentSessionsTable";
 import { SessionTimelinePanel } from "./components/SessionTimelinePanel";
 import { TimeScopeToolbar } from "./components/TimeScopeToolbar";
 import { ToolRankingTable } from "./components/ToolRankingTable";
+import {
+  getAgentMetricsDesktopBridge,
+  resolveDesktopSurface,
+  type DesktopSurface
+} from "./desktop-mode";
 import {
   buildScopeLabel,
   DEFAULT_TIME_SCOPE,
@@ -65,17 +71,26 @@ const SOURCE_OPTIONS: Array<{ value: SourceVendor; label: string }> = [
   { value: "all", label: "All" },
   { value: "claude-code", label: "Claude Code" },
   { value: "opencode", label: "OpenCode" },
-  { value: "codex", label: "Codex" }
+  { value: "codex", label: "Codex" },
+  { value: "cursor", label: "Cursor" }
 ];
 
 const SOURCE_LABELS: Record<SourceVendor, string> = {
   all: "All Sources",
   "claude-code": "Claude Code",
   opencode: "OpenCode",
-  codex: "Codex"
+  codex: "Codex",
+  cursor: "Cursor"
 };
 
-export function App() {
+type AppProps = {
+  initialSurface?: DesktopSurface;
+};
+
+export function App({ initialSurface }: AppProps = {}) {
+  const desktopSurface = initialSurface ?? resolveDesktopSurface(window.location.search).surface;
+  const isFloatingSurface = desktopSurface === "desktop-floating";
+  const desktopApi = getAgentMetricsDesktopBridge();
   const [overview, setOverview] = useState<OverviewResponse | null>(null);
   const [baseTools, setBaseTools] = useState<PanelToolsState>(INITIAL_PANEL_TOOLS_STATE);
   const [baseSessions, setBaseSessions] = useState<SessionsState>(INITIAL_SESSIONS_STATE);
@@ -146,6 +161,11 @@ export function App() {
   }, [globalScope, selectedSourceVendor]);
 
   useEffect(() => {
+    if (isFloatingSurface) {
+      setBaseTools(INITIAL_PANEL_TOOLS_STATE);
+      return;
+    }
+
     let active = true;
     setBaseTools((current) => ({
       rows: current.rows,
@@ -192,7 +212,7 @@ export function App() {
       active = false;
       window.clearInterval(timer);
     };
-  }, [globalScope, selectedSourceVendor]);
+  }, [globalScope, isFloatingSurface, selectedSourceVendor]);
 
   useEffect(() => {
     let active = true;
@@ -244,7 +264,7 @@ export function App() {
   }, [globalScope, selectedSourceVendor]);
 
   useEffect(() => {
-    if (!trendOverride) {
+    if (isFloatingSurface || !trendOverride) {
       setTrendTools(INITIAL_PANEL_TOOLS_STATE);
       return;
     }
@@ -295,10 +315,10 @@ export function App() {
       active = false;
       window.clearInterval(timer);
     };
-  }, [trendOverride, selectedSourceVendor]);
+  }, [isFloatingSurface, trendOverride, selectedSourceVendor]);
 
   useEffect(() => {
-    if (!rankingOverride) {
+    if (isFloatingSurface || !rankingOverride) {
       setRankingTools(INITIAL_PANEL_TOOLS_STATE);
       return;
     }
@@ -349,9 +369,16 @@ export function App() {
       active = false;
       window.clearInterval(timer);
     };
-  }, [rankingOverride, selectedSourceVendor]);
+  }, [isFloatingSurface, rankingOverride, selectedSourceVendor]);
 
   useEffect(() => {
+    if (isFloatingSurface) {
+      setSelectedSession(null);
+      setSelectedSessionId(null);
+      setSessionDetailLoading(false);
+      return;
+    }
+
     const sessionRows = baseSessions.rows ?? [];
 
     if (sessionRows.length === 0) {
@@ -364,9 +391,14 @@ export function App() {
     if (!selectedSessionId || !sessionRows.some((row) => row.sessionId === selectedSessionId)) {
       setSelectedSessionId(sessionRows[0]?.sessionId ?? null);
     }
-  }, [baseSessions.rows, selectedSessionId]);
+  }, [baseSessions.rows, isFloatingSurface, selectedSessionId]);
 
   useEffect(() => {
+    if (isFloatingSurface) {
+      setSessionDetailLoading(false);
+      return;
+    }
+
     if (!selectedSessionId) {
       setSessionDetailLoading(false);
       return;
@@ -400,7 +432,7 @@ export function App() {
     return () => {
       active = false;
     };
-  }, [globalScope, selectedSessionId]);
+  }, [globalScope, isFloatingSurface, selectedSessionId]);
 
   const handleSelectSession = useEffectEvent((sessionId: string) => {
     startTransition(() => {
@@ -419,7 +451,7 @@ export function App() {
     setLoadErrorMessage(null);
     setStaleMessage(null);
 
-    if (selectedSessionId) {
+    if (!isFloatingSurface && selectedSessionId) {
       setSessionDetailLoading(true);
     }
   });
@@ -429,17 +461,78 @@ export function App() {
       return;
     }
 
-    setSelectedSourceVendor(sourceVendor);
-    setLoadErrorMessage(null);
-    setStaleMessage(null);
-
-    if (selectedSessionId) {
-      setSessionDetailLoading(true);
-    }
+    startTransition(() => {
+      setSelectedSourceVendor(sourceVendor);
+      setOverview(null);
+      setBaseTools(INITIAL_PANEL_TOOLS_STATE);
+      setBaseSessions(INITIAL_SESSIONS_STATE);
+      setTrendTools(INITIAL_PANEL_TOOLS_STATE);
+      setRankingTools(INITIAL_PANEL_TOOLS_STATE);
+      setSelectedSession(null);
+      setSelectedSessionId(null);
+      setSessionDetailLoading(false);
+      setLoadErrorMessage(null);
+      setStaleMessage(null);
+    });
   });
 
   const scopeLabel = buildScopeLabel(globalScope);
   const sourceLabel = SOURCE_LABELS[selectedSourceVendor];
+  const sessionRows = baseSessions.rows ?? [];
+  const floatingSessionsStatus =
+    baseSessions.rows === null
+      ? baseSessions.loading
+        ? "loading"
+        : baseSessions.errorMessage
+          ? "error"
+          : "ready"
+      : "ready";
+  const floatingSessionsStatusMessage =
+    baseSessions.rows === null ? baseSessions.errorMessage : null;
+  const floatingStatus =
+    overview === null
+      ? loadErrorMessage
+        ? "error"
+        : "loading"
+      : staleMessage
+        ? "stale"
+        : "ready";
+  const floatingStatusMessage = overview === null ? loadErrorMessage : staleMessage;
+  const desktopActionStrip =
+    !isFloatingSurface && desktopApi ? (
+      <div className="desktop-actions" role="group" aria-label="Desktop window actions">
+        <button
+          type="button"
+          className="desktop-action"
+          onClick={() => void desktopApi.toggleFloatingWindow()}
+        >
+          Toggle Floating Window
+        </button>
+        <button
+          type="button"
+          className="desktop-action"
+          onClick={() => void desktopApi.showMainWindow()}
+        >
+          Show Main Window
+        </button>
+        <span className="desktop-runtime-status">Runtime: desktop bridge ready</span>
+      </div>
+    ) : null;
+
+  if (isFloatingSurface) {
+    return (
+      <main className="app-shell app-shell--floating">
+        <FloatingDashboard
+          overview={overview}
+          sessions={sessionRows}
+          status={floatingStatus}
+          statusMessage={floatingStatusMessage}
+          sessionStatus={floatingSessionsStatus}
+          sessionStatusMessage={floatingSessionsStatusMessage}
+        />
+      </main>
+    );
+  }
 
   if (!overview) {
     return (
@@ -478,13 +571,13 @@ export function App() {
               <span>{sourceLabel}</span>
             </div>
           </div>
+          {desktopActionStrip}
         </section>
       </main>
     );
   }
 
   const baseToolRows = baseTools.rows ?? [];
-  const sessionRows = baseSessions.rows ?? [];
   const lastUpdated = formatScopeDateTime(overview.updatedAt, overview.timezone);
   const trendRows = trendOverride ? (trendTools.rows ?? baseToolRows) : baseToolRows;
   const rankingRows = rankingOverride ? (rankingTools.rows ?? baseToolRows) : baseToolRows;
@@ -556,6 +649,7 @@ export function App() {
               ) : null}
             </div>
             {staleMessage ? <p className="hero-copy">{staleMessage}</p> : null}
+            {desktopActionStrip}
             <div className="hero-actions">
               <a className="hero-link" href={buildExportUrl("csv")}>
                 Export CSV

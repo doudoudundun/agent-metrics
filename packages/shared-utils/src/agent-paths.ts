@@ -11,6 +11,8 @@ export type AgentMetricsPaths = {
   transcriptLedgerPath: string;
   opencodeCursorPath: string;
   opencodeLedgerPath: string;
+  cursorIdeStatePath: string;
+  cursorIdeLedgerPath: string;
   codexCursorPath: string;
   codexLedgerPath: string;
 };
@@ -57,6 +59,20 @@ export function getAgentMetricsPaths(repoRoot: string): AgentMetricsPaths {
       "state",
       "opencode-ledger.json"
     ),
+    cursorIdeStatePath: buildAgentMetricsPath(
+      repoRoot,
+      "data",
+      "sources",
+      "state",
+      "cursor-ide-state.json"
+    ),
+    cursorIdeLedgerPath: buildAgentMetricsPath(
+      repoRoot,
+      "data",
+      "sources",
+      "state",
+      "cursor-ide-ledger.json"
+    ),
     codexCursorPath: buildAgentMetricsPath(
       repoRoot,
       "data",
@@ -81,9 +97,17 @@ function buildAgentMetricsPath(repoRoot: string, ...segments: string[]): string 
     return path.replaceAll("\\", "/");
   }
 
+  if (usesBackslashRoot(repoRoot)) {
+    return path.replaceAll("/", "\\");
+  }
+
   return path;
 }
 
 function usesForwardSlashRoot(repoRoot: string): boolean {
   return repoRoot.includes("/") && !repoRoot.includes("\\");
+}
+
+function usesBackslashRoot(repoRoot: string): boolean {
+  return repoRoot.includes("\\") && !repoRoot.includes("/");
 }

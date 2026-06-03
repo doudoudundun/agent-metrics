@@ -1,10 +1,14 @@
 import { mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { handleHookEvent } from "./collect.js";
 import { parseRawHooksOnce } from "./parser.js";
 import { getHookPaths } from "./paths.js";
+
+beforeEach(() => {
+  delete process.env.AGENT_METRICS_CLAUDE_DISCOVERY_ROOTS;
+});
 
 describe("parseRawHooksOnce", () => {
   it("replays raw envelopes, syncs transcript events, and dedupes on rerun", async () => {
@@ -13,6 +17,7 @@ describe("parseRawHooksOnce", () => {
     const transcriptPath = join(repoRoot, "claude-session.jsonl");
 
     await mkdir(join(repoRoot, "src"), { recursive: true });
+    process.env.AGENT_METRICS_CLAUDE_DISCOVERY_ROOTS = join(repoRoot, "missing-claude-projects");
     await writeFile(filePath, "const answer = 1;\n", "utf8");
     await writeClaudeTranscript(transcriptPath, [
       {

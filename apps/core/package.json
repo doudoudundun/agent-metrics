@@ -13,6 +13,7 @@
   "dependencies": {
     "@agent-metrics/adapters-claude": "workspace:*",
     "@agent-metrics/adapters-codex": "workspace:*",
+    "@agent-metrics/adapters-cursor": "workspace:*",
     "@agent-metrics/adapters-opencode": "workspace:*",
     "@agent-metrics/event-schema": "workspace:*",
     "@agent-metrics/export-kit": "workspace:*",

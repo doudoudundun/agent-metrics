@@ -14,6 +14,8 @@ describe("getAgentMetricsPaths", () => {
       transcriptLedgerPath: "D:/projects/dev/agent-metrics/data/hooks/state/transcript-ledger.json",
       opencodeCursorPath: "D:/projects/dev/agent-metrics/data/sources/state/opencode-cursor.json",
       opencodeLedgerPath: "D:/projects/dev/agent-metrics/data/sources/state/opencode-ledger.json",
+      cursorIdeStatePath: "D:/projects/dev/agent-metrics/data/sources/state/cursor-ide-state.json",
+      cursorIdeLedgerPath: "D:/projects/dev/agent-metrics/data/sources/state/cursor-ide-ledger.json",
       codexCursorPath: "D:/projects/dev/agent-metrics/data/sources/state/codex-cursor.json",
       codexLedgerPath: "D:/projects/dev/agent-metrics/data/sources/state/codex-ledger.json"
     });
@@ -36,6 +38,10 @@ describe("getAgentMetricsPaths", () => {
         "D:\\projects\\dev\\agent-metrics\\data\\sources\\state\\opencode-cursor.json",
       opencodeLedgerPath:
         "D:\\projects\\dev\\agent-metrics\\data\\sources\\state\\opencode-ledger.json",
+      cursorIdeStatePath:
+        "D:\\projects\\dev\\agent-metrics\\data\\sources\\state\\cursor-ide-state.json",
+      cursorIdeLedgerPath:
+        "D:\\projects\\dev\\agent-metrics\\data\\sources\\state\\cursor-ide-ledger.json",
       codexCursorPath:
         "D:\\projects\\dev\\agent-metrics\\data\\sources\\state\\codex-cursor.json",
       codexLedgerPath:
@@ -60,6 +66,10 @@ describe("getAgentMetricsPaths", () => {
         "\\\\server\\share\\repo\\data\\sources\\state\\opencode-cursor.json",
       opencodeLedgerPath:
         "\\\\server\\share\\repo\\data\\sources\\state\\opencode-ledger.json",
+      cursorIdeStatePath:
+        "\\\\server\\share\\repo\\data\\sources\\state\\cursor-ide-state.json",
+      cursorIdeLedgerPath:
+        "\\\\server\\share\\repo\\data\\sources\\state\\cursor-ide-ledger.json",
       codexCursorPath:
         "\\\\server\\share\\repo\\data\\sources\\state\\codex-cursor.json",
       codexLedgerPath:

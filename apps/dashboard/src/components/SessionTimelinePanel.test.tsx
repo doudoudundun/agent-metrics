@@ -9,6 +9,14 @@ describe("SessionTimelinePanel", () => {
       <SessionTimelinePanel
         detail={{
           sessionId: "ses_1",
+          workspacePath: "D:/projects/dev/agent-metrics",
+          sourceVendor: "claude-code",
+          sourceAdapter: "claude-transcript",
+          context: {
+            executionPath: "D:/projects/dev/agent-metrics/.claude/tmp",
+            skillsLoaded: true,
+            skillNames: ["commit-analyzer"]
+          },
           timeline: [
             {
               createdAt: "2026-05-25T08:00:00.000Z",

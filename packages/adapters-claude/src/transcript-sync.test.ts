@@ -1,5 +1,5 @@
-import { appendFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
 import { getAgentMetricsPaths } from "@agent-metrics/shared-utils";
@@ -59,14 +59,16 @@ describe("syncKnownClaudeTranscripts", () => {
       manifestPath: paths.transcriptManifestPath,
       eventLogPath: paths.eventLogPath,
       transcriptCursorPath: paths.transcriptCursorPath,
-      transcriptLedgerPath: paths.transcriptLedgerPath
+      transcriptLedgerPath: paths.transcriptLedgerPath,
+      discoveryRoots: []
     });
 
     await syncKnownClaudeTranscripts({
       manifestPath: paths.transcriptManifestPath,
       eventLogPath: paths.eventLogPath,
       transcriptCursorPath: paths.transcriptCursorPath,
-      transcriptLedgerPath: paths.transcriptLedgerPath
+      transcriptLedgerPath: paths.transcriptLedgerPath,
+      discoveryRoots: []
     });
 
     const eventLines = await readJsonLines(paths.eventLogPath);
@@ -129,7 +131,8 @@ describe("syncKnownClaudeTranscripts", () => {
       manifestPath: paths.transcriptManifestPath,
       eventLogPath: paths.eventLogPath,
       transcriptCursorPath: paths.transcriptCursorPath,
-      transcriptLedgerPath: paths.transcriptLedgerPath
+      transcriptLedgerPath: paths.transcriptLedgerPath,
+      discoveryRoots: []
     });
 
     await appendClaudeTranscript(transcriptPath, [
@@ -170,7 +173,8 @@ describe("syncKnownClaudeTranscripts", () => {
       manifestPath: paths.transcriptManifestPath,
       eventLogPath: paths.eventLogPath,
       transcriptCursorPath: paths.transcriptCursorPath,
-      transcriptLedgerPath: paths.transcriptLedgerPath
+      transcriptLedgerPath: paths.transcriptLedgerPath,
+      discoveryRoots: []
     });
 
     const eventLines = await readJsonLines(paths.eventLogPath);
@@ -217,7 +221,8 @@ describe("syncKnownClaudeTranscripts", () => {
       manifestPath: paths.transcriptManifestPath,
       eventLogPath: paths.eventLogPath,
       transcriptCursorPath: paths.transcriptCursorPath,
-      transcriptLedgerPath: paths.transcriptLedgerPath
+      transcriptLedgerPath: paths.transcriptLedgerPath,
+      discoveryRoots: []
     });
 
     expect(await readJsonLines(paths.eventLogPath)).toHaveLength(1);
@@ -232,7 +237,8 @@ describe("syncKnownClaudeTranscripts", () => {
       manifestPath: paths.transcriptManifestPath,
       eventLogPath: paths.eventLogPath,
       transcriptCursorPath: paths.transcriptCursorPath,
-      transcriptLedgerPath: paths.transcriptLedgerPath
+      transcriptLedgerPath: paths.transcriptLedgerPath,
+      discoveryRoots: []
     });
 
     const eventLines = await readJsonLines(paths.eventLogPath);
@@ -327,7 +333,8 @@ describe("syncKnownClaudeTranscripts", () => {
       manifestPath: paths.transcriptManifestPath,
       eventLogPath: paths.eventLogPath,
       transcriptCursorPath: paths.transcriptCursorPath,
-      transcriptLedgerPath: paths.transcriptLedgerPath
+      transcriptLedgerPath: paths.transcriptLedgerPath,
+      discoveryRoots: []
     });
 
     await rm(paths.transcriptCursorPath);
@@ -337,10 +344,104 @@ describe("syncKnownClaudeTranscripts", () => {
       manifestPath: paths.transcriptManifestPath,
       eventLogPath: paths.eventLogPath,
       transcriptCursorPath: paths.transcriptCursorPath,
-      transcriptLedgerPath: paths.transcriptLedgerPath
+      transcriptLedgerPath: paths.transcriptLedgerPath,
+      discoveryRoots: []
     });
 
     expect(await readJsonLines(paths.eventLogPath)).toHaveLength(3);
+  });
+
+  it("discovers background sdk-cli transcripts and extracts execution-path and skill metadata", async () => {
+    const repoRoot = await mkdtemp(join(tmpdir(), "agent-metrics-transcript-discovery-"));
+    const workspacePath = join(repoRoot, "master_os170");
+    const executionPath = join(workspacePath, ".claude", "tmp");
+    const transcriptRoot = join(repoRoot, ".claude", "projects");
+    const transcriptPath = join(transcriptRoot, "master_os170--claude-tmp", "session.jsonl");
+    const paths = getAgentMetricsPaths(repoRoot);
+
+    await writeClaudeTranscript(transcriptPath, [
+      {
+        type: "user",
+        sessionId: "ses_background_1",
+        cwd: executionPath,
+        promptId: "prompt_1",
+        timestamp: "2026-05-29T10:00:00.000Z",
+        message: {
+          role: "user",
+          content: "Analyze recent commits"
+        }
+      },
+      {
+        type: "assistant",
+        sessionId: "ses_background_1",
+        cwd: executionPath,
+        timestamp: "2026-05-29T10:00:02.000Z",
+        message: {
+          id: "msg_1",
+          role: "assistant",
+          model: "claude-sonnet",
+          stop_reason: "end_turn",
+          content: [
+            {
+              type: "tool_result",
+              content: [
+                {
+                  type: "skill_listing",
+                  skills: [
+                    { name: "commit-analyzer" },
+                    { id: "project-rules" }
+                  ]
+                }
+              ]
+            },
+            { type: "text", text: "Analysis complete." }
+          ],
+          usage: {
+            input_tokens: 42,
+            output_tokens: 8,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 3,
+            server_tool_use: { web_search_requests: 0 }
+          }
+        }
+      }
+    ]);
+
+    const result = await syncKnownClaudeTranscripts({
+      manifestPath: paths.transcriptManifestPath,
+      eventLogPath: paths.eventLogPath,
+      transcriptCursorPath: paths.transcriptCursorPath,
+      transcriptLedgerPath: paths.transcriptLedgerPath,
+      discoveryRoots: [transcriptRoot]
+    });
+
+    expect(await readJsonLines(paths.eventLogPath)).toHaveLength(3);
+    expect(result.sessionContexts).toEqual([
+      {
+        sessionId: "ses_background_1",
+        workspacePath,
+        executionPath,
+        skillsLoaded: true,
+        skillNames: ["commit-analyzer", "project-rules"],
+        sourceAdapter: "claude-transcript",
+        sourceVendor: "claude-code",
+        updatedAt: "2026-05-29T10:00:02.000Z"
+      }
+    ]);
+
+    const manifest = JSON.parse(await readFile(paths.transcriptManifestPath, "utf8")) as Array<{
+      transcriptPath: string;
+      workspacePath: string;
+      sessionId?: string;
+    }>;
+
+    expect(manifest).toEqual([
+      {
+        transcriptPath,
+        workspacePath,
+        sessionId: "ses_background_1"
+      }
+    ]);
   });
 });
 
@@ -349,6 +450,7 @@ async function writeClaudeTranscript(
   rows: Array<Record<string, unknown>>
 ): Promise<void> {
   const contents = rows.map((row) => JSON.stringify(row)).join("\n") + "\n";
+  await mkdir(dirname(transcriptPath), { recursive: true });
   await writeFile(transcriptPath, contents, "utf8");
 }
 

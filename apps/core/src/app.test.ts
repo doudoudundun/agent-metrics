@@ -39,12 +39,20 @@ beforeEach(async () => {
   vi.restoreAllMocks();
   delete process.env.AGENT_METRICS_OPENCODE_DB_PATH;
   delete process.env.AGENT_METRICS_OPENCODE_MODELS_PATH;
+  delete process.env.AGENT_METRICS_CLAUDE_DISCOVERY_ROOTS;
+  delete process.env.AGENT_METRICS_CURSOR_TRACKING_DB_PATH;
+  delete process.env.AGENT_METRICS_CURSOR_WORKSPACE_STORAGE_ROOT;
+  delete process.env.AGENT_METRICS_CURSOR_STORAGE_JSON_PATH;
   delete process.env.AGENT_METRICS_CODEX_SESSIONS_ROOT;
   delete process.env.AGENT_METRICS_CODEX_LOGS_DB_PATH;
   delete process.env.AGENT_METRICS_CODEX_CONFIG_PATH;
   const root = await mkdtemp(join(tmpdir(), "agent-metrics-core-"));
   process.env.AGENT_METRICS_OPENCODE_DB_PATH = join(root, "missing-opencode.db");
   process.env.AGENT_METRICS_OPENCODE_MODELS_PATH = join(root, "missing-models.json");
+  process.env.AGENT_METRICS_CLAUDE_DISCOVERY_ROOTS = join(root, "missing-claude-projects");
+  process.env.AGENT_METRICS_CURSOR_TRACKING_DB_PATH = join(root, "missing-cursor-tracking.db");
+  process.env.AGENT_METRICS_CURSOR_WORKSPACE_STORAGE_ROOT = join(root, "missing-cursor-workspace-storage");
+  process.env.AGENT_METRICS_CURSOR_STORAGE_JSON_PATH = join(root, "missing-cursor-storage.json");
   process.env.AGENT_METRICS_CODEX_SESSIONS_ROOT = join(root, "missing-codex-sessions");
   process.env.AGENT_METRICS_CODEX_LOGS_DB_PATH = join(root, "missing-logs_2.sqlite");
   process.env.AGENT_METRICS_CODEX_CONFIG_PATH = join(root, "missing-config.toml");
@@ -473,6 +481,7 @@ describe("ingestEventLog", () => {
     vi.spyOn(claudeAdapter, "syncKnownClaudeTranscripts").mockImplementation(async () => {
       syncCount += 1;
       await waitForRelease;
+      return { sessionContexts: [] };
     });
 
     const app = buildApp({
@@ -753,7 +762,7 @@ describe("ingestEventLog", () => {
           count: 1
         }),
         expect.objectContaining({
-          toolName: "Shell",
+          toolName: "Git",
           count: 1
         })
       ])
@@ -790,7 +799,7 @@ describe("ingestEventLog", () => {
         expect.objectContaining({
           type: "tool.succeeded",
           sourceVendor: "codex",
-          toolName: "PowerShell",
+          toolName: "git",
           durationMs: 2285
         }),
         expect.objectContaining({
@@ -1663,11 +1672,32 @@ describe("core api", () => {
 
     const app = buildApp({ dbPath });
     await ingestEventLog({ app, eventLogPath: logPath });
+    app.db
+      .prepare(
+        "INSERT INTO session_contexts (session_id, source_vendor, source_adapter, execution_path, skills_loaded, skill_names_json, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+      )
+      .run(
+        "ses_detail_1",
+        "claude-code",
+        "claude-transcript",
+        "D:/projects/dev/agent-metrics/.claude/tmp",
+        1,
+        JSON.stringify(["commit-analyzer"]),
+        "2026-05-25T08:00:01.500Z"
+      );
     const response = await app.inject({ method: "GET", url: "/api/sessions/ses_detail_1" });
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({
       sessionId: "ses_detail_1",
+      workspacePath: "D:/projects/dev/agent-metrics",
+      sourceVendor: "claude-code",
+      sourceAdapter: "claude-hook",
+      context: {
+        executionPath: "D:/projects/dev/agent-metrics/.claude/tmp",
+        skillsLoaded: true,
+        skillNames: ["commit-analyzer"]
+      },
       timeline: [
         {
           createdAt: "2026-05-25T08:00:00.000Z",

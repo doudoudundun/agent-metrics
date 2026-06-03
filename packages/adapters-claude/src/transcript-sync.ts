@@ -1,10 +1,13 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { mkdir, open, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { delimiter, dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { appendJsonLine } from "@agent-metrics/shared-utils";
 import {
   extractClaudeTranscriptObservations,
+  extractClaudeTranscriptSessionContext,
+  type ClaudeSessionContext,
   normalizeClaudeTranscriptObservation,
   type ClaudeTranscriptObservation
 } from "./transcript.js";
@@ -65,12 +68,26 @@ export async function syncKnownClaudeTranscripts(input: {
   eventLogPath: string;
   transcriptCursorPath: string;
   transcriptLedgerPath: string;
-}): Promise<void> {
-  await withTranscriptStateLock(input.manifestPath, async () => {
+  discoveryRoots?: string[];
+}): Promise<{
+  sessionContexts: ClaudeSessionContext[];
+}> {
+  return await withTranscriptStateLock(input.manifestPath, async () => {
     const manifest = await loadTranscriptManifest(input.manifestPath);
+    const discoveryRoots = input.discoveryRoots ?? resolveDefaultClaudeDiscoveryRoots(input.manifestPath);
+    const discoveredReferences = await discoverClaudeTranscriptReferences(discoveryRoots);
+    const mergedManifest = mergeTranscriptReferences(manifest, discoveredReferences);
+    const manifestChanged = !isSameManifest(mergedManifest, manifest);
+    const activeManifest = manifestChanged ? mergedManifest : manifest;
 
-    if (manifest.length === 0) {
-      return;
+    if (manifestChanged) {
+      await writeJsonFileAtomic(input.manifestPath, activeManifest);
+    }
+
+    if (activeManifest.length === 0) {
+      return {
+        sessionContexts: []
+      };
     }
 
     const cursors = await loadTranscriptCursors(input.transcriptCursorPath);
@@ -85,7 +102,9 @@ export async function syncKnownClaudeTranscripts(input: {
     let cursorsChanged = false;
     let ledgerChanged = seenKeys.size !== baselineLedgerSize;
 
-    for (const reference of manifest) {
+    const sessionContexts = new Map<string, ClaudeSessionContext>();
+
+    for (const reference of activeManifest) {
       const syncResult = await syncTranscriptReference({
         eventLogPath: input.eventLogPath,
         reference,
@@ -101,6 +120,10 @@ export async function syncKnownClaudeTranscripts(input: {
       if (syncResult.ledgerChanged) {
         ledgerChanged = true;
       }
+
+      if (syncResult.sessionContext) {
+        mergeSessionContext(sessionContexts, syncResult.sessionContext);
+      }
     }
 
     if (cursorsChanged) {
@@ -112,6 +135,12 @@ export async function syncKnownClaudeTranscripts(input: {
         keys: [...seenKeys].sort()
       } satisfies TranscriptLedger);
     }
+
+    return {
+      sessionContexts: [...sessionContexts.values()].sort((left, right) =>
+        left.sessionId.localeCompare(right.sessionId)
+      )
+    };
   });
 }
 
@@ -124,6 +153,7 @@ async function syncTranscriptReference(input: {
   cursor: TranscriptCursor;
   cursorChanged: boolean;
   ledgerChanged: boolean;
+  sessionContext: ClaudeSessionContext | null;
 }> {
   const previousCursor = normalizeTranscriptCursor(input.cursor);
   let fileContents: Buffer;
@@ -134,9 +164,12 @@ async function syncTranscriptReference(input: {
     return {
       cursor: previousCursor,
       cursorChanged: false,
-      ledgerChanged: false
+      ledgerChanged: false,
+      sessionContext: null
     };
   }
+
+  const sessionContext = summarizeSessionContext(fileContents, input.reference);
 
   const cursor =
     previousCursor.offset > fileContents.length
@@ -183,7 +216,8 @@ async function syncTranscriptReference(input: {
     cursor: nextCursor,
     cursorChanged:
       nextCursor.offset !== previousCursor.offset || nextCursor.remainder !== previousCursor.remainder,
-    ledgerChanged
+    ledgerChanged,
+    sessionContext
   };
 }
 
@@ -206,8 +240,35 @@ function parseTranscriptLine(
   return {
     ...parsed,
     sessionId: coalesceString(parsed.sessionId, parsed.session_id, reference.sessionId),
-    cwd: coalesceString(parsed.cwd, parsed.workspace_path, reference.workspacePath)
+    cwd: coalesceString(parsed.cwd, parsed.execution_path, parsed.workspace_path, reference.workspacePath)
   };
+}
+
+function summarizeSessionContext(
+  fileContents: Buffer,
+  reference: ClaudeTranscriptReference
+): ClaudeSessionContext | null {
+  const lines = fileContents
+    .toString("utf8")
+    .split(/\r?\n/u)
+    .filter((line) => line.length > 0);
+  let current: ClaudeSessionContext | null = null;
+
+  for (const line of lines) {
+    const record = parseTranscriptLine(line, reference);
+    if (record === null) {
+      continue;
+    }
+
+    const next = extractClaudeTranscriptSessionContext(record);
+    if (next === null) {
+      continue;
+    }
+
+    current = current === null ? next : combineSessionContext(current, next);
+  }
+
+  return current;
 }
 
 function buildLedgerKey(observation: ClaudeTranscriptObservation): string {
@@ -248,6 +309,51 @@ async function loadTranscriptManifest(manifestPath: string): Promise<ClaudeTrans
         }
       ];
     });
+}
+
+function mergeTranscriptReferences(
+  existing: ClaudeTranscriptReference[],
+  discovered: ClaudeTranscriptReference[]
+): ClaudeTranscriptReference[] {
+  const merged = new Map(existing.map((entry) => [entry.transcriptPath, entry] as const));
+
+  for (const entry of discovered) {
+    const current = merged.get(entry.transcriptPath);
+
+    if (!current) {
+      merged.set(entry.transcriptPath, entry);
+      continue;
+    }
+
+    merged.set(entry.transcriptPath, {
+      transcriptPath: entry.transcriptPath,
+      workspacePath: entry.workspacePath,
+      sessionId: entry.sessionId ?? current.sessionId
+    });
+  }
+
+  return [...merged.values()].sort((left, right) =>
+    left.transcriptPath.localeCompare(right.transcriptPath)
+  );
+}
+
+function isSameManifest(
+  left: ClaudeTranscriptReference[],
+  right: ClaudeTranscriptReference[]
+): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  return left.every((entry, index) => {
+    const other = right[index];
+    return (
+      other &&
+      entry.transcriptPath === other.transcriptPath &&
+      entry.workspacePath === other.workspacePath &&
+      entry.sessionId === other.sessionId
+    );
+  });
 }
 
 async function loadTranscriptCursors(cursorPath: string): Promise<TranscriptCursorMap> {
@@ -358,6 +464,87 @@ function createEmptyTranscriptCursor(): TranscriptCursor {
   };
 }
 
+async function discoverClaudeTranscriptReferences(
+  roots: string[]
+): Promise<ClaudeTranscriptReference[]> {
+  const discovered: ClaudeTranscriptReference[] = [];
+
+  for (const root of roots) {
+    for (const transcriptPath of await collectTranscriptFiles(root)) {
+      const reference = await createTranscriptReferenceFromFile(transcriptPath);
+      if (reference) {
+        discovered.push(reference);
+      }
+    }
+  }
+
+  return discovered;
+}
+
+async function collectTranscriptFiles(root: string): Promise<string[]> {
+  const files: string[] = [];
+
+  try {
+    const entries = await readdir(root, { withFileTypes: true });
+
+    for (const entry of entries) {
+      const entryPath = join(root, entry.name);
+
+      if (entry.isDirectory()) {
+        files.push(...(await collectTranscriptFiles(entryPath)));
+        continue;
+      }
+
+      if (entry.isFile() && entry.name.endsWith(".jsonl")) {
+        files.push(entryPath);
+      }
+    }
+  } catch {
+    return files;
+  }
+
+  return files;
+}
+
+async function createTranscriptReferenceFromFile(
+  transcriptPath: string
+): Promise<ClaudeTranscriptReference | null> {
+  let fileContents: Buffer;
+
+  try {
+    fileContents = await readFile(transcriptPath);
+  } catch {
+    return null;
+  }
+
+  const context = summarizeSessionContext(fileContents, {
+    transcriptPath,
+    workspacePath: dirname(transcriptPath)
+  });
+
+  if (context === null) {
+    return null;
+  }
+
+  return {
+    transcriptPath,
+    workspacePath: context.workspacePath,
+    sessionId: context.sessionId
+  };
+}
+
+function resolveDefaultClaudeDiscoveryRoots(manifestPath: string): string[] {
+  const configuredRoots = process.env.AGENT_METRICS_CLAUDE_DISCOVERY_ROOTS;
+  if (configuredRoots !== undefined) {
+    return configuredRoots
+      .split(delimiter)
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0);
+  }
+
+  return [join(homedir(), ".claude", "projects")];
+}
+
 async function readJsonFile(filePath: string): Promise<unknown> {
   try {
     return JSON.parse(await readFile(filePath, "utf8")) as unknown;
@@ -392,6 +579,30 @@ function coalesceString(...values: Array<unknown>): string | undefined {
   }
 
   return undefined;
+}
+
+function mergeSessionContext(
+  contexts: Map<string, ClaudeSessionContext>,
+  next: ClaudeSessionContext
+): void {
+  const current = contexts.get(next.sessionId);
+  contexts.set(next.sessionId, current ? combineSessionContext(current, next) : next);
+}
+
+function combineSessionContext(
+  left: ClaudeSessionContext,
+  right: ClaudeSessionContext
+): ClaudeSessionContext {
+  return {
+    sessionId: right.sessionId,
+    workspacePath: right.workspacePath,
+    executionPath: right.updatedAt >= left.updatedAt ? right.executionPath : left.executionPath,
+    skillsLoaded: left.skillsLoaded || right.skillsLoaded,
+    skillNames: [...new Set([...left.skillNames, ...right.skillNames])].sort(),
+    sourceVendor: right.sourceVendor,
+    sourceAdapter: right.sourceAdapter,
+    updatedAt: right.updatedAt >= left.updatedAt ? right.updatedAt : left.updatedAt
+  };
 }
 
 function normalizeOptionalString(value: unknown): string | undefined {

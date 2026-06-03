@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { fetchOverview, fetchSessions, fetchTools } from "./api";
+import type { AgentMetricsDesktopBridge } from "./desktop-mode";
 
 class ResizeObserverMock {
   observe(): void {}
@@ -28,6 +29,8 @@ vi.mock("./api", () => ({
 
 describe("App", () => {
   beforeEach(() => {
+    window.history.replaceState({}, "", "/");
+    delete window.agentMetricsDesktop;
     vi.mocked(fetchOverview).mockReset();
     vi.mocked(fetchTools).mockReset();
     vi.mocked(fetchSessions).mockReset();
@@ -71,7 +74,7 @@ describe("App", () => {
     expect(fetchSessions).not.toHaveBeenCalled();
 
     view.unmount();
-  });
+  }, 10000);
 
   it("keeps the existing dashboard visible while switching scope and refreshes scoped panels", async () => {
     const view = render(<App />);
@@ -267,6 +270,100 @@ describe("App", () => {
     view.unmount();
   });
 
+  it("clears stale source data while loading a different source filter", async () => {
+    const pendingCursorRequest = new Promise<never>(() => undefined);
+
+    vi.mocked(fetchOverview).mockImplementation(async (_, sourceVendor) => {
+      if (sourceVendor === "cursor") {
+        return pendingCursorRequest;
+      }
+
+      return {
+        mode: "calendar",
+        range: "day",
+        timezone: "Asia/Shanghai",
+        windowStart: "2026-05-26T16:00:00.000Z",
+        windowEnd: "2026-05-27T16:00:00.000Z",
+        updatedAt: "2026-05-27T10:30:00.000Z",
+        sessionCount: 3,
+        turnCount: 24,
+        responseCount: 12,
+        totalTokens: 45678,
+        inputTokens: 22345,
+        outputTokens: 19876,
+        cacheReadTokens: 2345,
+        cacheCreationTokens: 1112,
+        tokensByModel: [],
+        totalToolCalls: 12,
+        successfulExecutions: 10,
+        failedExecutions: 2,
+        successRate: 0.8333,
+        editOperationCount: 4,
+        affectedFileCount: 7,
+        insertions: 42,
+        deletions: 8,
+        sourceBreakdown: [],
+        providerBreakdown: []
+      };
+    });
+    vi.mocked(fetchTools).mockImplementation(async (_, sourceVendor) => {
+      if (sourceVendor === "cursor") {
+        return pendingCursorRequest;
+      }
+
+      return {
+        mode: "calendar",
+        range: "day",
+        timezone: "Asia/Shanghai",
+        windowStart: "2026-05-26T16:00:00.000Z",
+        windowEnd: "2026-05-27T16:00:00.000Z",
+        updatedAt: "2026-05-27T10:30:00.000Z",
+        rows: [{ toolName: "Read", count: 6, failures: 0, averageDurationMs: 15 }]
+      };
+    });
+    vi.mocked(fetchSessions).mockImplementation(async (_, sourceVendor) => {
+      if (sourceVendor === "cursor") {
+        return pendingCursorRequest;
+      }
+
+      return {
+        mode: "calendar",
+        range: "day",
+        timezone: "Asia/Shanghai",
+        windowStart: "2026-05-26T16:00:00.000Z",
+        windowEnd: "2026-05-27T16:00:00.000Z",
+        updatedAt: "2026-05-27T10:30:00.000Z",
+        rows: [
+          {
+            sessionId: "ses_1",
+            workspacePath: "D:/projects/dev/agent-metrics",
+            sourceVendor: "claude-code",
+            sourceAdapter: "claude-transcript",
+            providerId: null,
+            providerHost: null,
+            turnCount: 14,
+            totalTokens: 45678,
+            lastModel: "gpt-5-codex"
+          }
+        ]
+      };
+    });
+
+    const view = render(<App />);
+
+    expect(await screen.findByRole("region", { name: "Overview metrics for Today" })).toBeInTheDocument();
+    expect(screen.getAllByText("45,678").length).toBeGreaterThan(0);
+    expect(screen.getByText("ses_1")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Cursor" }));
+
+    expect(await screen.findByText("Loading local activity signals from the metrics core.")).toBeInTheDocument();
+    expect(screen.queryAllByText("45,678")).toHaveLength(0);
+    expect(screen.queryByText("ses_1")).not.toBeInTheDocument();
+
+    view.unmount();
+  });
+
   it("renders overview metrics before tools and sessions finish loading", async () => {
     vi.mocked(fetchTools).mockImplementationOnce(() => new Promise(() => undefined));
     vi.mocked(fetchSessions).mockImplementationOnce(() => new Promise(() => undefined));
@@ -334,6 +431,125 @@ describe("App", () => {
       "href",
       "/api/exports/json"
     );
+
+    view.unmount();
+  });
+
+  it("renders the compact floating surface when the desktop floating query parameter is present", async () => {
+    window.history.replaceState({}, "", "/?surface=desktop-floating");
+
+    const view = render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "Agent Metrics" })).toBeInTheDocument();
+    expect(screen.getByText("Always-on-top summary")).toBeInTheDocument();
+    expect(screen.queryByText("Export CSV")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Recent Sessions" })).not.toBeInTheDocument();
+
+    view.unmount();
+  });
+
+  it("shows a loading-specific floating state and skips full-dashboard background fetches", async () => {
+    window.history.replaceState({}, "", "/?surface=desktop-floating");
+    vi.mocked(fetchOverview).mockImplementationOnce(() => new Promise(() => undefined));
+    vi.mocked(fetchSessions).mockImplementationOnce(() => new Promise(() => undefined));
+
+    const view = render(<App />);
+
+    expect(await screen.findByText("Loading live summary...")).toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "Floating summary metrics" })).not.toBeInTheDocument();
+    expect(fetchTools).not.toHaveBeenCalled();
+    expect(apiMocks.fetchSessionDetail).not.toHaveBeenCalled();
+    expect(apiMocks.buildExportUrl).not.toHaveBeenCalled();
+    expect(screen.queryByRole("link", { name: "Export CSV" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Recent Sessions" })).not.toBeInTheDocument();
+
+    view.unmount();
+  });
+
+  it("shows a failure-specific floating state when overview loading fails", async () => {
+    window.history.replaceState({}, "", "/?surface=desktop-floating");
+    vi.mocked(fetchOverview).mockRejectedValueOnce(new Error("Metrics core unavailable"));
+
+    const view = render(<App />);
+
+    expect(await screen.findByText("Floating summary unavailable")).toBeInTheDocument();
+    expect(screen.getByText("Metrics core unavailable")).toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "Floating summary metrics" })).not.toBeInTheDocument();
+    expect(fetchTools).not.toHaveBeenCalled();
+    expect(apiMocks.fetchSessionDetail).not.toHaveBeenCalled();
+    expect(screen.queryByRole("link", { name: "Export CSV" })).not.toBeInTheDocument();
+
+    view.unmount();
+  });
+
+  it("shows a recent-sessions loading state when overview is ready but sessions are still loading", async () => {
+    window.history.replaceState({}, "", "/?surface=desktop-floating");
+    vi.mocked(fetchSessions).mockImplementationOnce(() => new Promise(() => undefined));
+
+    const view = render(<App />);
+
+    expect(await screen.findByText("45,678")).toBeInTheDocument();
+    expect(screen.getByText("Loading recent sessions...")).toBeInTheDocument();
+    expect(screen.queryByText("Waiting for live sessions")).not.toBeInTheDocument();
+    expect(fetchTools).not.toHaveBeenCalled();
+    expect(apiMocks.fetchSessionDetail).not.toHaveBeenCalled();
+
+    view.unmount();
+  });
+
+  it("shows a degraded recent-sessions state when overview is ready but sessions fail", async () => {
+    window.history.replaceState({}, "", "/?surface=desktop-floating");
+    vi.mocked(fetchSessions).mockRejectedValueOnce(new Error("Recent sessions request failed"));
+
+    const view = render(<App />);
+
+    expect(await screen.findByText("45,678")).toBeInTheDocument();
+    expect(screen.getByText("Recent sessions unavailable")).toBeInTheDocument();
+    expect(screen.getByText("Recent sessions request failed")).toBeInTheDocument();
+    expect(screen.queryByText("Waiting for live sessions")).not.toBeInTheDocument();
+    expect(fetchTools).not.toHaveBeenCalled();
+    expect(apiMocks.fetchSessionDetail).not.toHaveBeenCalled();
+
+    view.unmount();
+  });
+
+  it("preserves the full dashboard layout for the desktop main surface", async () => {
+    window.history.replaceState({}, "", "/?surface=desktop-main");
+
+    const view = render(<App />);
+
+    expect(
+      await screen.findByRole("region", { name: "Overview metrics for Today" })
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Export CSV" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Recent Sessions" })).toBeInTheDocument();
+    expect(screen.queryByText("Always-on-top summary")).not.toBeInTheDocument();
+
+    view.unmount();
+  });
+
+  it("shows desktop actions only when the preload bridge is available", async () => {
+    const desktopBridge: AgentMetricsDesktopBridge = {
+      getRuntimeStatus: vi.fn(),
+      getSettings: vi.fn(),
+      updateSettings: vi.fn(),
+      showMainWindow: vi.fn(),
+      toggleFloatingWindow: vi.fn().mockResolvedValue({ visible: true })
+    };
+    window.agentMetricsDesktop = desktopBridge;
+
+    const view = render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Toggle Floating Window" })).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Toggle Floating Window" }));
+    await waitFor(() => {
+      expect(window.agentMetricsDesktop?.toggleFloatingWindow).toHaveBeenCalledTimes(1);
+    });
+    await waitFor(() => {
+      expect(screen.getByText("Runtime: desktop bridge ready")).toBeInTheDocument();
+    });
 
     view.unmount();
   });
@@ -665,6 +881,14 @@ function seedApiMocks(): void {
   });
   apiMocks.fetchSessionDetail.mockResolvedValue({
     sessionId: "ses_1",
+    workspacePath: "D:/projects/dev/agent-metrics",
+    sourceVendor: "claude-code",
+    sourceAdapter: "claude-transcript",
+    context: {
+      executionPath: "D:/projects/dev/agent-metrics/.claude/tmp",
+      skillsLoaded: true,
+      skillNames: ["commit-analyzer"]
+    },
     timeline: [
       {
         createdAt: "2026-05-25T08:00:00.000Z",

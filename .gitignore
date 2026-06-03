@@ -4,6 +4,8 @@ coverage/
 .vite/
 .DS_Store
 .runtime/
+apps/desktop/.runtime-bundle/
+apps/desktop/release/
 data/events/*.jsonl
 **/data/events/*.jsonl
 data/sqlite/*.db

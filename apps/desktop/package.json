@@ -1,0 +1,50 @@
+{
+  "name": "@agent-metrics/desktop",
+  "productName": "Agent Metrics",
+  "version": "0.0.0",
+  "description": "Desktop dashboard shell for local-first agent telemetry.",
+  "author": "OpenAI Codex",
+  "private": true,
+  "type": "module",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "corepack pnpm build && electron dist/main.js",
+    "prepare-runtime": "node ./scripts/stage-runtime.mjs",
+    "test": "vitest run src",
+    "package:mac": "corepack pnpm prepare-runtime && electron-builder --mac dir --arm64",
+    "package:mac:x64": "corepack pnpm prepare-runtime && electron-builder --mac dir --x64",
+    "package:mac:arm64": "corepack pnpm prepare-runtime && electron-builder --mac dir --arm64",
+    "package:win": "corepack pnpm prepare-runtime && electron-builder --win dir --x64",
+    "package:win:x64": "corepack pnpm prepare-runtime && electron-builder --win dir --x64",
+    "package:win:arm64": "corepack pnpm prepare-runtime && electron-builder --win dir --arm64"
+  },
+  "build": {
+    "appId": "dev.agentmetrics.desktop",
+    "productName": "Agent Metrics",
+    "executableName": "AgentMetrics",
+    "electronDownload": {
+      "mirror": "https://npmmirror.com/mirrors/electron/"
+    },
+    "files": ["dist/**/*"],
+    "extraResources": [
+      {
+        "from": ".runtime-bundle",
+        "to": "runtime"
+      }
+    ],
+    "mac": {
+      "target": ["dir"]
+    },
+    "win": {
+      "target": ["dir"]
+    },
+    "directories": {
+      "output": "release"
+    }
+  },
+  "devDependencies": {
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8"
+  }
+}

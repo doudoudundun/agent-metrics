@@ -5,8 +5,16 @@
   "scripts": {
     "build": "corepack pnpm -r build",
     "dev": "corepack pnpm --parallel --filter @agent-metrics/core --filter @agent-metrics/dashboard dev",
+    "dev:desktop": "corepack pnpm --parallel --filter @agent-metrics/core --filter @agent-metrics/dashboard --filter @agent-metrics/desktop dev",
     "lint": "corepack pnpm -r exec tsc --noEmit",
-    "test": "corepack pnpm -r test"
+    "test": "corepack pnpm -r test",
+    "test:desktop": "corepack pnpm --filter @agent-metrics/desktop test",
+    "package:desktop:mac": "corepack pnpm --filter @agent-metrics/desktop package:mac",
+    "package:desktop:mac:x64": "corepack pnpm --filter @agent-metrics/desktop package:mac:x64",
+    "package:desktop:mac:arm64": "corepack pnpm --filter @agent-metrics/desktop package:mac:arm64",
+    "package:desktop:win": "corepack pnpm --filter @agent-metrics/desktop package:win",
+    "package:desktop:win:x64": "corepack pnpm --filter @agent-metrics/desktop package:win:x64",
+    "package:desktop:win:arm64": "corepack pnpm --filter @agent-metrics/desktop package:win:arm64"
   },
   "pnpm": {
     "onlyBuiltDependencies": ["better-sqlite3", "esbuild"]

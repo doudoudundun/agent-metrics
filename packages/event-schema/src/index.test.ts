@@ -235,6 +235,38 @@ describe("AnyEventSchema", () => {
     expect(unionResult.success).toBe(true);
   });
 
+  it("parses Cursor source events and usage sources", () => {
+    const sessionResult = SessionStartedEventSchema.safeParse({
+      event_id: "cursor:session:cmp_1:started",
+      session_id: "cmp_1",
+      timestamp: "2026-05-29T10:00:00.000Z",
+      source_vendor: "cursor",
+      source_adapter: "cursor-ide",
+      workspace_path: "/Users/test/dev/agent-metrics",
+      type: "session.started"
+    });
+    const usageResult = TokenUsageRecordedEventSchema.safeParse({
+      event_id: "cursor:usage:msg_1",
+      session_id: "cmp_1",
+      timestamp: "2026-05-29T10:00:05.000Z",
+      source_vendor: "cursor",
+      source_adapter: "cursor-ide",
+      workspace_path: "/Users/test/dev/agent-metrics",
+      type: "token.usage.recorded",
+      message_id: "msg_1",
+      model: "cursor-fast",
+      input_tokens: 20,
+      output_tokens: 5,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 2,
+      server_tool_use: "{}",
+      usage_source: "cursor-generation"
+    });
+
+    expect(sessionResult.success).toBe(true);
+    expect(usageResult.success).toBe(true);
+  });
+
   it("parses a token.usage.recorded event from a non-Claude source with provider metadata", () => {
     const payload = {
       event_id: "evt_13",

@@ -40,6 +40,17 @@ export type ClaudeTranscriptObservation =
       providerHost: string | null;
     };
 
+export type ClaudeSessionContext = {
+  sessionId: string;
+  workspacePath: string;
+  executionPath: string;
+  skillsLoaded: boolean;
+  skillNames: string[];
+  sourceVendor: SourceVendor;
+  sourceAdapter: SourceAdapter;
+  updatedAt: string;
+};
+
 const CLAUDE_SOURCE_VENDOR: SourceVendor = "claude-code";
 const CLAUDE_TRANSCRIPT_ADAPTER: SourceAdapter = "claude-transcript";
 
@@ -55,7 +66,7 @@ export function extractClaudeTranscriptObservations(record: unknown): ClaudeTran
   }
 
   const sessionId = normalizeOptionalString(row.sessionId ?? row.session_id);
-  const workspacePath = normalizeOptionalString(row.cwd ?? row.workspace_path);
+  const workspacePath = normalizeWorkspacePath(row.cwd ?? row.workspace_path);
   const timestamp = normalizeValidTimestamp(row.timestamp);
   if (sessionId === undefined || workspacePath === undefined || timestamp === undefined) {
     return [];
@@ -136,6 +147,38 @@ export function extractClaudeTranscriptObservations(record: unknown): ClaudeTran
   }
 
   return observations;
+}
+
+export function extractClaudeTranscriptSessionContext(record: unknown): ClaudeSessionContext | null {
+  const row = asRecord(record);
+  if (row === null) {
+    return null;
+  }
+
+  const sessionId = normalizeOptionalString(row.sessionId ?? row.session_id);
+  const executionPath = normalizeOptionalString(row.cwd ?? row.execution_path ?? row.workspace_path);
+  const updatedAt = normalizeValidTimestamp(row.timestamp);
+  if (sessionId === undefined || executionPath === undefined || updatedAt === undefined) {
+    return null;
+  }
+
+  const workspacePath = normalizeWorkspacePath(executionPath);
+  if (workspacePath === undefined) {
+    return null;
+  }
+
+  const skillNames = extractSkillNamesFromTranscriptRecord(row);
+
+  return {
+    sessionId,
+    workspacePath,
+    executionPath,
+    skillsLoaded: skillNames.length > 0 || hasSkillListing(row),
+    skillNames,
+    sourceVendor: CLAUDE_SOURCE_VENDOR,
+    sourceAdapter: CLAUDE_TRANSCRIPT_ADAPTER,
+    updatedAt
+  };
 }
 
 export function normalizeClaudeTranscriptObservation(
@@ -278,6 +321,15 @@ function normalizeNullableString(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
+function normalizeWorkspacePath(value: unknown): string | undefined {
+  const executionPath = normalizeOptionalString(value);
+  if (executionPath === undefined) {
+    return undefined;
+  }
+
+  return deriveWorkspacePath(executionPath);
+}
+
 function normalizeNonNegativeInteger(value: unknown): number | undefined {
   return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : undefined;
 }
@@ -315,6 +367,83 @@ function extractHost(value: string): string | null {
 
 function isTerminalStopReason(stopReason: string): boolean {
   return stopReason === "end_turn" || stopReason === "stop_sequence" || stopReason === "max_tokens";
+}
+
+function deriveWorkspacePath(executionPath: string): string {
+  const trimmed = executionPath.replace(/[/\\]+$/u, "");
+  const match = /^(.*?)([/\\])\.claude\2tmp$/iu.exec(trimmed);
+
+  if (match?.[1] && match[1].length > 0) {
+    return match[1];
+  }
+
+  return trimmed.length > 0 ? trimmed : executionPath;
+}
+
+function extractSkillNamesFromTranscriptRecord(record: Record<string, unknown>): string[] {
+  const seen = new Set<string>();
+  collectSkillNames(record, seen);
+  return [...seen];
+}
+
+function collectSkillNames(value: unknown, seen: Set<string>): void {
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      collectSkillNames(entry, seen);
+    }
+    return;
+  }
+
+  const record = asRecord(value);
+  if (record === null) {
+    return;
+  }
+
+  if (normalizeOptionalString(record.type) === "skill_listing") {
+    addSkillNamesFromListing(record.skills ?? record.skill_names ?? record.entries ?? record.items, seen);
+  }
+
+  for (const entry of Object.values(record)) {
+    collectSkillNames(entry, seen);
+  }
+}
+
+function addSkillNamesFromListing(value: unknown, seen: Set<string>): void {
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      if (typeof entry === "string" && entry.length > 0) {
+        seen.add(entry);
+        continue;
+      }
+
+      const record = asRecord(entry);
+      const name =
+        normalizeOptionalString(record?.name) ??
+        normalizeOptionalString(record?.id) ??
+        normalizeOptionalString(record?.title);
+
+      if (name) {
+        seen.add(name);
+      }
+    }
+  }
+}
+
+function hasSkillListing(value: unknown): boolean {
+  if (Array.isArray(value)) {
+    return value.some((entry) => hasSkillListing(entry));
+  }
+
+  const record = asRecord(value);
+  if (record === null) {
+    return false;
+  }
+
+  if (normalizeOptionalString(record.type) === "skill_listing") {
+    return true;
+  }
+
+  return Object.values(record).some((entry) => hasSkillListing(entry));
 }
 
 function normalizeUsageCounts(usage: Record<string, unknown>):

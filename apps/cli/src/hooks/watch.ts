@@ -8,15 +8,17 @@ export function registerWatchCommand(hooks: Command): void {
     .command("watch")
     .description("Watch Claude settings and restore missing agent-metrics hooks.")
     .option("--repo-root <path>", "Path to the agent-metrics repository root.", process.cwd())
+    .option("--cli-path <path>", "Override the CLI path used by the generated Claude hooks.")
     .option("--settings-path <path>", "Claude settings JSON path.", getDefaultClaudeSettingsPath())
     .option("--scope <scope>", "Settings scope to install into.", "global")
-    .action(async (options: { repoRoot: string; settingsPath: string; scope: string }) => {
+    .action(async (options: { repoRoot: string; cliPath?: string; settingsPath: string; scope: string }) => {
       if (options.scope !== "global") {
         throw new Error(`Unsupported Claude settings scope: ${options.scope}`);
       }
 
       await watchClaudeSettings({
         repoRoot: options.repoRoot,
+        cliPath: options.cliPath,
         settingsPath: options.settingsPath
       });
     });
@@ -24,6 +26,7 @@ export function registerWatchCommand(hooks: Command): void {
 
 export async function watchClaudeSettings(input: {
   repoRoot: string;
+  cliPath?: string;
   settingsPath?: string;
   debounceMs?: number;
   signal?: AbortSignal;
@@ -45,6 +48,7 @@ export async function watchClaudeSettings(input: {
     try {
       const result = await ensureClaudeHooks({
         repoRoot: input.repoRoot,
+        cliPath: input.cliPath,
         settingsPath
       });
 

@@ -34,6 +34,7 @@ export function getDefaultClaudeSettingsPath(): string {
 
 export async function ensureClaudeHooks(input: {
   repoRoot: string;
+  cliPath?: string;
   settingsPath?: string;
 }): Promise<EnsureClaudeHooksResult> {
   const settingsPath = resolve(input.settingsPath ?? getDefaultClaudeSettingsPath());
@@ -51,7 +52,8 @@ export async function ensureClaudeHooks(input: {
     hooks: mergeHookTrees(
       existing.value.hooks,
       buildClaudeHooksConfig({
-        repoRoot: resolve(input.repoRoot)
+        repoRoot: resolve(input.repoRoot),
+        cliPath: input.cliPath
       })
     )
   };
@@ -74,6 +76,7 @@ export async function ensureClaudeHooks(input: {
 
 export async function installClaudeHooks(input: {
   repoRoot: string;
+  cliPath?: string;
   settingsPath?: string;
 }): Promise<void> {
   await ensureClaudeHooks(input);

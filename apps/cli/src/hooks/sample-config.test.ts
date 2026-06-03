@@ -37,4 +37,27 @@ describe("buildClaudeHooksConfig", () => {
       hooks: config
     });
   });
+
+  it("supports overriding the CLI entry path for packaged desktop builds", async () => {
+    const repoRoot = await mkdtemp(join(tmpdir(), "agent-metrics-config-"));
+    const portableRepoRoot = repoRoot.replace(/\\/g, "/");
+    const cliPath = "C:/Users/test/AppData/Local/Programs/AgentMetrics/resources/runtime/cli/dist/index.js";
+    const config = buildClaudeHooksConfig({
+      repoRoot,
+      cliPath
+    });
+
+    expect(config.SessionStart).toEqual([
+      {
+        matcher: "*",
+        hooks: [
+          {
+            type: "command",
+            command:
+              `node "${cliPath}" hooks collect --hook-event-name "SessionStart" --repo-root "${portableRepoRoot}"`
+          }
+        ]
+      }
+    ]);
+  });
 });

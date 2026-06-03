@@ -4,7 +4,7 @@ import {
   type TimeScopeSelection
 } from "./time-scope";
 
-export type SourceVendor = "all" | "claude-code" | "opencode" | "codex";
+export type SourceVendor = "all" | "claude-code" | "opencode" | "codex" | "cursor";
 
 export type AggregateMeta = {
   mode: TimeScopeSelection["mode"];
@@ -81,6 +81,14 @@ export type SessionRow = {
 
 export type SessionDetailResponse = {
   sessionId: string;
+  workspacePath: string;
+  sourceVendor: string;
+  sourceAdapter: string;
+  context: {
+    executionPath: string | null;
+    skillsLoaded: boolean;
+    skillNames: string[];
+  } | null;
   timeline: SessionTimelineEntry[];
 };
 
@@ -324,7 +332,7 @@ function isTimeScopeMode(value: string): value is TimeScopeSelection["mode"] {
 }
 
 function isSourceVendor(value: unknown): value is SourceBreakdownRow["sourceVendor"] {
-  return value === "claude-code" || value === "opencode" || value === "codex";
+  return value === "claude-code" || value === "opencode" || value === "codex" || value === "cursor";
 }
 
 function isTimeScopeRange(value: string): value is TimeScopeSelection["range"] {

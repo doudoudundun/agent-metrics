@@ -41,6 +41,108 @@ After startup, open Claude Code in any workspace and trigger a few real tools su
 - `node .\apps\cli\dist\index.js hooks install --scope global --repo-root D:\projects\dev\agent-metrics`
 - `node .\apps\cli\dist\index.js hooks watch --scope global --repo-root D:\projects\dev\agent-metrics`
 
+## Desktop App
+
+- Browser dashboard development still works with `corepack pnpm dev`.
+- Start desktop development: `corepack pnpm dev:desktop`
+- Package a macOS Apple Silicon app bundle: `corepack pnpm package:desktop:mac`
+- Package a macOS Intel app bundle: `corepack pnpm package:desktop:mac:x64`
+- Package a Windows x64 desktop build: `corepack pnpm package:desktop:win`
+- Package a Windows ARM64 desktop build: `corepack pnpm package:desktop:win:arm64`
+
+The desktop app preserves the existing local telemetry pipeline. The browser dashboard still works and remains the default fallback for debugging.
+
+Current verified release artifacts:
+
+- Apple Silicon macOS: `apps/desktop/release/AgentMetrics-mac-arm64.zip`
+- Intel macOS: `apps/desktop/release/AgentMetrics-mac-x64.zip`
+- Windows x64: `apps/desktop/release/AgentMetrics-win-x64.zip`
+- Windows ARM64: `apps/desktop/release/AgentMetrics-win-arm64.zip`
+
+Compatibility notes:
+
+- `mac-arm64` works on Apple Silicon Macs such as M1, M2, M3, and M4 Mac mini models.
+- `mac-arm64` does not run on Intel Mac mini models.
+- `win-arm64` is for Windows on ARM devices only.
+- Most Windows desktops and laptops need the `win:x64` build.
+
+## Desktop Install And Use
+
+### Pick The Right Package
+
+- Apple Silicon Mac mini, MacBook, or iMac (`M1`, `M2`, `M3`, `M4`): use `AgentMetrics-mac-arm64.zip`
+- Intel Mac mini or Intel MacBook: use `AgentMetrics-mac-x64.zip`
+- Most Windows desktops and laptops: use `AgentMetrics-win-x64.zip`
+- Windows on ARM devices: use `AgentMetrics-win-arm64.zip`
+
+### Install On macOS
+
+1. Download the correct macOS zip package.
+2. Double-click the zip file to extract it.
+3. Drag `AgentMetrics.app` into `Applications`.
+4. Open `AgentMetrics.app`.
+5. If macOS blocks the first launch, open `System Settings -> Privacy & Security` and choose `Open Anyway`.
+
+### Install On Windows
+
+1. Download the correct Windows zip package.
+2. Right-click the zip file and extract it.
+3. Open the extracted folder such as `win-unpacked`.
+4. Double-click `AgentMetrics.exe`.
+5. If Windows SmartScreen appears, click `More info`, then click `Run anyway`.
+
+### Two Ways To Open The App
+
+The desktop app supports two working modes:
+
+1. Main dashboard window
+2. Floating always-on-top window
+
+### Main Dashboard Window
+
+Use this mode when you want the full dashboard.
+
+How to open it:
+
+- macOS: click the menu bar icon and choose `Open Dashboard`
+- Windows: click the tray icon and choose `Open Dashboard`
+- A single click on the tray or menu bar icon also opens the main dashboard
+
+What it is for:
+
+- viewing the full dashboard
+- reviewing sessions, rankings, charts, and detailed metrics
+- changing time ranges and exploring data in depth
+
+### Floating Always-On-Top Window
+
+Use this mode when you want a compact desktop monitor that stays visible while you work.
+
+How to open it:
+
+- macOS: click the menu bar icon and choose `Show or Hide Floating Window`
+- Windows: click the tray icon and choose `Show or Hide Floating Window`
+
+What it is for:
+
+- keeping a live summary visible on the desktop
+- checking sessions, turns, and tokens at a glance
+- monitoring activity without opening the full dashboard
+
+### Close, Hide, And Quit
+
+- Closing the main dashboard window does not quit the app by default.
+- Closing the main dashboard window hides it to the tray on Windows or the menu bar on macOS.
+- Closing the floating window hides only the floating window.
+- To fully exit the app, open the tray or menu bar menu and choose `Quit`.
+
+### What Happens After Launch
+
+- The desktop app starts the existing local telemetry pipeline instead of replacing it.
+- The browser dashboard remains available for debugging and development.
+- Window size and position are remembered between launches.
+- The floating window can be moved and reopened independently from the main dashboard.
+
 ## Manual Install
 
 - Manual sample config: `docs/manual/claude-hooks-global.sample.json`

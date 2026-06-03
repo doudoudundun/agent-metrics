@@ -1,12 +1,13 @@
 import { z } from "zod";
 
-export const SourceVendorSchema = z.enum(["claude-code", "opencode", "codex"]);
+export const SourceVendorSchema = z.enum(["claude-code", "opencode", "codex", "cursor"]);
 
 export const SourceAdapterSchema = z.enum([
   "claude",
   "claude-hook",
   "claude-transcript",
   "opencode-db",
+  "cursor-ide",
   "codex-rollout",
   "codex-history",
   "codex-logs"
@@ -16,6 +17,7 @@ export const UsageSourceSchema = z.enum([
   "claude-transcript",
   "opencode-message",
   "opencode-step-finish",
+  "cursor-generation",
   "codex-rollout",
   "codex-logs"
 ]);

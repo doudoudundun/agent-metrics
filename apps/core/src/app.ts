@@ -4,8 +4,12 @@ import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 import Fastify from "fastify";
-import { syncKnownClaudeTranscripts } from "@agent-metrics/adapters-claude";
+import {
+  syncKnownClaudeTranscripts,
+  type ClaudeSessionContext
+} from "@agent-metrics/adapters-claude";
 import { syncCodexRollouts } from "@agent-metrics/adapters-codex";
+import { syncCursorArtifacts } from "@agent-metrics/adapters-cursor";
 import { syncOpenCodeDatabase } from "@agent-metrics/adapters-opencode";
 import { AnyEventSchema, type AnyEvent, type SourceVendor } from "@agent-metrics/event-schema";
 import { toCsv, toJson } from "@agent-metrics/export-kit";
@@ -130,8 +134,15 @@ type SessionRow = {
   sessionId: string;
   startedAt: string;
   endedAt: string | null;
+  workspacePath: string;
   sourceVendor: string;
   sourceAdapter: string;
+};
+
+type SessionContextRow = {
+  executionPath: string | null;
+  skillsLoaded: number;
+  skillNamesJson: string;
 };
 
 type ToolTimelineRow = {
@@ -807,7 +818,7 @@ function queryRecord(query: unknown): Record<string, unknown> {
 function resolveSourceVendor(query: unknown): SourceVendorFilter {
   const sourceVendor = queryRecord(query).sourceVendor;
 
-  return sourceVendor === "claude-code" || sourceVendor === "opencode" || sourceVendor === "codex"
+  return sourceVendor === "claude-code" || sourceVendor === "opencode" || sourceVendor === "codex" || sourceVendor === "cursor"
     ? sourceVendor
     : "all";
 }
@@ -991,6 +1002,16 @@ export function buildApp(input: BuildAppInput): MetricsApp {
       size_bytes INTEGER NOT NULL,
       mtime_ms REAL NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS session_contexts (
+      session_id TEXT PRIMARY KEY,
+      source_vendor TEXT NOT NULL,
+      source_adapter TEXT NOT NULL,
+      execution_path TEXT,
+      skills_loaded INTEGER NOT NULL DEFAULT 0,
+      skill_names_json TEXT NOT NULL DEFAULT '[]',
+      updated_at TEXT NOT NULL
+    );
   `);
   migrateLegacySessionsSchema(db);
   migrateLegacyCodeEditsSchema(db);
@@ -1034,12 +1055,13 @@ export function buildApp(input: BuildAppInput): MetricsApp {
     : null;
   const syncTranscriptState = agentPaths
     ? createSingleFlightAction(async () => {
-        await syncKnownClaudeTranscripts({
+        const result = await syncKnownClaudeTranscripts({
           manifestPath: agentPaths.transcriptManifestPath,
           eventLogPath: input.eventLogPath ?? agentPaths.eventLogPath,
           transcriptCursorPath: agentPaths.transcriptCursorPath,
           transcriptLedgerPath: agentPaths.transcriptLedgerPath
         });
+        persistClaudeSessionContexts(db, result.sessionContexts);
       })
     : null;
   const syncOpenCodeState = agentPaths
@@ -1048,6 +1070,15 @@ export function buildApp(input: BuildAppInput): MetricsApp {
           eventLogPath: input.eventLogPath ?? agentPaths.eventLogPath,
           cursorPath: agentPaths.opencodeCursorPath,
           ledgerPath: agentPaths.opencodeLedgerPath
+        });
+      })
+    : null;
+  const syncCursorState = agentPaths
+    ? createSingleFlightAction(async () => {
+        await syncCursorArtifacts({
+          eventLogPath: input.eventLogPath ?? agentPaths.eventLogPath,
+          cursorPath: agentPaths.cursorIdeStatePath,
+          ledgerPath: agentPaths.cursorIdeLedgerPath
         });
       })
     : null;
@@ -1066,37 +1097,54 @@ export function buildApp(input: BuildAppInput): MetricsApp {
   });
 
   app.addHook("onRequest", async (request) => {
+    const syncTasks: Promise<void>[] = [];
+
     if (syncTranscriptState) {
-      try {
-        await syncTranscriptState();
-      } catch (error) {
-        request.log.warn(
-          { err: error },
-          "Transcript sync failed; serving stale local metrics."
-        );
-      }
+      syncTasks.push(
+        syncTranscriptState().catch((error) => {
+          request.log.warn(
+            { err: error },
+            "Transcript sync failed; serving stale local metrics."
+          );
+        })
+      );
     }
 
     if (syncOpenCodeState) {
-      try {
-        await syncOpenCodeState();
-      } catch (error) {
-        request.log.warn(
-          { err: error },
-          "OpenCode sync failed; serving stale local metrics."
-        );
-      }
+      syncTasks.push(
+        syncOpenCodeState().catch((error) => {
+          request.log.warn(
+            { err: error },
+            "OpenCode sync failed; serving stale local metrics."
+          );
+        })
+      );
+    }
+
+    if (syncCursorState) {
+      syncTasks.push(
+        syncCursorState().catch((error) => {
+          request.log.warn(
+            { err: error },
+            "Cursor sync failed; serving stale local metrics."
+          );
+        })
+      );
     }
 
     if (syncCodexState) {
-      try {
-        await syncCodexState();
-      } catch (error) {
-        request.log.warn(
-          { err: error },
-          "Codex sync failed; serving stale local metrics."
-        );
-      }
+      syncTasks.push(
+        syncCodexState().catch((error) => {
+          request.log.warn(
+            { err: error },
+            "Codex sync failed; serving stale local metrics."
+          );
+        })
+      );
+    }
+
+    if (syncTasks.length > 0) {
+      await Promise.all(syncTasks);
     }
 
     if (!syncEventLog) {
@@ -1147,7 +1195,7 @@ export function buildApp(input: BuildAppInput): MetricsApp {
     const params = request.params as { id: string };
     const session = db
       .prepare<SessionRow>(
-        "SELECT session_id AS sessionId, started_at AS startedAt, ended_at AS endedAt, source_vendor AS sourceVendor, source_adapter AS sourceAdapter FROM sessions WHERE session_id = ?"
+        "SELECT session_id AS sessionId, started_at AS startedAt, ended_at AS endedAt, workspace_path AS workspacePath, source_vendor AS sourceVendor, source_adapter AS sourceAdapter FROM sessions WHERE session_id = ?"
       )
       .get(params.id);
 
@@ -1155,6 +1203,12 @@ export function buildApp(input: BuildAppInput): MetricsApp {
       reply.code(404);
       return { message: "Session not found" };
     }
+
+    const sessionContext = db
+      .prepare<SessionContextRow>(
+        "SELECT execution_path AS executionPath, skills_loaded AS skillsLoaded, skill_names_json AS skillNamesJson FROM session_contexts WHERE session_id = ?"
+      )
+      .get(params.id);
 
     const toolRows = db
       .prepare<ToolTimelineRow>(
@@ -1317,6 +1371,16 @@ export function buildApp(input: BuildAppInput): MetricsApp {
 
     return {
       sessionId: params.id,
+      workspacePath: session.workspacePath,
+      sourceVendor: session.sourceVendor,
+      sourceAdapter: session.sourceAdapter,
+      context: sessionContext
+        ? {
+            executionPath: sessionContext.executionPath,
+            skillsLoaded: sessionContext.skillsLoaded === 1,
+            skillNames: parseFilesChanged(sessionContext.skillNamesJson)
+          }
+        : null,
       timeline
     };
   });
@@ -1606,6 +1670,55 @@ function ensureSessionExists(
   db.prepare(
     "INSERT OR IGNORE INTO sessions (session_id, started_at, workspace_path, source_vendor, source_adapter, ended_at, exit_code) VALUES (?, ?, ?, ?, ?, NULL, NULL)"
   ).run(sessionId, startedAt, workspacePath, sourceVendor, sourceAdapter);
+}
+
+function persistClaudeSessionContexts(
+  db: MetricsDatabase,
+  contexts: ClaudeSessionContext[]
+): void {
+  const persist = db.transaction((items: ClaudeSessionContext[]) => {
+    for (const context of items) {
+      ensureSessionExists(
+        db,
+        context.sessionId,
+        context.updatedAt,
+        context.workspacePath,
+        context.sourceVendor,
+        context.sourceAdapter
+      );
+      db.prepare(
+        `
+          INSERT INTO session_contexts (
+            session_id,
+            source_vendor,
+            source_adapter,
+            execution_path,
+            skills_loaded,
+            skill_names_json,
+            updated_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(session_id) DO UPDATE SET
+            source_vendor = excluded.source_vendor,
+            source_adapter = excluded.source_adapter,
+            execution_path = excluded.execution_path,
+            skills_loaded = excluded.skills_loaded,
+            skill_names_json = excluded.skill_names_json,
+            updated_at = excluded.updated_at
+        `
+      ).run(
+        context.sessionId,
+        context.sourceVendor,
+        context.sourceAdapter,
+        context.executionPath,
+        context.skillsLoaded ? 1 : 0,
+        JSON.stringify(context.skillNames),
+        context.updatedAt
+      );
+    }
+  });
+
+  persist(contexts);
 }
 
 function parseFilesChanged(value: string): string[] {

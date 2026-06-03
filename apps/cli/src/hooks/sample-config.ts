@@ -24,9 +24,11 @@ export type ClaudeHookMatcher = {
 
 export type ClaudeHooksConfig = Record<ClaudeHookEventName, ClaudeHookMatcher[]>;
 
-export function buildClaudeHooksConfig(input: { repoRoot: string }): ClaudeHooksConfig {
+export function buildClaudeHooksConfig(input: { repoRoot: string; cliPath?: string }): ClaudeHooksConfig {
   const repoRoot = toPortablePath(resolve(input.repoRoot));
-  const cliPath = toPortablePath(resolve(repoRoot, "apps", "cli", "dist", "index.js"));
+  const cliPath = input.cliPath
+    ? toPortablePath(input.cliPath)
+    : toPortablePath(resolve(repoRoot, "apps", "cli", "dist", "index.js"));
 
   return Object.fromEntries(
     CLAUDE_HOOK_EVENTS.map((eventName) => [
@@ -50,7 +52,10 @@ export function buildClaudeHooksConfig(input: { repoRoot: string }): ClaudeHooks
   ) as ClaudeHooksConfig;
 }
 
-export function buildClaudeHooksSettingsPatch(input: { repoRoot: string }): { hooks: ClaudeHooksConfig } {
+export function buildClaudeHooksSettingsPatch(input: {
+  repoRoot: string;
+  cliPath?: string;
+}): { hooks: ClaudeHooksConfig } {
   return {
     hooks: buildClaudeHooksConfig(input)
   };
@@ -61,9 +66,14 @@ export function registerPrintConfigCommand(hooks: Command): void {
     .command("print-config")
     .description("Print the Claude hook settings patch JSON for manual review.")
     .option("--repo-root <path>", "Path to the agent-metrics repository root.", process.cwd())
-    .action((options: { repoRoot: string }) => {
+    .option("--cli-path <path>", "Override the CLI path used by the generated Claude hooks.")
+    .action((options: { repoRoot: string; cliPath?: string }) => {
       process.stdout.write(
-        `${JSON.stringify(buildClaudeHooksSettingsPatch({ repoRoot: options.repoRoot }), null, 2)}\n`
+        `${JSON.stringify(
+          buildClaudeHooksSettingsPatch({ repoRoot: options.repoRoot, cliPath: options.cliPath }),
+          null,
+          2
+        )}\n`
       );
     });
 }
