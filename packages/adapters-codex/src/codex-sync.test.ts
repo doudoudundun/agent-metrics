@@ -276,13 +276,19 @@ describe("syncCodexRollouts", () => {
         type: "assistant.responded"
       }),
       expect.objectContaining({
+        type: "tool.called",
+        tool_name: "rg",
+        status: "started"
+      }),
+      expect.objectContaining({
         type: "tool.succeeded",
         tool_name: "rg",
         duration_ms: 2300
       }),
       expect.objectContaining({
         type: "tool.called",
-        tool_name: "apply_patch"
+        tool_name: "apply_patch",
+        status: "started"
       }),
       expect.objectContaining({
         type: "tool.succeeded",
@@ -314,6 +320,10 @@ describe("syncCodexRollouts", () => {
         event_id: "codex:session:019e5dc9-b10c-7371-8edd-066e8db7e50d:usage:30321",
         type: "token.usage.recorded",
         model: "gpt-5.4",
+        input_tokens: 12472,
+        output_tokens: 202,
+        cache_read_input_tokens: 3456,
+        cache_creation_input_tokens: 0,
         provider_id: "ai",
         provider_base_url: "https://api.psydo.top",
         provider_host: "api.psydo.top"

@@ -131,6 +131,21 @@ export function extractCodexEventsFromRollout(input: {
           toolName: inferFunctionCallToolName(functionName, argumentText),
           argumentSummary: summarizeFunctionCallArguments(functionName, argumentText)
         });
+        const pending = pendingToolCalls.get(callId);
+        if (pending) {
+          events.push({
+            event_id: `codex:session:${sessionId}:function:${callId}:started`,
+            session_id: sessionId,
+            timestamp,
+            source_vendor: CODEX_SOURCE_VENDOR,
+            source_adapter: CODEX_ROLLOUT_ADAPTER,
+            workspace_path: sessionMeta?.workspacePath ?? ".",
+            type: "tool.called",
+            tool_name: pending.toolName,
+            status: "started",
+            argument_summary: pending.argumentSummary
+          });
+        }
         continue;
       }
 
@@ -416,11 +431,10 @@ export function extractCodexEventsFromRollout(input: {
       continue;
     }
 
-    const inputTokens = normalizeInteger(lastUsage?.input_tokens) ?? 0;
+    const rawInputTokens = normalizeInteger(lastUsage?.input_tokens) ?? 0;
     const cacheReadTokens = normalizeInteger(lastUsage?.cached_input_tokens) ?? 0;
-    const outputTokens =
-      (normalizeInteger(lastUsage?.output_tokens) ?? 0) +
-      (normalizeInteger(lastUsage?.reasoning_output_tokens) ?? 0);
+    const inputTokens = Math.max(0, rawInputTokens - cacheReadTokens);
+    const outputTokens = normalizeInteger(lastUsage?.output_tokens) ?? 0;
 
     if (inputTokens === 0 && cacheReadTokens === 0 && outputTokens === 0) {
       continue;

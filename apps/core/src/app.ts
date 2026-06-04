@@ -52,6 +52,9 @@ type SessionOverviewRow = {
 };
 
 type ToolEventOverviewRow = {
+  event_id: string;
+  session_id: string;
+  tool_name: string;
   status: string;
   duration_ms: number | null;
 };
@@ -113,6 +116,8 @@ type ToolRankingRow = {
 type RawToolRankingRow = {
   sourceVendor: SourceVendor;
   toolName: string;
+  sessionId: string;
+  eventId: string;
   count: number;
   failures: number;
   totalDurationMs: number;
@@ -321,7 +326,35 @@ function selectOverviewRows(
     .prepare<SessionOverviewRow>(`SELECT session_id FROM sessions${sessionWindow.whereSql}`)
     .all(...sessionWindow.params);
   const toolEvents = db
-    .prepare<ToolEventOverviewRow>(`SELECT status, duration_ms FROM tool_events${toolWindow.whereSql}`)
+    .prepare<ToolEventOverviewRow>(`
+      WITH deduped_tool_events AS (
+        SELECT
+          CASE
+            WHEN event_id LIKE '%:started' THEN substr(event_id, 1, length(event_id) - 8)
+            WHEN event_id LIKE '%:succeeded' THEN substr(event_id, 1, length(event_id) - 10)
+            WHEN event_id LIKE '%:failed' THEN substr(event_id, 1, length(event_id) - 7)
+            ELSE event_id
+          END AS normalized_event_id,
+          session_id,
+          tool_name,
+          CASE
+            WHEN SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) > 0 THEN 'failed'
+            WHEN SUM(CASE WHEN status = 'succeeded' THEN 1 ELSE 0 END) > 0 THEN 'succeeded'
+            ELSE 'started'
+          END AS status,
+          MAX(duration_ms) AS duration_ms
+        FROM tool_events
+        ${toolWindow.whereSql}
+        GROUP BY normalized_event_id, session_id, tool_name
+      )
+      SELECT
+        normalized_event_id AS event_id,
+        session_id,
+        tool_name,
+        status,
+        duration_ms
+      FROM deduped_tool_events
+    `)
     .all(...toolWindow.params);
   const prompts = db
     .prepare<PromptOverviewRow>(`SELECT prompt_id FROM prompt_events${promptWindow.whereSql}`)
@@ -403,15 +436,35 @@ function selectToolRanking(
 
   const rows = db
     .prepare<RawToolRankingRow>(`
+      WITH deduped_tool_events AS (
+        SELECT
+          source_vendor AS sourceVendor,
+          tool_name AS toolName,
+          CASE
+            WHEN event_id LIKE '%:started' THEN substr(event_id, 1, length(event_id) - 8)
+            WHEN event_id LIKE '%:succeeded' THEN substr(event_id, 1, length(event_id) - 10)
+            WHEN event_id LIKE '%:failed' THEN substr(event_id, 1, length(event_id) - 7)
+            ELSE event_id
+          END AS eventId,
+          CASE
+            WHEN SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) > 0 THEN 1
+            ELSE 0
+          END AS failures,
+          MAX(COALESCE(duration_ms, 0)) AS totalDurationMs
+        FROM tool_events
+        ${window.whereSql}
+        GROUP BY source_vendor, tool_name, eventId
+      )
       SELECT
-        source_vendor AS sourceVendor,
-        tool_name AS toolName,
+        sourceVendor,
+        toolName,
+        '' AS sessionId,
+        eventId,
         COUNT(*) AS count,
-        SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failures,
-        COALESCE(SUM(duration_ms), 0) AS totalDurationMs
-      FROM tool_events
-      ${window.whereSql}
-      GROUP BY source_vendor, tool_name
+        SUM(failures) AS failures,
+        COALESCE(SUM(totalDurationMs), 0) AS totalDurationMs
+      FROM deduped_tool_events
+      GROUP BY sourceVendor, toolName
       ORDER BY count DESC, toolName ASC
     `)
     .all(...window.params);
@@ -684,10 +737,22 @@ function selectSourceBreakdown(
 
   for (const row of db
     .prepare<{ sourceVendor: SourceVendor; toolCalls: number }>(`
-      SELECT source_vendor AS sourceVendor, COUNT(*) AS toolCalls
-      FROM tool_events
-      ${toolWindow.whereSql}
-      GROUP BY source_vendor
+      WITH deduped_tool_events AS (
+        SELECT
+          source_vendor AS sourceVendor,
+          CASE
+            WHEN event_id LIKE '%:started' THEN substr(event_id, 1, length(event_id) - 8)
+            WHEN event_id LIKE '%:succeeded' THEN substr(event_id, 1, length(event_id) - 10)
+            WHEN event_id LIKE '%:failed' THEN substr(event_id, 1, length(event_id) - 7)
+            ELSE event_id
+          END AS eventId
+        FROM tool_events
+        ${toolWindow.whereSql}
+        GROUP BY source_vendor, eventId
+      )
+      SELECT sourceVendor, COUNT(*) AS toolCalls
+      FROM deduped_tool_events
+      GROUP BY sourceVendor
     `)
     .all(...toolWindow.params)) {
     ensureRow(row.sourceVendor).toolCalls = row.toolCalls;
@@ -1520,7 +1585,11 @@ export async function ingestEventLog(input: {
         );
       }
 
-      if (parsed.type === "tool.succeeded" || parsed.type === "tool.failed") {
+      if (
+        parsed.type === "tool.called" ||
+        parsed.type === "tool.succeeded" ||
+        parsed.type === "tool.failed"
+      ) {
         db.prepare(
           "INSERT OR REPLACE INTO tool_events (event_id, session_id, tool_name, status, duration_ms, source_vendor, source_adapter, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
         ).run(
@@ -1528,7 +1597,7 @@ export async function ingestEventLog(input: {
           parsed.session_id,
           parsed.tool_name,
           parsed.status,
-          parsed.duration_ms,
+          parsed.type === "tool.called" ? 0 : parsed.duration_ms,
           storedSourceVendor,
           storedSourceAdapter,
           parsed.timestamp
