@@ -129,6 +129,14 @@ describe("window state", () => {
     ).toBeNull();
   });
 
+  it("falls back to the default orb dock edge for invalid values", () => {
+    expect(
+      sanitizeDesktopSettings({
+        orbDockEdge: "top"
+      }).orbDockEdge
+    ).toBe("right");
+  });
+
   it("throws a contextual error for malformed JSON", async () => {
     const filePath = await createTempSettingsPath();
 
@@ -146,7 +154,7 @@ describe("window state", () => {
       launchAtLogin: true,
       showMainWindowOnStartup: false,
       reopenFloatingWindowOnStartup: true,
-      preferredSurface: "floating-window" as const,
+      preferredSurface: "orb" as const,
       enableOrb: false,
       showOrbOnStartup: false,
       orbDockEdge: "left" as const,
