@@ -129,6 +129,10 @@ What it is for:
 - checking sessions, turns, and tokens at a glance
 - monitoring activity without opening the full dashboard
 
+### Windows desktop orb
+
+The packaged desktop app can expose a tray-backed orb on Windows. The orb can dock to the left or right edge, partially hide, and reveal a lightweight metrics card on hover. Use the tray menu to reopen the orb or reset its position if it moves off-screen.
+
 ### Close, Hide, And Quit
 
 - Closing the main dashboard window does not quit the app by default.

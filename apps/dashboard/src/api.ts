@@ -127,7 +127,7 @@ export type ToolRowsResponse = AggregateRowsResponse<ToolRow>;
 export type SessionRowsResponse = AggregateRowsResponse<SessionRow>;
 
 async function fetchJson<T>(path: string): Promise<T> {
-  const response = await fetch(path);
+  const response = await fetch(resolveApiPath(path));
 
   if (!response.ok) {
     throw new Error(`Request failed: ${response.status}`);
@@ -171,13 +171,42 @@ export async function fetchSessionDetail(sessionId: string): Promise<SessionDeta
 }
 
 export function buildExportUrl(format: "csv" | "json"): string {
-  return `/api/exports/${format}`;
+  return resolveApiPath(`/api/exports/${format}`);
 }
 
 function withScope(path: string, scope: TimeScopeSelection, sourceVendor: SourceVendor): string {
   const params = buildScopeSearchParams(scope);
   params.set("sourceVendor", sourceVendor);
   return `${path}?${params.toString()}`;
+}
+
+export function resolveApiPath(path: string, currentWindow: Window = window): string {
+  const apiBase = resolveApiBase(currentWindow.location.search);
+
+  if (apiBase === null) {
+    return path;
+  }
+
+  return new URL(trimLeadingSlash(path), withTrailingSlash(apiBase)).toString();
+}
+
+function resolveApiBase(search: string): string | null {
+  const params = new URLSearchParams(search);
+  const apiBase = params.get("apiBase");
+
+  if (!apiBase) {
+    return null;
+  }
+
+  return apiBase;
+}
+
+function trimLeadingSlash(value: string): string {
+  return value.startsWith("/") ? value.slice(1) : value;
+}
+
+function withTrailingSlash(value: string): string {
+  return value.endsWith("/") ? value : `${value}/`;
 }
 
 function parseOverviewResponse(response: unknown, path: string): OverviewResponse {

@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   fetchOverview,
+  buildExportUrl,
   fetchSessionDetail,
   fetchSessions,
   fetchTools,
+  resolveApiPath,
   type OverviewResponse,
   type SessionDetailResponse
 } from "./api";
@@ -20,6 +22,7 @@ function stubFetchJson(payload: unknown): void {
 
 describe("api client", () => {
   afterEach(() => {
+    window.history.replaceState({}, "", "/");
     vi.unstubAllGlobals();
   });
 
@@ -55,6 +58,40 @@ describe("api client", () => {
     await fetchOverview({ mode: "rolling", range: "week" });
 
     expect(fetch).toHaveBeenCalledWith("/api/overview?mode=rolling&range=week&sourceVendor=all");
+  });
+
+  it("uses the desktop apiBase query parameter when present", () => {
+    const desktopWindow = {
+      location: {
+        search: "?surface=desktop-main&apiBase=http%3A%2F%2F127.0.0.1%3A45183"
+      }
+    } as Window;
+
+    expect(resolveApiPath("/api/overview", desktopWindow)).toBe(
+      "http://127.0.0.1:45183/api/overview"
+    );
+  });
+
+  it("resolves the desktop apiBase when orb peek mode is active", () => {
+    const desktopWindow = {
+      location: {
+        search: "?surface=desktop-orb-peek&apiBase=http%3A%2F%2F127.0.0.1%3A45183"
+      }
+    } as Window;
+
+    expect(resolveApiPath("/api/overview", desktopWindow)).toBe(
+      "http://127.0.0.1:45183/api/overview"
+    );
+  });
+
+  it("builds export URLs against the desktop apiBase query parameter", () => {
+    window.history.replaceState(
+      {},
+      "",
+      "/?surface=desktop-main&apiBase=http%3A%2F%2F127.0.0.1%3A45183"
+    );
+
+    expect(buildExportUrl("csv")).toBe("http://127.0.0.1:45183/api/exports/csv");
   });
 
   it("appends sourceVendor to aggregate requests", async () => {

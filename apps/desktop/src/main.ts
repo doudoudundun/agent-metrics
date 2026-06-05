@@ -1,8 +1,18 @@
 import { dirname, join, resolve } from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { createOrbSurfaceState, expandOrbDetail, pinPeekCard } from "./orb-state.js";
-import { createDesktopMetricsSnapshot } from "./orb-snapshot.js";
+import {
+  createOrbSurfaceState,
+  dismissPeekCard,
+  expandOrbDetail,
+  hoverOrb,
+  leaveOrbRegion,
+  pinPeekCard
+} from "./orb-state.js";
+import {
+  createDesktopMetricsSnapshot,
+  updateDesktopMetricsSnapshot
+} from "./orb-snapshot.js";
 import { createProcessSupervisor } from "./runtime/process-supervisor.js";
 import {
   buildDashboardUrl,
@@ -93,9 +103,10 @@ let settings: DesktopSettings;
 let settingsSaveQueue = Promise.resolve();
 let orbState = createOrbSurfaceState("orbHidden");
 let desktopSnapshot = createDesktopMetricsSnapshot();
+let hoverOpenTimer: NodeJS.Timeout | null = null;
+let hoverCloseTimer: NodeJS.Timeout | null = null;
 
 const supervisor = createProcessSupervisor({ runtimePaths });
-void desktopSnapshot;
 
 function toWindowBounds(bounds: RectangleLike): WindowBounds {
   return {
@@ -159,6 +170,8 @@ function showMainWindow(): void {
   }
 
   orbState = createOrbSurfaceState("mainVisible");
+  clearHoverTimers();
+  peekCardWindow?.hide();
 
   if (mainWindow.isMinimized()) {
     mainWindow.restore();
@@ -173,17 +186,81 @@ function showOrbWindow(): void {
     return;
   }
 
+  clearHoverTimers();
+  peekCardWindow?.hide();
   orbWindow.show();
   orbState = createOrbSurfaceState("orbDocked");
 }
 
 function hideOrbWindow(): void {
+  clearHoverTimers();
   orbWindow?.hide();
   peekCardWindow?.hide();
 
   if (orbState.mode !== "detailVisible" && orbState.mode !== "mainVisible") {
     orbState = createOrbSurfaceState("orbHidden");
   }
+}
+
+function clearHoverTimers(): void {
+  clearTimeout(hoverOpenTimer ?? undefined);
+  clearTimeout(hoverCloseTimer ?? undefined);
+  hoverOpenTimer = null;
+  hoverCloseTimer = null;
+}
+
+function schedulePeekCardOpen(): void {
+  if (peekCardWindow === null || orbWindow === null) {
+    return;
+  }
+
+  clearTimeout(hoverCloseTimer ?? undefined);
+  hoverCloseTimer = null;
+  clearTimeout(hoverOpenTimer ?? undefined);
+  hoverOpenTimer = setTimeout(() => {
+    hoverOpenTimer = null;
+    orbState = hoverOrb(orbState);
+    peekCardWindow?.show();
+    peekCardWindow?.focus();
+  }, 150);
+}
+
+function schedulePeekCardClose(): void {
+  if (orbState.mode === "peekPinned") {
+    return;
+  }
+
+  clearTimeout(hoverOpenTimer ?? undefined);
+  hoverOpenTimer = null;
+  clearTimeout(hoverCloseTimer ?? undefined);
+  hoverCloseTimer = setTimeout(() => {
+    hoverCloseTimer = null;
+    orbState = leaveOrbRegion(orbState);
+    peekCardWindow?.hide();
+  }, 320);
+}
+
+function markDesktopSnapshotStale(): void {
+  if (desktopSnapshot.status === "loading") {
+    return;
+  }
+
+  desktopSnapshot = {
+    ...desktopSnapshot,
+    status: "stale"
+  };
+}
+
+function restoreDesktopSnapshot(): void {
+  if (desktopSnapshot.updatedAt === null) {
+    return;
+  }
+
+  desktopSnapshot = updateDesktopMetricsSnapshot(
+    desktopSnapshot,
+    desktopSnapshot.metrics,
+    desktopSnapshot.updatedAt
+  );
 }
 
 function toggleFloatingWindow(): { visible: boolean } {
@@ -242,16 +319,34 @@ function registerIpcHandlers(): void {
   });
   ipcMain.handle("desktop:toggle-floating-window", async () => toggleFloatingWindow());
   ipcMain.handle("desktop:show-orb", async () => {
+    restoreDesktopSnapshot();
+
+    if (orbWindow?.isVisible()) {
+      schedulePeekCardOpen();
+      return;
+    }
+
     showOrbWindow();
   });
   ipcMain.handle("desktop:hide-orb", async () => {
+    if (orbWindow?.isVisible()) {
+      schedulePeekCardClose();
+      return;
+    }
+
     hideOrbWindow();
   });
   ipcMain.handle("desktop:pin-peek-card", async () => {
+    clearTimeout(hoverCloseTimer ?? undefined);
+    hoverCloseTimer = null;
     orbState = pinPeekCard(orbState);
+    peekCardWindow?.show();
+    peekCardWindow?.focus();
   });
   ipcMain.handle("desktop:expand-orb-detail", async () => {
+    clearHoverTimers();
     orbState = expandOrbDetail(orbState);
+    peekCardWindow?.hide();
 
     if (floatingWindow !== null) {
       floatingWindow.show();
@@ -348,6 +443,8 @@ async function bootstrap(): Promise<void> {
       }
 
       event.preventDefault();
+      clearHoverTimers();
+      orbState = dismissPeekCard(orbState);
       peekCardWindow?.hide();
     });
   }
@@ -380,17 +477,30 @@ async function bootstrap(): Promise<void> {
     floatingWindow?.hide();
   });
 
+  const loadSurface = async (
+    loadWindow: BrowserWindowLike,
+    surface: DesktopDashboardSurface
+  ): Promise<void> => {
+    try {
+      await loadWindow.loadURL(getDashboardUrl(surface));
+      restoreDesktopSnapshot();
+    } catch (error) {
+      markDesktopSnapshotStale();
+      throw error;
+    }
+  };
+
   const loadTargets = [
-    mainWindow.loadURL(getDashboardUrl("desktop-main")),
-    floatingWindow.loadURL(getDashboardUrl("desktop-floating"))
+    loadSurface(mainWindow, "desktop-main"),
+    loadSurface(floatingWindow, "desktop-floating")
   ];
 
   if (orbWindow !== null) {
-    loadTargets.push(orbWindow.loadURL(getDashboardUrl("desktop-orb")));
+    loadTargets.push(loadSurface(orbWindow, "desktop-orb"));
   }
 
   if (peekCardWindow !== null) {
-    loadTargets.push(peekCardWindow.loadURL(getDashboardUrl("desktop-orb-peek")));
+    loadTargets.push(loadSurface(peekCardWindow, "desktop-orb-peek"));
   }
 
   await Promise.all(loadTargets);
@@ -444,6 +554,7 @@ app.on("before-quit", (event: PreventableEvent) => {
     })
     .finally(() => {
       shutdownComplete = true;
+      clearHoverTimers();
       tray?.destroy();
       tray = null;
       app.quit();
