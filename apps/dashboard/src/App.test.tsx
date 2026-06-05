@@ -562,7 +562,11 @@ describe("App", () => {
       getSettings: vi.fn(),
       updateSettings: vi.fn(),
       showMainWindow: vi.fn(),
-      toggleFloatingWindow: vi.fn().mockResolvedValue({ visible: true })
+      toggleFloatingWindow: vi.fn().mockResolvedValue({ visible: true }),
+      showOrb: vi.fn().mockResolvedValue(undefined),
+      hideOrb: vi.fn().mockResolvedValue(undefined),
+      pinPeekCard: vi.fn().mockResolvedValue(undefined),
+      expandOrbDetail: vi.fn().mockResolvedValue(undefined)
     };
     window.agentMetricsDesktop = desktopBridge;
 
@@ -578,6 +582,24 @@ describe("App", () => {
     await waitFor(() => {
       expect(screen.getByText("Runtime: desktop bridge ready")).toBeInTheDocument();
     });
+
+    view.unmount();
+  });
+
+  it("hides desktop actions when the preload bridge contract is incomplete", async () => {
+    window.agentMetricsDesktop = {
+      getRuntimeStatus: vi.fn(),
+      getSettings: vi.fn(),
+      updateSettings: vi.fn(),
+      showMainWindow: vi.fn(),
+      toggleFloatingWindow: vi.fn().mockResolvedValue({ visible: true })
+    } as AgentMetricsDesktopBridge;
+
+    const view = render(<App />);
+
+    await screen.findByRole("region", { name: "Overview metrics for Today" });
+    expect(screen.queryByRole("button", { name: "Toggle Floating Window" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Runtime: desktop bridge ready")).not.toBeInTheDocument();
 
     view.unmount();
   });

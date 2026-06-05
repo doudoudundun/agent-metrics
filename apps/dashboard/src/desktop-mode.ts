@@ -6,6 +6,10 @@ export type AgentMetricsDesktopBridge = {
   updateSettings: (patch: Record<string, unknown>) => Promise<unknown>;
   showMainWindow: () => Promise<void>;
   toggleFloatingWindow: () => Promise<{ visible: boolean }>;
+  showOrb: () => Promise<void>;
+  hideOrb: () => Promise<void>;
+  pinPeekCard: () => Promise<void>;
+  expandOrbDetail: () => Promise<void>;
 };
 
 export function resolveDesktopSurface(search: string): {
@@ -25,7 +29,27 @@ export function resolveDesktopSurface(search: string): {
 export function getAgentMetricsDesktopBridge(
   currentWindow: Window = window
 ): AgentMetricsDesktopBridge | null {
-  return currentWindow.agentMetricsDesktop ?? null;
+  const bridge = currentWindow.agentMetricsDesktop;
+
+  if (!bridge) {
+    return null;
+  }
+
+  if (
+    typeof bridge.getRuntimeStatus !== "function" ||
+    typeof bridge.getSettings !== "function" ||
+    typeof bridge.updateSettings !== "function" ||
+    typeof bridge.showMainWindow !== "function" ||
+    typeof bridge.toggleFloatingWindow !== "function" ||
+    typeof bridge.showOrb !== "function" ||
+    typeof bridge.hideOrb !== "function" ||
+    typeof bridge.pinPeekCard !== "function" ||
+    typeof bridge.expandOrbDetail !== "function"
+  ) {
+    return null;
+  }
+
+  return bridge;
 }
 
 declare global {

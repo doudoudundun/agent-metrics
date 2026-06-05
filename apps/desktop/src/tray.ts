@@ -44,26 +44,40 @@ function createTrayIcon() {
 export function createDesktopTray({
   showMainWindow,
   toggleFloatingWindow,
+  showOrb,
+  resetOrbPosition,
   openSettings,
   quitApp
 }: {
   showMainWindow: () => void;
   toggleFloatingWindow: () => void;
+  showOrb?: () => void;
+  resetOrbPosition?: () => void;
   openSettings: () => void;
   quitApp: () => void;
 }) {
   const tray = new Tray(createTrayIcon());
+  const menuItems: Array<Record<string, unknown>> = [
+    { label: "Open Dashboard", click: showMainWindow },
+    { label: "Show or Hide Floating Window", click: toggleFloatingWindow }
+  ];
+
+  if (showOrb) {
+    menuItems.push({ label: "Show Orb", click: showOrb });
+  }
+
+  if (resetOrbPosition) {
+    menuItems.push({ label: "Reset Orb Position", click: resetOrbPosition });
+  }
+
+  menuItems.push(
+    { label: "Open Settings", click: openSettings },
+    { type: "separator" },
+    { label: "Quit", click: quitApp }
+  );
 
   tray.setToolTip("Agent Metrics");
-  tray.setContextMenu(
-    Menu.buildFromTemplate([
-      { label: "Open Dashboard", click: showMainWindow },
-      { label: "Show or Hide Floating Window", click: toggleFloatingWindow },
-      { label: "Open Settings", click: openSettings },
-      { type: "separator" },
-      { label: "Quit", click: quitApp }
-    ])
-  );
+  tray.setContextMenu(Menu.buildFromTemplate(menuItems));
   tray.on("click", showMainWindow);
 
   return tray;
