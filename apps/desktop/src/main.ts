@@ -1,8 +1,14 @@
 import { dirname, join, resolve } from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { createOrbSurfaceState, expandOrbDetail, pinPeekCard } from "./orb-state.js";
+import { createDesktopMetricsSnapshot } from "./orb-snapshot.js";
 import { createProcessSupervisor } from "./runtime/process-supervisor.js";
-import { buildDashboardUrl, resolveDesktopRuntimePaths } from "./runtime-paths.js";
+import {
+  buildDashboardUrl,
+  type DesktopDashboardSurface,
+  resolveDesktopRuntimePaths
+} from "./runtime-paths.js";
 import { loadDesktopSettings, saveDesktopSettings } from "./settings.js";
 import { createDesktopTray } from "./tray.js";
 import {
@@ -76,6 +82,8 @@ const runtimePaths = resolveDesktopRuntimePaths({
 
 let mainWindow: BrowserWindowLike | null = null;
 let floatingWindow: BrowserWindowLike | null = null;
+let orbWindow: BrowserWindowLike | null = null;
+let peekCardWindow: BrowserWindowLike | null = null;
 let tray: { destroy(): void } | null = null;
 let quitting = false;
 let shutdownComplete = false;
@@ -83,8 +91,11 @@ let shutdownPromise: Promise<void> | null = null;
 let settingsPath = "";
 let settings: DesktopSettings;
 let settingsSaveQueue = Promise.resolve();
+let orbState = createOrbSurfaceState("orbHidden");
+let desktopSnapshot = createDesktopMetricsSnapshot();
 
 const supervisor = createProcessSupervisor({ runtimePaths });
+void desktopSnapshot;
 
 function toWindowBounds(bounds: RectangleLike): WindowBounds {
   return {
@@ -95,9 +106,12 @@ function toWindowBounds(bounds: RectangleLike): WindowBounds {
   };
 }
 
-function getDashboardUrl(surface: "desktop-main" | "desktop-floating"): string {
+function getDashboardUrl(surface: DesktopDashboardSurface): string {
   const baseUrl = runtimePaths.packagedDashboardEntryUrl ?? runtimePaths.dashboardEntryUrl;
-  return buildDashboardUrl(baseUrl, surface);
+  const apiBaseUrl = runtimePaths.packagedDashboardEntryUrl
+    ? runtimePaths.coreApiBaseUrl
+    : undefined;
+  return buildDashboardUrl(baseUrl, surface, apiBaseUrl);
 }
 
 function clampToVisibleDisplay(bounds: WindowBounds): WindowBounds {
@@ -144,12 +158,32 @@ function showMainWindow(): void {
     return;
   }
 
+  orbState = createOrbSurfaceState("mainVisible");
+
   if (mainWindow.isMinimized()) {
     mainWindow.restore();
   }
 
   mainWindow.show();
   mainWindow.focus();
+}
+
+function showOrbWindow(): void {
+  if (orbWindow === null) {
+    return;
+  }
+
+  orbWindow.show();
+  orbState = createOrbSurfaceState("orbDocked");
+}
+
+function hideOrbWindow(): void {
+  orbWindow?.hide();
+  peekCardWindow?.hide();
+
+  if (orbState.mode !== "detailVisible" && orbState.mode !== "mainVisible") {
+    orbState = createOrbSurfaceState("orbHidden");
+  }
 }
 
 function toggleFloatingWindow(): { visible: boolean } {
@@ -207,6 +241,23 @@ function registerIpcHandlers(): void {
     showMainWindow();
   });
   ipcMain.handle("desktop:toggle-floating-window", async () => toggleFloatingWindow());
+  ipcMain.handle("desktop:show-orb", async () => {
+    showOrbWindow();
+  });
+  ipcMain.handle("desktop:hide-orb", async () => {
+    hideOrbWindow();
+  });
+  ipcMain.handle("desktop:pin-peek-card", async () => {
+    orbState = pinPeekCard(orbState);
+  });
+  ipcMain.handle("desktop:expand-orb-detail", async () => {
+    orbState = expandOrbDetail(orbState);
+
+    if (floatingWindow !== null) {
+      floatingWindow.show();
+      floatingWindow.focus();
+    }
+  });
 }
 
 async function bootstrap(): Promise<void> {
@@ -244,6 +295,63 @@ async function bootstrap(): Promise<void> {
     }
   });
 
+  if (process.platform === "win32" && settings.enableOrb) {
+    orbWindow = new BrowserWindow({
+      width: settings.orbBounds?.width ?? 56,
+      height: settings.orbBounds?.height ?? 56,
+      x: settings.orbBounds?.x,
+      y: settings.orbBounds?.y,
+      alwaysOnTop: true,
+      frame: false,
+      resizable: false,
+      show: settings.showOrbOnStartup,
+      skipTaskbar: true,
+      transparent: true,
+      webPreferences: {
+        preload: preloadPath,
+        contextIsolation: true,
+        nodeIntegration: false
+      }
+    });
+
+    peekCardWindow = new BrowserWindow({
+      width: 320,
+      height: 220,
+      alwaysOnTop: true,
+      frame: false,
+      resizable: false,
+      show: false,
+      skipTaskbar: true,
+      webPreferences: {
+        preload: preloadPath,
+        contextIsolation: true,
+        nodeIntegration: false
+      }
+    });
+
+    if (settings.showOrbOnStartup) {
+      orbState = createOrbSurfaceState("orbDocked");
+    }
+
+    orbWindow.on("close", (event: PreventableEvent) => {
+      if (quitting) {
+        return;
+      }
+
+      event.preventDefault();
+      hideOrbWindow();
+    });
+
+    peekCardWindow.on("close", (event: PreventableEvent) => {
+      if (quitting) {
+        return;
+      }
+
+      event.preventDefault();
+      peekCardWindow?.hide();
+    });
+  }
+
   attachWindowStatePersistence({ window: mainWindow, key: "mainWindowBounds" });
   attachWindowStatePersistence({ window: floatingWindow, key: "floatingWindowBounds" });
 
@@ -272,10 +380,20 @@ async function bootstrap(): Promise<void> {
     floatingWindow?.hide();
   });
 
-  await Promise.all([
+  const loadTargets = [
     mainWindow.loadURL(getDashboardUrl("desktop-main")),
     floatingWindow.loadURL(getDashboardUrl("desktop-floating"))
-  ]);
+  ];
+
+  if (orbWindow !== null) {
+    loadTargets.push(orbWindow.loadURL(getDashboardUrl("desktop-orb")));
+  }
+
+  if (peekCardWindow !== null) {
+    loadTargets.push(peekCardWindow.loadURL(getDashboardUrl("desktop-orb-peek")));
+  }
+
+  await Promise.all(loadTargets);
 
   if (settings.showMainWindowOnStartup) {
     showMainWindow();
@@ -290,6 +408,7 @@ async function bootstrap(): Promise<void> {
     toggleFloatingWindow: () => {
       void toggleFloatingWindow();
     },
+    showOrb: orbWindow ? showOrbWindow : undefined,
     openSettings: showMainWindow,
     quitApp: () => {
       quitting = true;

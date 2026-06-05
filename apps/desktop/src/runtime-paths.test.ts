@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { resolveDesktopRuntimePaths } from "./runtime-paths.js";
+import { buildDashboardUrl, resolveDesktopRuntimePaths } from "./runtime-paths.js";
 
 describe("resolveDesktopRuntimePaths", () => {
-  it("keeps development paths rooted at the repository checkout", () => {
+  it("keeps development binaries rooted at the repository checkout and stores data in the shared user directory", () => {
     expect(
       resolveDesktopRuntimePaths({
         currentDir: "/repo/apps/desktop/dist",
@@ -11,8 +11,9 @@ describe("resolveDesktopRuntimePaths", () => {
       })
     ).toEqual({
       appRoot: "/repo",
-      dataRoot: "/repo",
+      dataRoot: "/Users/test/Library/Application Support/Agent Metrics/agent-metrics-data",
       desktopDistDir: "/repo/apps/desktop/dist",
+      coreApiBaseUrl: "http://127.0.0.1:45183",
       dashboardEntryUrl: "http://127.0.0.1:4173/?surface=desktop-main",
       packagedDashboardEntryUrl: null,
       cliEntrypoint: "/repo/apps/cli/dist/index.js",
@@ -20,6 +21,21 @@ describe("resolveDesktopRuntimePaths", () => {
       coreEntrypoint: "/repo/apps/core/dist/server.js",
       coreWorkingDirectory: "/repo/apps/core"
     });
+  });
+
+  it("builds orb and peek-card dashboard surfaces with the same apiBase behavior", () => {
+    expect(buildDashboardUrl("http://127.0.0.1:4173", "desktop-orb")).toBe(
+      "http://127.0.0.1:4173/?surface=desktop-orb"
+    );
+    expect(
+      buildDashboardUrl(
+        "file:///C:/runtime/dashboard/index.html",
+        "desktop-orb-peek",
+        "http://127.0.0.1:45183"
+      )
+    ).toBe(
+      "file:///C:/runtime/dashboard/index.html?surface=desktop-orb-peek&apiBase=http%3A%2F%2F127.0.0.1%3A45183"
+    );
   });
 
   it("resolves packaged desktop runtime files from resources and data from userData", () => {
@@ -33,8 +49,9 @@ describe("resolveDesktopRuntimePaths", () => {
       appRoot: "C:\\Users\\test\\AppData\\Local\\Programs\\AgentMetrics\\resources\\runtime",
       dataRoot: "C:\\Users\\test\\AppData\\Roaming\\Agent Metrics\\agent-metrics-data",
       desktopDistDir: "C:\\Users\\test\\AppData\\Local\\Programs\\AgentMetrics\\resources\\app.asar\\dist",
+      coreApiBaseUrl: "http://127.0.0.1:45183",
       dashboardEntryUrl:
-        "file:///C:/Users/test/AppData/Local/Programs/AgentMetrics/resources/runtime/dashboard/index.html?surface=desktop-main",
+        "file:///C:/Users/test/AppData/Local/Programs/AgentMetrics/resources/runtime/dashboard/index.html?surface=desktop-main&apiBase=http%3A%2F%2F127.0.0.1%3A45183",
       packagedDashboardEntryUrl:
         "file:///C:/Users/test/AppData/Local/Programs/AgentMetrics/resources/runtime/dashboard/index.html",
       cliEntrypoint:
@@ -46,5 +63,31 @@ describe("resolveDesktopRuntimePaths", () => {
       coreWorkingDirectory:
         "C:\\Users\\test\\AppData\\Local\\Programs\\AgentMetrics\\resources\\runtime\\core"
     });
+  });
+
+  it("reuses resolved dashboard entries to build orb surfaces for dev and packaged shells", () => {
+    const developmentPaths = resolveDesktopRuntimePaths({
+      currentDir: "/repo/apps/desktop/dist",
+      isPackaged: false,
+      userDataPath: "/Users/test/Library/Application Support/Agent Metrics"
+    });
+    const packagedPaths = resolveDesktopRuntimePaths({
+      currentDir: "C:\\Users\\test\\AppData\\Local\\Programs\\AgentMetrics\\resources\\app.asar\\dist",
+      isPackaged: true,
+      userDataPath: "C:\\Users\\test\\AppData\\Roaming\\Agent Metrics"
+    });
+
+    expect(buildDashboardUrl(developmentPaths.dashboardEntryUrl, "desktop-orb")).toBe(
+      "http://127.0.0.1:4173/?surface=desktop-orb"
+    );
+    expect(
+      buildDashboardUrl(
+        packagedPaths.packagedDashboardEntryUrl ?? packagedPaths.dashboardEntryUrl,
+        "desktop-orb-peek",
+        packagedPaths.packagedDashboardEntryUrl ? packagedPaths.coreApiBaseUrl : undefined
+      )
+    ).toBe(
+      "file:///C:/Users/test/AppData/Local/Programs/AgentMetrics/resources/runtime/dashboard/index.html?surface=desktop-orb-peek&apiBase=http%3A%2F%2F127.0.0.1%3A45183"
+    );
   });
 });
