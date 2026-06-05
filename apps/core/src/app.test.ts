@@ -506,6 +506,34 @@ describe("ingestEventLog", () => {
     await app.close();
   });
 
+  it("reuses a recent transcript sync across sequential API calls", async () => {
+    const repoRoot = await mkdtemp(join(tmpdir(), "agent-metrics-transcript-throttle-"));
+    let syncCount = 0;
+
+    vi.spyOn(claudeAdapter, "syncKnownClaudeTranscripts").mockImplementation(async () => {
+      syncCount += 1;
+      return { sessionContexts: [] };
+    });
+
+    const app = buildApp({
+      dbPath,
+      eventLogPath: logPath,
+      repoRoot,
+      ...scopedAppInput
+    });
+
+    const overview = await app.inject({ method: "GET", url: "/api/overview?mode=calendar&range=day" });
+    const tools = await app.inject({ method: "GET", url: "/api/tools?mode=calendar&range=day" });
+    const sessions = await app.inject({ method: "GET", url: "/api/sessions?mode=calendar&range=day" });
+
+    expect(overview.statusCode).toBe(200);
+    expect(tools.statusCode).toBe(200);
+    expect(sessions.statusCode).toBe(200);
+    expect(syncCount).toBe(1);
+
+    await app.close();
+  });
+
   it("serves stale API data when transcript sync throws", async () => {
     const repoRoot = await mkdtemp(join(tmpdir(), "agent-metrics-transcript-failure-"));
 
@@ -699,7 +727,7 @@ describe("ingestEventLog", () => {
       turnCount: 1,
       responseCount: 1,
       totalTokens: 19623,
-      inputTokens: 15928,
+      inputTokens: 12472,
       outputTokens: 239,
       cacheReadTokens: 3456,
       cacheCreationTokens: 0,

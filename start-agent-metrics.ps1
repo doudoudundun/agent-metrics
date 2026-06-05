@@ -7,6 +7,9 @@ param(
 $ErrorActionPreference = "Stop"
 
 $RepoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$ConfiguredNodePath = $env:AGENT_METRICS_NODE_PATH
+$NodeExecutable = $null
+$NodeResolutionSource = $null
 $CorePort = if ($env:AGENT_METRICS_CORE_PORT) { [int]$env:AGENT_METRICS_CORE_PORT } else { 45183 }
 $DashboardPort = if ($env:AGENT_METRICS_DASHBOARD_PORT) { [int]$env:AGENT_METRICS_DASHBOARD_PORT } else { 4173 }
 $CoreUrl = "http://127.0.0.1:$CorePort/api/overview"
@@ -24,15 +27,105 @@ $CoreErrLog = Join-Path $RuntimeDir "core.err.log"
 $CorePidPath = Join-Path $RuntimeDir "core.pid"
 $DashboardOutLog = Join-Path $RuntimeDir "dashboard.out.log"
 $DashboardErrLog = Join-Path $RuntimeDir "dashboard.err.log"
+$DashboardPidPath = Join-Path $RuntimeDir "dashboard.pid"
 $CliWorkingDir = Join-Path $RepoRoot "apps\\cli"
 $CoreWorkingDir = Join-Path $RepoRoot "apps\\core"
 $DashboardWorkingDir = Join-Path $RepoRoot "apps\\dashboard"
 $CliEntry = Join-Path $CliWorkingDir "dist\\index.js"
 $CoreEntry = Join-Path $CoreWorkingDir "dist\\server.js"
 $ViteEntry = Join-Path $RepoRoot "node_modules\\vite\\bin\\vite.js"
+$ManagedNodeVersion = if ($env:AGENT_METRICS_NODE_VERSION) { $env:AGENT_METRICS_NODE_VERSION } else { "22.22.3" }
+$ManagedNodeFolder = "node-v$ManagedNodeVersion-win-x64"
+$ManagedNodeDir = Join-Path $RuntimeDir $ManagedNodeFolder
+$ManagedNodeExecutable = Join-Path $ManagedNodeDir "node.exe"
+$ManagedNodeArchive = Join-Path $RuntimeDir "$ManagedNodeFolder.zip"
+$ManagedNodeDownloadUrl = "https://nodejs.org/dist/v$ManagedNodeVersion/$ManagedNodeFolder.zip"
+$CorepackEntrypoint = $null
+$BetterSqlitePackageDir = Join-Path $RepoRoot "node_modules\\.pnpm\\better-sqlite3@11.10.0\\node_modules\\better-sqlite3"
+
+if (-not (Test-Path $RuntimeDir)) {
+  New-Item -ItemType Directory -Path $RuntimeDir | Out-Null
+}
 
 function Write-Step([string]$Message) {
   Write-Host "==> $Message"
+}
+
+function Get-NodeRoot([string]$NodePath) {
+  $nodeDir = Split-Path -Parent $NodePath
+
+  if ((Split-Path -Leaf $nodeDir) -eq "bin") {
+    return (Split-Path -Parent $nodeDir)
+  }
+
+  return $nodeDir
+}
+
+function Ensure-ManagedNodeRuntime() {
+  if (Test-Path -LiteralPath $ManagedNodeExecutable) {
+    return
+  }
+
+  Write-Step "Downloading stable Node.js v$ManagedNodeVersion runtime"
+  Invoke-WebRequest -UseBasicParsing -Uri $ManagedNodeDownloadUrl -OutFile $ManagedNodeArchive
+  Expand-Archive -LiteralPath $ManagedNodeArchive -DestinationPath $RuntimeDir -Force
+
+  if (-not (Test-Path -LiteralPath $ManagedNodeExecutable)) {
+    throw "Managed Node runtime download completed, but node.exe was not found: $ManagedNodeExecutable"
+  }
+}
+
+function Resolve-NodeExecutable() {
+  if (-not [string]::IsNullOrWhiteSpace($ConfiguredNodePath)) {
+    if (-not (Test-Path -LiteralPath $ConfiguredNodePath)) {
+      throw "Configured Node executable was not found: $ConfiguredNodePath"
+    }
+
+    $script:NodeResolutionSource = "AGENT_METRICS_NODE_PATH"
+    return (Resolve-Path -LiteralPath $ConfiguredNodePath).Path
+  }
+
+  try {
+    Ensure-ManagedNodeRuntime
+    $script:NodeResolutionSource = "managed-node-v$ManagedNodeVersion"
+    return (Resolve-Path -LiteralPath $ManagedNodeExecutable).Path
+  } catch {
+    Write-Warning "Failed to prepare managed Node runtime: $($_.Exception.Message)"
+  }
+
+  $nodeCommand = Get-Command node -ErrorAction SilentlyContinue
+
+  if ($null -eq $nodeCommand) {
+    throw "Node executable was not found. Set AGENT_METRICS_NODE_PATH or add node to PATH."
+  }
+
+  $resolvedPath =
+    if ($nodeCommand.Source) {
+      $nodeCommand.Source
+    } elseif ($nodeCommand.Path) {
+      $nodeCommand.Path
+    } else {
+      $nodeCommand.Definition
+    }
+
+  $script:NodeResolutionSource = "PATH"
+  return (Resolve-Path -LiteralPath $resolvedPath).Path
+}
+
+function Resolve-CorepackEntrypoint([string]$NodePath) {
+  $nodeRoot = Get-NodeRoot $NodePath
+  $candidates = @(
+    (Join-Path $nodeRoot "node_modules\\corepack\\dist\\corepack.js"),
+    (Join-Path $nodeRoot "lib\\node_modules\\corepack\\dist\\corepack.js")
+  )
+
+  foreach ($candidate in $candidates) {
+    if (Test-Path -LiteralPath $candidate) {
+      return (Resolve-Path -LiteralPath $candidate).Path
+    }
+  }
+
+  throw "Corepack entrypoint was not found for Node runtime: $NodePath"
 }
 
 function Test-OverviewContract($Json) {
@@ -105,15 +198,84 @@ function Invoke-RepoCommand([string[]]$Command) {
   }
 }
 
+function Invoke-PnpmCommand([string[]]$Arguments) {
+  $command = @($NodeExecutable, $CorepackEntrypoint, "pnpm") + $Arguments
+  Invoke-RepoCommand -Command $command
+}
+
+function Resolve-PrebuildInstallEntrypoint() {
+  $candidate = Get-ChildItem `
+    -Path (Join-Path $RepoRoot "node_modules\\.pnpm") `
+    -Filter "prebuild-install@*" `
+    -Directory `
+    -ErrorAction SilentlyContinue |
+    Sort-Object Name -Descending |
+    Select-Object -First 1
+
+  if ($null -eq $candidate) {
+    throw "prebuild-install package was not found under node_modules\\.pnpm."
+  }
+
+  $entrypoint = Join-Path $candidate.FullName "node_modules\\prebuild-install\\bin.js"
+
+  if (-not (Test-Path -LiteralPath $entrypoint)) {
+    throw "prebuild-install entrypoint was not found: $entrypoint"
+  }
+
+  return $entrypoint
+}
+
+function Test-CoreNativeDependencies() {
+  Push-Location $CoreWorkingDir
+  try {
+    & $NodeExecutable -e "const Database = require('better-sqlite3'); const db = new Database(':memory:'); db.prepare('SELECT 1').get(); db.close();"
+    return $LASTEXITCODE -eq 0
+  } finally {
+    Pop-Location
+  }
+}
+
+function Ensure-CoreNativeDependencies() {
+  if (Test-CoreNativeDependencies) {
+    return
+  }
+
+  $prebuildInstallEntrypoint = Resolve-PrebuildInstallEntrypoint
+
+  Write-Step "Installing better-sqlite3 prebuilt binding for the selected Node runtime"
+  Push-Location $BetterSqlitePackageDir
+  try {
+    Invoke-RepoCommand -Command @($NodeExecutable, $prebuildInstallEntrypoint, "--verbose")
+  } finally {
+    Pop-Location
+  }
+
+  if (Test-CoreNativeDependencies) {
+    return
+  }
+
+  Write-Step "Falling back to pnpm rebuild for better-sqlite3"
+  Push-Location $RepoRoot
+  try {
+    Invoke-PnpmCommand -Arguments @("rebuild", "better-sqlite3")
+  } finally {
+    Pop-Location
+  }
+
+  if (-not (Test-CoreNativeDependencies)) {
+    throw "better-sqlite3 is not compatible with $NodeExecutable. Set AGENT_METRICS_NODE_PATH to a compatible Node 22 runtime or install the required native build toolchain."
+  }
+}
+
 function Ensure-Bootstrap() {
-  Ensure-Command -Name "node"
-  Ensure-Command -Name "corepack"
+  $script:NodeExecutable = Resolve-NodeExecutable
+  $script:CorepackEntrypoint = Resolve-CorepackEntrypoint $NodeExecutable
 
   if (-not (Test-Path (Join-Path $RepoRoot "node_modules"))) {
     Write-Step "Installing workspace dependencies"
     Push-Location $RepoRoot
     try {
-      Invoke-RepoCommand -Command @("corepack", "pnpm", "install")
+      Invoke-PnpmCommand -Arguments @("install")
     } finally {
       Pop-Location
     }
@@ -123,18 +285,20 @@ function Ensure-Bootstrap() {
     Write-Step "Building workspace packages"
     Push-Location $RepoRoot
     try {
-      Invoke-RepoCommand -Command @("corepack", "pnpm", "build")
+      Invoke-PnpmCommand -Arguments @("build")
     } finally {
       Pop-Location
     }
   }
+
+  Ensure-CoreNativeDependencies
 }
 
 function Ensure-ClaudeHooks() {
   Write-Step "Ensuring Claude hooks"
   Push-Location $CliWorkingDir
   try {
-    Invoke-RepoCommand -Command @("node", "dist/index.js", "hooks", "ensure", "--scope", "global", "--repo-root", $RepoRoot)
+    Invoke-RepoCommand -Command @($NodeExecutable, "dist/index.js", "hooks", "ensure", "--scope", "global", "--repo-root", $RepoRoot)
   } finally {
     Pop-Location
   }
@@ -177,7 +341,7 @@ function Start-HookWatcherIfNeeded() {
   }
 
   Write-Step "Starting Claude hook watcher"
-  $process = Start-Process -FilePath "node" `
+  $process = Start-Process -FilePath $NodeExecutable `
     -ArgumentList @("dist/index.js", "hooks", "watch", "--scope", "global", "--repo-root", $RepoRoot) `
     -WorkingDirectory $CliWorkingDir `
     -RedirectStandardOutput $HookWatcherOutLog `
@@ -238,7 +402,7 @@ function Start-ParserIfNeeded() {
   }
 
   Write-Step "Starting raw hook parser"
-  $process = Start-Process -FilePath "node" `
+  $process = Start-Process -FilePath $NodeExecutable `
     -ArgumentList @("dist/index.js", "hooks", "parse", "--follow", "--repo-root", $RepoRoot) `
     -WorkingDirectory $CliWorkingDir `
     -RedirectStandardOutput $ParserOutLog `
@@ -330,7 +494,7 @@ function Start-CoreIfNeeded() {
   }
 
   Write-Step "Starting core API"
-  $process = Start-Process -FilePath "node" `
+  $process = Start-Process -FilePath $NodeExecutable `
     -ArgumentList @("dist/server.js") `
     -WorkingDirectory $CoreWorkingDir `
     -RedirectStandardOutput $CoreOutLog `
@@ -349,6 +513,26 @@ function Start-CoreIfNeeded() {
 }
 
 function Get-ManagedDashboardPid() {
+  if (Test-Path $DashboardPidPath) {
+    $rawPid = (Get-Content $DashboardPidPath -Raw).Trim()
+
+    if ($rawPid -match '^\d+$') {
+      $managedPid = [int]$rawPid
+      $process = Get-CimInstance Win32_Process -Filter "ProcessId = $managedPid" -ErrorAction SilentlyContinue
+
+      if (
+        $null -ne $process -and
+        $process.Name -eq "node.exe" -and
+        $process.CommandLine -like "*$RepoRoot*" -and
+        $process.CommandLine -match "vite(\.js)?"
+      ) {
+        return $managedPid
+      }
+    }
+
+    Remove-Item $DashboardPidPath -ErrorAction SilentlyContinue
+  }
+
   $connection = Get-NetTCPConnection -LocalPort $DashboardPort -State Listen -ErrorAction SilentlyContinue |
     Select-Object -First 1
 
@@ -394,7 +578,7 @@ function Start-DashboardIfNeeded() {
   }
 
   Write-Step "Starting dashboard"
-  $process = Start-Process -FilePath "node" `
+  $process = Start-Process -FilePath $NodeExecutable `
     -ArgumentList @($ViteEntry, "--host", "127.0.0.1", "--port", "$DashboardPort") `
     -WorkingDirectory $DashboardWorkingDir `
     -RedirectStandardOutput $DashboardOutLog `
@@ -408,11 +592,8 @@ function Start-DashboardIfNeeded() {
     return Test-OverviewContract $json
   } -LogPath $DashboardErrLog
 
+  Set-Content -Path $DashboardPidPath -Value "$($process.Id)" -NoNewline
   Write-Step "Dashboard started with PID $($process.Id)"
-}
-
-if (-not (Test-Path $RuntimeDir)) {
-  New-Item -ItemType Directory -Path $RuntimeDir | Out-Null
 }
 
 Ensure-Bootstrap
@@ -427,6 +608,7 @@ Write-Host "Hooks:     ensured + watcher active"
 Write-Host "Parser:    raw hook bus -> normalized events"
 Write-Host "Dashboard: $DashboardUrl"
 Write-Host "API:       $CoreUrl"
+Write-Host "Node:      $NodeExecutable ($NodeResolutionSource)"
 Write-Host "Logs:      $RuntimeDir"
 Write-Host ""
 Write-Host "Next step: open Claude Code in a test workspace and trigger Read, Search/Grep, Edit, and Bash."

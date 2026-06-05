@@ -640,7 +640,7 @@ describe("extractCodexEventsFromRollout", () => {
         type: "token.usage.recorded",
         message_id: "usage_30321",
         model: "gpt-5.4",
-        input_tokens: 12472,
+        input_tokens: 15928,
         output_tokens: 202,
         cache_read_input_tokens: 3456,
         cache_creation_input_tokens: 0,

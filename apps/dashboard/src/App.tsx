@@ -66,7 +66,7 @@ const TrendChart = lazy(async () => {
 
 const DEFAULT_TOOL_EMPTY_MESSAGE = "No tool activity in this scope.";
 const SOURCE_UNAVAILABLE_MESSAGE = "Not available for this source yet.";
-const LIVE_REFRESH_MS = 2000;
+const LIVE_REFRESH_MS = 5000;
 const SOURCE_OPTIONS: Array<{ value: SourceVendor; label: string }> = [
   { value: "all", label: "All" },
   { value: "claude-code", label: "Claude Code" },
@@ -432,7 +432,7 @@ export function App({ initialSurface }: AppProps = {}) {
     return () => {
       active = false;
     };
-  }, [globalScope, isFloatingSurface, selectedSessionId]);
+  }, [isFloatingSurface, selectedSessionId]);
 
   const handleSelectSession = useEffectEvent((sessionId: string) => {
     startTransition(() => {
@@ -450,10 +450,6 @@ export function App({ initialSurface }: AppProps = {}) {
     setGlobalScope(selection);
     setLoadErrorMessage(null);
     setStaleMessage(null);
-
-    if (!isFloatingSurface && selectedSessionId) {
-      setSessionDetailLoading(true);
-    }
   });
 
   const handleSourceVendorChange = useEffectEvent((sourceVendor: SourceVendor) => {
@@ -463,14 +459,6 @@ export function App({ initialSurface }: AppProps = {}) {
 
     startTransition(() => {
       setSelectedSourceVendor(sourceVendor);
-      setOverview(null);
-      setBaseTools(INITIAL_PANEL_TOOLS_STATE);
-      setBaseSessions(INITIAL_SESSIONS_STATE);
-      setTrendTools(INITIAL_PANEL_TOOLS_STATE);
-      setRankingTools(INITIAL_PANEL_TOOLS_STATE);
-      setSelectedSession(null);
-      setSelectedSessionId(null);
-      setSessionDetailLoading(false);
       setLoadErrorMessage(null);
       setStaleMessage(null);
     });

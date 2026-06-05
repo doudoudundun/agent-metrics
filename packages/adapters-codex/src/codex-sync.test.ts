@@ -320,7 +320,7 @@ describe("syncCodexRollouts", () => {
         event_id: "codex:session:019e5dc9-b10c-7371-8edd-066e8db7e50d:usage:30321",
         type: "token.usage.recorded",
         model: "gpt-5.4",
-        input_tokens: 12472,
+        input_tokens: 15928,
         output_tokens: 202,
         cache_read_input_tokens: 3456,
         cache_creation_input_tokens: 0,

@@ -15,6 +15,7 @@ import { AnyEventSchema, type AnyEvent, type SourceVendor } from "@agent-metrics
 import { toCsv, toJson } from "@agent-metrics/export-kit";
 import { buildOverviewMetrics } from "@agent-metrics/metrics-engine";
 import { getAgentMetricsPaths } from "@agent-metrics/shared-utils";
+import { createRecentResultAction } from "./request-sync.js";
 import { resolveTimeScope, type ResolvedTimeScope } from "./time-scope.js";
 
 type MetricsStatement<Result = unknown> = {
@@ -81,6 +82,7 @@ type TokenUsageOverviewRow = {
   output_tokens: number;
   cache_creation_input_tokens: number;
   cache_read_input_tokens: number;
+  source_vendor: SourceVendor;
 };
 
 type TokensByModelRow = {
@@ -247,6 +249,8 @@ type EventLogCursor = {
   mtimeMs: number;
 };
 
+const REQUEST_SYNC_TTL_MS = 1500;
+
 export function resolveDefaultDbPath(moduleUrl: string): string {
   return fileURLToPath(new URL("../../../data/sqlite/metrics.sqlite", moduleUrl));
 }
@@ -280,26 +284,6 @@ export function createEventLogSynchronizer(input: {
     });
 
     syncQueue = run;
-    await run;
-  };
-}
-
-function createSingleFlightAction(action: () => Promise<void>): () => Promise<void> {
-  let inFlight: Promise<void> | null = null;
-
-  return async () => {
-    if (inFlight) {
-      await inFlight;
-      return;
-    }
-
-    const run = action().finally(() => {
-      if (inFlight === run) {
-        inFlight = null;
-      }
-    });
-
-    inFlight = run;
     await run;
   };
 }
@@ -366,7 +350,7 @@ function selectOverviewRows(
     .all(...responseWindow.params);
   const tokenUsage = db
     .prepare<TokenUsageOverviewRow>(
-      `SELECT model, input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens FROM token_usage_events${tokenUsageWindow.whereSql}`
+      `SELECT model, input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens, source_vendor FROM token_usage_events${tokenUsageWindow.whereSql}`
     )
     .all(...tokenUsageWindow.params);
   const codeEdits = db
@@ -410,12 +394,17 @@ function selectTokensByModel(
       SELECT
         COALESCE(model, 'unknown') AS model,
         SUM(
-          input_tokens +
-          output_tokens +
-          cache_creation_input_tokens +
-          cache_read_input_tokens
+          CASE
+            WHEN source_vendor = 'codex' THEN input_tokens + output_tokens + cache_creation_input_tokens
+            ELSE input_tokens + output_tokens + cache_creation_input_tokens + cache_read_input_tokens
+          END
         ) AS totalTokens,
-        SUM(input_tokens) AS inputTokens,
+        SUM(
+          CASE
+            WHEN source_vendor = 'codex' THEN MAX(input_tokens - cache_read_input_tokens, 0)
+            ELSE input_tokens
+          END
+        ) AS inputTokens,
         SUM(output_tokens) AS outputTokens,
         SUM(cache_read_input_tokens) AS cacheReadTokens,
         SUM(cache_creation_input_tokens) AS cacheCreationTokens
@@ -668,10 +657,10 @@ function selectSessions(
           SELECT
             session_id,
             SUM(
-              input_tokens +
-              output_tokens +
-              cache_creation_input_tokens +
-              cache_read_input_tokens
+              CASE
+                WHEN source_vendor = 'codex' THEN input_tokens + output_tokens + cache_creation_input_tokens
+                ELSE input_tokens + output_tokens + cache_creation_input_tokens + cache_read_input_tokens
+              END
             ) AS totalTokens
           FROM token_usage_events
           GROUP BY session_id
@@ -763,10 +752,10 @@ function selectSourceBreakdown(
       SELECT
         source_vendor AS sourceVendor,
         SUM(
-          input_tokens +
-          output_tokens +
-          cache_creation_input_tokens +
-          cache_read_input_tokens
+          CASE
+            WHEN source_vendor = 'codex' THEN input_tokens + output_tokens + cache_creation_input_tokens
+            ELSE input_tokens + output_tokens + cache_creation_input_tokens + cache_read_input_tokens
+          END
         ) AS totalTokens
       FROM token_usage_events
       ${tokenWindow.whereSql}
@@ -792,10 +781,10 @@ function selectProviderBreakdown(
         provider_host AS providerHost,
         provider_id AS providerId,
         SUM(
-          input_tokens +
-          output_tokens +
-          cache_creation_input_tokens +
-          cache_read_input_tokens
+          CASE
+            WHEN source_vendor = 'codex' THEN input_tokens + output_tokens + cache_creation_input_tokens
+            ELSE input_tokens + output_tokens + cache_creation_input_tokens + cache_read_input_tokens
+          END
         ) AS totalTokens
       FROM token_usage_events
       ${window.whereSql}
@@ -932,6 +921,35 @@ function migrateLegacyCodeEditsSchema(db: MetricsDatabase): void {
   if (!codeEditColumns.some((column) => column.name === "source_adapter")) {
     db.exec("ALTER TABLE code_edits ADD COLUMN source_adapter TEXT NOT NULL DEFAULT 'claude-hook'");
   }
+}
+
+function migrateCodexTokenUsageInputTokens(db: MetricsDatabase): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      name TEXT PRIMARY KEY,
+      applied_at TEXT NOT NULL
+    );
+  `);
+
+  const migrationName = "codex-raw-input-tokens-v1";
+  const applied = db
+    .prepare<{ name: string }>("SELECT name FROM schema_migrations WHERE name = ?")
+    .get(migrationName);
+
+  if (applied) {
+    return;
+  }
+
+  db.exec(`
+    UPDATE token_usage_events
+    SET input_tokens = input_tokens + cache_read_input_tokens
+    WHERE source_vendor = 'codex'
+      AND cache_read_input_tokens > 0;
+  `);
+  db.prepare("INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)").run(
+    migrationName,
+    new Date().toISOString()
+  );
 }
 
 function migrateLegacyEventTableSchema(
@@ -1090,6 +1108,8 @@ export function buildApp(input: BuildAppInput): MetricsApp {
     defaultAdapter: "claude-transcript",
     includeProviderColumns: true
   });
+  migrateCodexTokenUsageInputTokens(db);
+
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_sessions_source_started_at
       ON sessions (source_vendor, started_at);
@@ -1119,7 +1139,7 @@ export function buildApp(input: BuildAppInput): MetricsApp {
       })
     : null;
   const syncTranscriptState = agentPaths
-    ? createSingleFlightAction(async () => {
+    ? createRecentResultAction(async () => {
         const result = await syncKnownClaudeTranscripts({
           manifestPath: agentPaths.transcriptManifestPath,
           eventLogPath: input.eventLogPath ?? agentPaths.eventLogPath,
@@ -1127,34 +1147,34 @@ export function buildApp(input: BuildAppInput): MetricsApp {
           transcriptLedgerPath: agentPaths.transcriptLedgerPath
         });
         persistClaudeSessionContexts(db, result.sessionContexts);
-      })
+      }, REQUEST_SYNC_TTL_MS)
     : null;
   const syncOpenCodeState = agentPaths
-    ? createSingleFlightAction(async () => {
+    ? createRecentResultAction(async () => {
         await syncOpenCodeDatabase({
           eventLogPath: input.eventLogPath ?? agentPaths.eventLogPath,
           cursorPath: agentPaths.opencodeCursorPath,
           ledgerPath: agentPaths.opencodeLedgerPath
         });
-      })
+      }, REQUEST_SYNC_TTL_MS)
     : null;
   const syncCursorState = agentPaths
-    ? createSingleFlightAction(async () => {
+    ? createRecentResultAction(async () => {
         await syncCursorArtifacts({
           eventLogPath: input.eventLogPath ?? agentPaths.eventLogPath,
           cursorPath: agentPaths.cursorIdeStatePath,
           ledgerPath: agentPaths.cursorIdeLedgerPath
         });
-      })
+      }, REQUEST_SYNC_TTL_MS)
     : null;
   const syncCodexState = agentPaths
-    ? createSingleFlightAction(async () => {
+    ? createRecentResultAction(async () => {
         await syncCodexRollouts({
           eventLogPath: input.eventLogPath ?? agentPaths.eventLogPath,
           cursorPath: agentPaths.codexCursorPath,
           ledgerPath: agentPaths.codexLedgerPath
         });
-      })
+      }, REQUEST_SYNC_TTL_MS)
     : null;
 
   app.addHook("onClose", async () => {
@@ -1386,15 +1406,25 @@ export function buildApp(input: BuildAppInput): MetricsApp {
           deletions: 0,
           messageId: row.messageId,
           model: row.model ?? "unknown",
-          inputTokens: row.inputTokens,
+          inputTokens: resolveDisplayedInputTokens({
+            sourceVendor: row.sourceVendor,
+            inputTokens: row.inputTokens,
+            cacheReadTokens: row.cacheReadTokens
+          }),
           outputTokens: row.outputTokens,
           cacheReadTokens: row.cacheReadTokens,
           cacheCreationTokens: row.cacheCreationTokens,
           totalTokens:
-            row.inputTokens +
-            row.outputTokens +
-            row.cacheReadTokens +
-            row.cacheCreationTokens,
+            row.sourceVendor === "codex"
+              ? row.inputTokens + row.outputTokens + row.cacheCreationTokens
+              : resolveDisplayedInputTokens({
+                  sourceVendor: row.sourceVendor,
+                  inputTokens: row.inputTokens,
+                  cacheReadTokens: row.cacheReadTokens
+                }) +
+                row.outputTokens +
+                row.cacheReadTokens +
+                row.cacheCreationTokens,
           usageSource: row.usageSource
         })
       ),
@@ -1788,6 +1818,18 @@ function persistClaudeSessionContexts(
   });
 
   persist(contexts);
+}
+
+function resolveDisplayedInputTokens(input: {
+  sourceVendor: string;
+  inputTokens: number;
+  cacheReadTokens: number;
+}): number {
+  if (input.sourceVendor === "codex") {
+    return Math.max(0, input.inputTokens - input.cacheReadTokens);
+  }
+
+  return input.inputTokens;
 }
 
 function parseFilesChanged(value: string): string[] {

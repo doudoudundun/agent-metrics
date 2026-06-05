@@ -130,6 +130,31 @@ describe("App", () => {
     view.unmount();
   });
 
+  it("does not refetch session detail when switching scope with the same selected session", async () => {
+    const view = render(<App />);
+
+    expect(
+      await screen.findByRole("region", {
+        name: "Overview metrics for Today"
+      })
+    ).toBeInTheDocument();
+    await waitFor(() => {
+      expect(apiMocks.fetchSessionDetail).toHaveBeenCalledTimes(1);
+    });
+
+    fireEvent.click(
+      within(screen.getByRole("toolbar", { name: "Dashboard time scope" })).getByRole("button", {
+        name: "This Week"
+      })
+    );
+
+    await nextTick();
+
+    expect(apiMocks.fetchSessionDetail).toHaveBeenCalledTimes(1);
+
+    view.unmount();
+  });
+
   it("renders overview metrics, recent sessions, and a session timeline", async () => {
     const view = render(<App />);
 
@@ -270,7 +295,7 @@ describe("App", () => {
     view.unmount();
   });
 
-  it("clears stale source data while loading a different source filter", async () => {
+  it("keeps stale source data visible while loading a different source filter", async () => {
     const pendingCursorRequest = new Promise<never>(() => undefined);
 
     vi.mocked(fetchOverview).mockImplementation(async (_, sourceVendor) => {
@@ -357,9 +382,12 @@ describe("App", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Cursor" }));
 
-    expect(await screen.findByText("Loading local activity signals from the metrics core.")).toBeInTheDocument();
-    expect(screen.queryAllByText("45,678")).toHaveLength(0);
-    expect(screen.queryByText("ses_1")).not.toBeInTheDocument();
+    expect(screen.getAllByText("45,678").length).toBeGreaterThan(0);
+    expect(screen.getByText("ses_1")).toBeInTheDocument();
+    expect(screen.getAllByText("Cursor").length).toBeGreaterThan(0);
+    expect(
+      screen.queryByText("Loading local activity signals from the metrics core.")
+    ).not.toBeInTheDocument();
 
     view.unmount();
   });

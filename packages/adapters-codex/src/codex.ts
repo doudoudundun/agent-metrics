@@ -431,9 +431,8 @@ export function extractCodexEventsFromRollout(input: {
       continue;
     }
 
-    const rawInputTokens = normalizeInteger(lastUsage?.input_tokens) ?? 0;
+    const inputTokens = normalizeInteger(lastUsage?.input_tokens) ?? 0;
     const cacheReadTokens = normalizeInteger(lastUsage?.cached_input_tokens) ?? 0;
-    const inputTokens = Math.max(0, rawInputTokens - cacheReadTokens);
     const outputTokens = normalizeInteger(lastUsage?.output_tokens) ?? 0;
 
     if (inputTokens === 0 && cacheReadTokens === 0 && outputTokens === 0) {

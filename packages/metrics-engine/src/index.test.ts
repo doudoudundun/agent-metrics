@@ -80,6 +80,28 @@ describe("buildOverviewMetrics", () => {
     });
   });
 
+  it("subtracts cache read tokens from codex input tokens for display", () => {
+    const overview = buildOverviewMetrics({
+      sessions: [{ session_id: "ses_codex" }],
+      toolEvents: [],
+      prompts: [],
+      responses: [],
+      tokenUsage: [
+        {
+          input_tokens: 15928,
+          output_tokens: 202,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 3456,
+          source_vendor: "codex"
+        }
+      ],
+      codeEdits: []
+    });
+
+    expect(overview.inputTokens).toBe(12472);
+    expect(overview.totalTokens).toBe(16130);
+  });
+
   it("dedupes repeated files across multiple edit events", () => {
     const overview = buildOverviewMetrics({
       sessions: [{ session_id: "ses_1" }],

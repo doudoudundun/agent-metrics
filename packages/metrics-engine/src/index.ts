@@ -20,7 +20,34 @@ type TokenUsageRow = {
   output_tokens: number;
   cache_creation_input_tokens: number;
   cache_read_input_tokens: number;
+  source_vendor?: string;
 };
+
+function resolveDisplayedInputTokens(row: TokenUsageRow): number {
+  const inputTokens = row.input_tokens;
+  const cacheReadTokens = row.cache_read_input_tokens;
+
+  if (row.source_vendor === "codex") {
+    return Math.max(0, inputTokens - cacheReadTokens);
+  }
+
+  return inputTokens;
+}
+
+function resolveTotalTokens(row: TokenUsageRow): number {
+  if (row.source_vendor === "codex") {
+    return (
+      row.input_tokens + row.output_tokens + row.cache_creation_input_tokens
+    );
+  }
+
+  return (
+    row.input_tokens +
+    row.output_tokens +
+    row.cache_read_input_tokens +
+    row.cache_creation_input_tokens
+  );
+}
 
 type CodeEditRow = {
   files_changed: string[];
@@ -63,7 +90,10 @@ export function buildOverviewMetrics(input: {
   const editOperationCount = input.codeEdits.reduce((sum, row) => sum + row.edit_operation_count, 0);
   const turnCount = input.prompts.length;
   const responseCount = input.responses.length;
-  const inputTokens = input.tokenUsage.reduce((sum, row) => sum + row.input_tokens, 0);
+  const inputTokens = input.tokenUsage.reduce(
+    (sum, row) => sum + resolveDisplayedInputTokens(row),
+    0
+  );
   const outputTokens = input.tokenUsage.reduce((sum, row) => sum + row.output_tokens, 0);
   const cacheReadTokens = input.tokenUsage.reduce(
     (sum, row) => sum + row.cache_read_input_tokens,
@@ -100,7 +130,7 @@ export function buildOverviewMetrics(input: {
     editOperationCount,
     turnCount,
     responseCount,
-    totalTokens: inputTokens + outputTokens + cacheReadTokens + cacheCreationTokens,
+    totalTokens: input.tokenUsage.reduce((sum, row) => sum + resolveTotalTokens(row), 0),
     inputTokens,
     outputTokens,
     cacheReadTokens,
