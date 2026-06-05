@@ -784,11 +784,13 @@ function averageToolDuration(rows: ToolRow[] | null): number {
 
   const totals = rows.reduce(
     (accumulator, row) => {
-      const weight = row.count > 0 ? row.count : 1;
+      if (row.count <= 0) {
+        return accumulator;
+      }
 
       return {
-        duration: accumulator.duration + row.averageDurationMs * weight,
-        count: accumulator.count + weight
+        duration: accumulator.duration + row.averageDurationMs * row.count,
+        count: accumulator.count + row.count
       };
     },
     { duration: 0, count: 0 }
