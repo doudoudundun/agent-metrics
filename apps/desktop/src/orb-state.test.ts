@@ -27,6 +27,12 @@ describe("orb state", () => {
     );
   });
 
+  it("keeps the current mode when pin does not match a visible peek card", () => {
+    expect(pinPeekCard(createOrbSurfaceState("orbDocked"))).toEqual(
+      createOrbSurfaceState("orbDocked")
+    );
+  });
+
   it("expands peek states into the detail view", () => {
     expect(expandOrbDetail(createOrbSurfaceState("peekVisible"))).toEqual(
       createOrbSurfaceState("detailVisible")
