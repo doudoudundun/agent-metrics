@@ -16,6 +16,8 @@ import {
 import { FloatingDashboard } from "./components/FloatingDashboard";
 import { KpiGrid } from "./components/KpiGrid";
 import { ModelUsagePanel } from "./components/ModelUsagePanel";
+import { OrbSurface } from "./components/OrbSurface";
+import { PeekCardDashboard } from "./components/PeekCardDashboard";
 import { RecentSessionsTable } from "./components/RecentSessionsTable";
 import { SessionTimelinePanel } from "./components/SessionTimelinePanel";
 import { TimeScopeToolbar } from "./components/TimeScopeToolbar";
@@ -90,6 +92,10 @@ type AppProps = {
 export function App({ initialSurface }: AppProps = {}) {
   const desktopSurface = initialSurface ?? resolveDesktopSurface(window.location.search).surface;
   const isFloatingSurface = desktopSurface === "desktop-floating";
+  const isOrbSurface = desktopSurface === "desktop-orb";
+  const isPeekSurface = desktopSurface === "desktop-orb-peek";
+  const isCompactSurface = isFloatingSurface || isOrbSurface || isPeekSurface;
+  const isFullDashboardSurface = !isCompactSurface;
   const desktopApi = getAgentMetricsDesktopBridge();
   const [overview, setOverview] = useState<OverviewResponse | null>(null);
   const [baseTools, setBaseTools] = useState<PanelToolsState>(INITIAL_PANEL_TOOLS_STATE);
@@ -161,7 +167,7 @@ export function App({ initialSurface }: AppProps = {}) {
   }, [globalScope, selectedSourceVendor]);
 
   useEffect(() => {
-    if (isFloatingSurface) {
+    if (isFloatingSurface || isOrbSurface) {
       setBaseTools(INITIAL_PANEL_TOOLS_STATE);
       return;
     }
@@ -212,9 +218,14 @@ export function App({ initialSurface }: AppProps = {}) {
       active = false;
       window.clearInterval(timer);
     };
-  }, [globalScope, isFloatingSurface, selectedSourceVendor]);
+  }, [globalScope, isFloatingSurface, isOrbSurface, selectedSourceVendor]);
 
   useEffect(() => {
+    if (!isFullDashboardSurface && !isFloatingSurface) {
+      setBaseSessions(INITIAL_SESSIONS_STATE);
+      return;
+    }
+
     let active = true;
     setBaseSessions((current) => ({
       rows: current.rows,
@@ -261,10 +272,10 @@ export function App({ initialSurface }: AppProps = {}) {
       active = false;
       window.clearInterval(timer);
     };
-  }, [globalScope, selectedSourceVendor]);
+  }, [globalScope, isFloatingSurface, isFullDashboardSurface, selectedSourceVendor]);
 
   useEffect(() => {
-    if (isFloatingSurface || !trendOverride) {
+    if (!isFullDashboardSurface || !trendOverride) {
       setTrendTools(INITIAL_PANEL_TOOLS_STATE);
       return;
     }
@@ -315,10 +326,10 @@ export function App({ initialSurface }: AppProps = {}) {
       active = false;
       window.clearInterval(timer);
     };
-  }, [isFloatingSurface, trendOverride, selectedSourceVendor]);
+  }, [isFullDashboardSurface, trendOverride, selectedSourceVendor]);
 
   useEffect(() => {
-    if (isFloatingSurface || !rankingOverride) {
+    if (!isFullDashboardSurface || !rankingOverride) {
       setRankingTools(INITIAL_PANEL_TOOLS_STATE);
       return;
     }
@@ -369,10 +380,10 @@ export function App({ initialSurface }: AppProps = {}) {
       active = false;
       window.clearInterval(timer);
     };
-  }, [isFloatingSurface, rankingOverride, selectedSourceVendor]);
+  }, [isFullDashboardSurface, rankingOverride, selectedSourceVendor]);
 
   useEffect(() => {
-    if (isFloatingSurface) {
+    if (!isFullDashboardSurface) {
       setSelectedSession(null);
       setSelectedSessionId(null);
       setSessionDetailLoading(false);
@@ -391,10 +402,10 @@ export function App({ initialSurface }: AppProps = {}) {
     if (!selectedSessionId || !sessionRows.some((row) => row.sessionId === selectedSessionId)) {
       setSelectedSessionId(sessionRows[0]?.sessionId ?? null);
     }
-  }, [baseSessions.rows, isFloatingSurface, selectedSessionId]);
+  }, [baseSessions.rows, isFullDashboardSurface, selectedSessionId]);
 
   useEffect(() => {
-    if (isFloatingSurface) {
+    if (!isFullDashboardSurface) {
       setSessionDetailLoading(false);
       return;
     }
@@ -432,7 +443,7 @@ export function App({ initialSurface }: AppProps = {}) {
     return () => {
       active = false;
     };
-  }, [isFloatingSurface, selectedSessionId]);
+  }, [isFullDashboardSurface, selectedSessionId]);
 
   const handleSelectSession = useEffectEvent((sessionId: string) => {
     startTransition(() => {
@@ -506,6 +517,17 @@ export function App({ initialSurface }: AppProps = {}) {
         <span className="desktop-runtime-status">Runtime: desktop bridge ready</span>
       </div>
     ) : null;
+  const peekMetrics = {
+    totalTokens: overview?.totalTokens ?? 0,
+    totalToolCalls: overview?.totalToolCalls ?? 0,
+    editOperationCount: overview?.editOperationCount ?? 0,
+    affectedFileCount: overview?.affectedFileCount ?? 0,
+    insertions: overview?.insertions ?? 0,
+    deletions: overview?.deletions ?? 0,
+    successRate: overview?.successRate ?? 0,
+    failedExecutions: overview?.failedExecutions ?? 0,
+    averageDurationMs: averageToolDuration(baseTools.rows)
+  } satisfies Parameters<typeof PeekCardDashboard>[0]["metrics"];
 
   if (isFloatingSurface) {
     return (
@@ -517,6 +539,33 @@ export function App({ initialSurface }: AppProps = {}) {
           statusMessage={floatingStatusMessage}
           sessionStatus={floatingSessionsStatus}
           sessionStatusMessage={floatingSessionsStatusMessage}
+        />
+      </main>
+    );
+  }
+
+  if (isOrbSurface) {
+    return (
+      <main className="app-shell app-shell--orb">
+        <OrbSurface
+          collapsed={overview === null}
+          stale={staleMessage !== null}
+          onPointerEnter={() => void desktopApi?.showOrb()}
+          onPointerLeave={() => void desktopApi?.hideOrb()}
+          onClick={() => void desktopApi?.pinPeekCard()}
+        />
+      </main>
+    );
+  }
+
+  if (isPeekSurface) {
+    return (
+      <main className="app-shell app-shell--peek">
+        <PeekCardDashboard
+          status={overview === null ? "loading" : staleMessage ? "stale" : "ready"}
+          metrics={peekMetrics}
+          onPin={() => void desktopApi?.pinPeekCard()}
+          onExpand={() => void desktopApi?.expandOrbDetail()}
         />
       </main>
     );
@@ -726,6 +775,26 @@ export function App({ initialSurface }: AppProps = {}) {
       </section>
     </main>
   );
+}
+
+function averageToolDuration(rows: ToolRow[] | null): number {
+  if (!rows || rows.length === 0) {
+    return 0;
+  }
+
+  const totals = rows.reduce(
+    (accumulator, row) => {
+      const weight = row.count > 0 ? row.count : 1;
+
+      return {
+        duration: accumulator.duration + row.averageDurationMs * weight,
+        count: accumulator.count + weight
+      };
+    },
+    { duration: 0, count: 0 }
+  );
+
+  return totals.count > 0 ? totals.duration / totals.count : 0;
 }
 
 function buildPanelStatusMessage(

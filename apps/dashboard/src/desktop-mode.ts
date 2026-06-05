@@ -1,4 +1,9 @@
-export type DesktopSurface = "browser" | "desktop-main" | "desktop-floating";
+export type DesktopSurface =
+  | "browser"
+  | "desktop-main"
+  | "desktop-floating"
+  | "desktop-orb"
+  | "desktop-orb-peek";
 
 export type AgentMetricsDesktopBridge = {
   getRuntimeStatus: () => Promise<unknown>;
@@ -19,7 +24,12 @@ export function resolveDesktopSurface(search: string): {
   const params = new URLSearchParams(search);
   const surface = params.get("surface");
 
-  if (surface === "desktop-main" || surface === "desktop-floating") {
+  if (
+    surface === "desktop-main" ||
+    surface === "desktop-floating" ||
+    surface === "desktop-orb" ||
+    surface === "desktop-orb-peek"
+  ) {
     return { isDesktop: true, surface };
   }
 
