@@ -21,13 +21,17 @@ type PeekCardDashboardProps = {
   metrics: PeekCardMetrics;
   onPin?: () => void;
   onExpand?: () => void;
+  onPointerEnter?: () => void;
+  onPointerLeave?: () => void;
 };
 
 export function PeekCardDashboard({
   status,
   metrics,
   onPin,
-  onExpand
+  onExpand,
+  onPointerEnter,
+  onPointerLeave
 }: PeekCardDashboardProps) {
   const items = [
     {
@@ -53,7 +57,12 @@ export function PeekCardDashboard({
   ] as const;
 
   return (
-    <section className="peek-card-dashboard" aria-label="Desktop peek card">
+    <section
+      className="peek-card-dashboard"
+      aria-label="Desktop peek card"
+      onPointerEnter={onPointerEnter}
+      onPointerLeave={onPointerLeave}
+    >
       <header className="peek-card-dashboard__header">
         <div>
           <p className="peek-card-dashboard__eyebrow">Desktop Peek</p>

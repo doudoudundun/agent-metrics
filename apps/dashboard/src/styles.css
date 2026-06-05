@@ -54,7 +54,7 @@ body::before {
   width: 100%;
   min-height: 100vh;
   margin: 0;
-  padding: 10px;
+  padding: 0;
 }
 
 .app-shell--orb,
@@ -66,16 +66,12 @@ body::before {
 }
 
 body[data-desktop-surface="desktop-floating"] {
-  background:
-    radial-gradient(circle at top left, rgba(92, 199, 255, 0.22), transparent 32%),
-    linear-gradient(180deg, #0f1b28 0%, #08111b 100%);
+  background: transparent;
 }
 
 body[data-desktop-surface="desktop-orb"],
 body[data-desktop-surface="desktop-orb-peek"] {
-  background:
-    radial-gradient(circle at top, rgba(92, 199, 255, 0.24), transparent 34%),
-    linear-gradient(180deg, #0f1b28 0%, #08111b 100%);
+  background: transparent;
 }
 
 body[data-desktop-surface="desktop-floating"]::before {
@@ -799,15 +795,17 @@ tbody tr[data-selected="true"] .session-select {
 .floating-dashboard {
   display: grid;
   gap: 12px;
-  min-height: calc(100vh - 20px);
+  min-height: 100vh;
   padding: 14px;
   border: 1px solid rgba(226, 236, 247, 0.12);
-  border-radius: 24px;
+  border-radius: 0;
   background:
     radial-gradient(circle at top right, rgba(209, 255, 77, 0.12), transparent 34%),
     linear-gradient(180deg, rgba(19, 34, 50, 0.98), rgba(8, 17, 27, 0.98));
   box-shadow: var(--shadow);
   color: var(--panel-text);
+  -webkit-app-region: drag;
+  user-select: none;
 }
 
 .floating-dashboard__header {
@@ -852,8 +850,7 @@ tbody tr[data-selected="true"] .session-select {
   list-style: none;
 }
 
-.floating-dashboard__kpis li,
-.floating-dashboard__sessions li {
+.floating-dashboard__kpis li {
   border: 1px solid rgba(226, 236, 247, 0.1);
   border-radius: 16px;
   background: rgba(255, 255, 255, 0.04);
@@ -879,42 +876,11 @@ tbody tr[data-selected="true"] .session-select {
   font-size: 1.25rem;
 }
 
-.floating-dashboard__sessions-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  color: #c4d3e5;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.floating-dashboard__sessions {
-  display: grid;
-  gap: 8px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.floating-dashboard__sessions li {
-  display: grid;
-  gap: 4px;
-  padding: 10px 12px;
-}
-
-.floating-dashboard__sessions strong {
-  color: #edf4ff;
-  font-size: 0.88rem;
-  font-weight: 600;
-}
-
-.floating-dashboard__sessions span,
+.floating-dashboard__kpis small,
 .floating-dashboard__empty {
   color: #c4d3e5;
-  font-size: 0.76rem;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
   line-height: 1.35;
 }
 
@@ -922,15 +888,16 @@ tbody tr[data-selected="true"] .session-select {
   display: grid;
   place-items: center;
   min-height: 100vh;
+  padding: 6px;
 }
 
 .orb-surface__button {
   display: grid;
   place-items: center;
-  width: 72px;
-  height: 72px;
+  width: 64px;
+  height: 64px;
   padding: 0;
-  border: 1px solid rgba(226, 236, 247, 0.18);
+  border: 1px solid rgba(226, 236, 247, 0.22);
   border-radius: 999px;
   background:
     radial-gradient(circle at 35% 30%, rgba(209, 255, 77, 0.95), rgba(92, 199, 255, 0.68) 42%, rgba(19, 34, 50, 0.98) 100%);
@@ -951,8 +918,8 @@ tbody tr[data-selected="true"] .session-select {
 }
 
 .orb-surface__core {
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.78);
   box-shadow: 0 0 24px rgba(255, 255, 255, 0.45);
@@ -1117,11 +1084,6 @@ tbody tr[data-selected="true"] .session-select {
 
   .panel-heading-scoped .chart-summary {
     justify-items: start;
-  }
-
-  .floating-dashboard__header,
-  .floating-dashboard__sessions-header {
-    grid-template-columns: 1fr;
   }
 
   .floating-dashboard__header {

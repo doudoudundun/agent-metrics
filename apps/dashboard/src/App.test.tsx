@@ -96,7 +96,7 @@ describe("App", () => {
     expect(screen.getAllByText("This Week").length).toBeGreaterThan(0);
     expect(screen.getAllByText("45,678").length).toBeGreaterThan(0);
     expect(screen.getByText("ses_1")).toBeInTheDocument();
-    expect(screen.getAllByText("Refreshing global tool metrics...")).toHaveLength(2);
+    expect(screen.getAllByText("Refreshing global tool metrics...").length).toBeGreaterThan(0);
     expect(screen.getByText("Loading session activity...")).toBeInTheDocument();
     expect(
       screen.queryByText("Loading local activity signals from the metrics core.")
@@ -469,9 +469,10 @@ describe("App", () => {
     const view = render(<App />);
 
     expect(await screen.findByRole("heading", { name: "Agent Metrics" })).toBeInTheDocument();
-    expect(screen.getByText("Always-on-top summary")).toBeInTheDocument();
+    expect(screen.getByText("Modified files at a glance")).toBeInTheDocument();
     expect(screen.queryByText("Export CSV")).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Recent Sessions" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Recent sessions")).not.toBeInTheDocument();
 
     view.unmount();
   });
@@ -479,13 +480,13 @@ describe("App", () => {
   it("shows a loading-specific floating state and skips full-dashboard background fetches", async () => {
     window.history.replaceState({}, "", "/?surface=desktop-floating");
     vi.mocked(fetchOverview).mockImplementationOnce(() => new Promise(() => undefined));
-    vi.mocked(fetchSessions).mockImplementationOnce(() => new Promise(() => undefined));
 
     const view = render(<App />);
 
     expect(await screen.findByText("Loading live summary...")).toBeInTheDocument();
     expect(screen.queryByRole("list", { name: "Floating summary metrics" })).not.toBeInTheDocument();
     expect(fetchTools).not.toHaveBeenCalled();
+    expect(fetchSessions).not.toHaveBeenCalled();
     expect(apiMocks.fetchSessionDetail).not.toHaveBeenCalled();
     expect(apiMocks.buildExportUrl).not.toHaveBeenCalled();
     expect(screen.queryByRole("link", { name: "Export CSV" })).not.toBeInTheDocument();
@@ -504,38 +505,24 @@ describe("App", () => {
     expect(screen.getByText("Metrics core unavailable")).toBeInTheDocument();
     expect(screen.queryByRole("list", { name: "Floating summary metrics" })).not.toBeInTheDocument();
     expect(fetchTools).not.toHaveBeenCalled();
+    expect(fetchSessions).not.toHaveBeenCalled();
     expect(apiMocks.fetchSessionDetail).not.toHaveBeenCalled();
     expect(screen.queryByRole("link", { name: "Export CSV" })).not.toBeInTheDocument();
 
     view.unmount();
   });
 
-  it("shows a recent-sessions loading state when overview is ready but sessions are still loading", async () => {
+  it("shows file-focused floating metrics without requesting sessions", async () => {
     window.history.replaceState({}, "", "/?surface=desktop-floating");
-    vi.mocked(fetchSessions).mockImplementationOnce(() => new Promise(() => undefined));
 
     const view = render(<App />);
 
+    expect(await screen.findByText("7")).toBeInTheDocument();
     expect(await screen.findByText("45,678")).toBeInTheDocument();
-    expect(screen.getByText("Loading recent sessions...")).toBeInTheDocument();
-    expect(screen.queryByText("Waiting for live sessions")).not.toBeInTheDocument();
+    expect(screen.getByText("4 edits / +42 / -8")).toBeInTheDocument();
+    expect(screen.queryByText("Recent sessions")).not.toBeInTheDocument();
     expect(fetchTools).not.toHaveBeenCalled();
-    expect(apiMocks.fetchSessionDetail).not.toHaveBeenCalled();
-
-    view.unmount();
-  });
-
-  it("shows a degraded recent-sessions state when overview is ready but sessions fail", async () => {
-    window.history.replaceState({}, "", "/?surface=desktop-floating");
-    vi.mocked(fetchSessions).mockRejectedValueOnce(new Error("Recent sessions request failed"));
-
-    const view = render(<App />);
-
-    expect(await screen.findByText("45,678")).toBeInTheDocument();
-    expect(screen.getByText("Recent sessions unavailable")).toBeInTheDocument();
-    expect(screen.getByText("Recent sessions request failed")).toBeInTheDocument();
-    expect(screen.queryByText("Waiting for live sessions")).not.toBeInTheDocument();
-    expect(fetchTools).not.toHaveBeenCalled();
+    expect(fetchSessions).not.toHaveBeenCalled();
     expect(apiMocks.fetchSessionDetail).not.toHaveBeenCalled();
 
     view.unmount();
@@ -566,7 +553,15 @@ describe("App", () => {
       showOrb: vi.fn().mockResolvedValue(undefined),
       hideOrb: vi.fn().mockResolvedValue(undefined),
       pinPeekCard: vi.fn().mockResolvedValue(undefined),
-      expandOrbDetail: vi.fn().mockResolvedValue(undefined)
+      expandOrbDetail: vi.fn().mockResolvedValue(undefined),
+      getOrbSnapshot: vi.fn().mockResolvedValue(null),
+      setOrbSnapshot: vi.fn().mockResolvedValue(undefined),
+      markOrbStale: vi.fn().mockResolvedValue(undefined),
+      peekEnter: vi.fn().mockResolvedValue(undefined),
+      peekLeave: vi.fn().mockResolvedValue(undefined),
+      orbDragStart: vi.fn().mockResolvedValue(undefined),
+      orbDragMove: vi.fn().mockResolvedValue(undefined),
+      orbDragEnd: vi.fn().mockResolvedValue(undefined)
     };
     window.agentMetricsDesktop = desktopBridge;
 

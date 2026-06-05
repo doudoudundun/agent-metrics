@@ -48,6 +48,14 @@ type SessionsState = {
   errorMessage: string | null;
 };
 
+type PeekMetrics = Parameters<typeof PeekCardDashboard>[0]["metrics"];
+
+type DesktopOrbSnapshot = {
+  status: "loading" | "ready" | "stale";
+  metrics: PeekMetrics;
+  updatedAt: string | null;
+};
+
 const INITIAL_PANEL_TOOLS_STATE: PanelToolsState = {
   rows: null,
   loading: false,
@@ -111,6 +119,7 @@ export function App({ initialSurface }: AppProps = {}) {
   const [sessionDetailLoading, setSessionDetailLoading] = useState(false);
   const [loadErrorMessage, setLoadErrorMessage] = useState<string | null>(null);
   const [staleMessage, setStaleMessage] = useState<string | null>(null);
+  const [sharedPeekSnapshot, setSharedPeekSnapshot] = useState<DesktopOrbSnapshot | null>(null);
 
   const applyLoadedOverview = useEffectEvent((nextOverview: OverviewResponse) => {
     startTransition(() => {
@@ -121,6 +130,19 @@ export function App({ initialSurface }: AppProps = {}) {
   });
 
   const applyLoadError = useEffectEvent((message: string) => {
+    if (isCompactSurface && sharedPeekSnapshot !== null) {
+      startTransition(() => {
+        setSharedPeekSnapshot({
+          ...sharedPeekSnapshot,
+          status: "stale"
+        });
+        setLoadErrorMessage(null);
+        setStaleMessage(message);
+      });
+      void desktopApi?.markOrbStale?.();
+      return;
+    }
+
     if (overview === null) {
       startTransition(() => {
         setLoadErrorMessage(message);
@@ -165,6 +187,49 @@ export function App({ initialSurface }: AppProps = {}) {
       window.clearInterval(timer);
     };
   }, [globalScope, selectedSourceVendor]);
+
+  useEffect(() => {
+    if (!isCompactSurface || !desktopApi?.getOrbSnapshot) {
+      setSharedPeekSnapshot(null);
+      return;
+    }
+
+    let active = true;
+
+    void desktopApi
+      .getOrbSnapshot()
+      .then((snapshot) => {
+        if (!active) {
+          return;
+        }
+
+        const parsedSnapshot = parseDesktopOrbSnapshot(snapshot);
+
+        if (parsedSnapshot !== null) {
+          const shouldMarkStale = overview === null && (loadErrorMessage !== null || staleMessage !== null);
+          const nextSnapshot =
+            shouldMarkStale
+              ? {
+                  ...parsedSnapshot,
+                  status: "stale" as const
+                }
+              : parsedSnapshot;
+
+          startTransition(() => {
+            setSharedPeekSnapshot(nextSnapshot);
+          });
+
+          if (shouldMarkStale) {
+            void desktopApi.markOrbStale?.();
+          }
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      active = false;
+    };
+  }, [desktopApi, isCompactSurface, loadErrorMessage, overview, staleMessage]);
 
   useEffect(() => {
     if (isFloatingSurface || isOrbSurface) {
@@ -221,7 +286,7 @@ export function App({ initialSurface }: AppProps = {}) {
   }, [globalScope, isFloatingSurface, isOrbSurface, selectedSourceVendor]);
 
   useEffect(() => {
-    if (!isFullDashboardSurface && !isFloatingSurface) {
+    if (!isFullDashboardSurface) {
       setBaseSessions(INITIAL_SESSIONS_STATE);
       return;
     }
@@ -478,16 +543,6 @@ export function App({ initialSurface }: AppProps = {}) {
   const scopeLabel = buildScopeLabel(globalScope);
   const sourceLabel = SOURCE_LABELS[selectedSourceVendor];
   const sessionRows = baseSessions.rows ?? [];
-  const floatingSessionsStatus =
-    baseSessions.rows === null
-      ? baseSessions.loading
-        ? "loading"
-        : baseSessions.errorMessage
-          ? "error"
-          : "ready"
-      : "ready";
-  const floatingSessionsStatusMessage =
-    baseSessions.rows === null ? baseSessions.errorMessage : null;
   const floatingStatus =
     overview === null
       ? loadErrorMessage
@@ -517,28 +572,41 @@ export function App({ initialSurface }: AppProps = {}) {
         <span className="desktop-runtime-status">Runtime: desktop bridge ready</span>
       </div>
     ) : null;
-  const peekMetrics = {
-    totalTokens: overview?.totalTokens ?? 0,
-    totalToolCalls: overview?.totalToolCalls ?? 0,
-    editOperationCount: overview?.editOperationCount ?? 0,
-    affectedFileCount: overview?.affectedFileCount ?? 0,
-    insertions: overview?.insertions ?? 0,
-    deletions: overview?.deletions ?? 0,
-    successRate: overview?.successRate ?? 0,
-    failedExecutions: overview?.failedExecutions ?? 0,
-    averageDurationMs: averageToolDuration(baseTools.rows)
-  } satisfies Parameters<typeof PeekCardDashboard>[0]["metrics"];
+  const peekMetrics = buildPeekMetrics(overview, baseTools.rows);
+  const effectivePeekSnapshot =
+    overview === null && sharedPeekSnapshot !== null
+      ? sharedPeekSnapshot
+      : {
+          status: staleMessage ? "stale" : overview === null ? "loading" : "ready",
+          metrics: peekMetrics,
+          updatedAt: overview?.updatedAt ?? sharedPeekSnapshot?.updatedAt ?? null
+        };
+
+  useEffect(() => {
+    if (!isCompactSurface || !desktopApi?.setOrbSnapshot || overview === null) {
+      return;
+    }
+
+    const nextMetrics = buildPeekMetrics(overview, baseTools.rows);
+    const nextSnapshot: DesktopOrbSnapshot = {
+      status: staleMessage ? "stale" : "ready",
+      metrics: nextMetrics,
+      updatedAt: overview.updatedAt
+    };
+
+    startTransition(() => {
+      setSharedPeekSnapshot(nextSnapshot);
+    });
+    void desktopApi.setOrbSnapshot(nextSnapshot);
+  }, [baseTools.rows, desktopApi, isCompactSurface, overview, staleMessage]);
 
   if (isFloatingSurface) {
     return (
       <main className="app-shell app-shell--floating">
         <FloatingDashboard
           overview={overview}
-          sessions={sessionRows}
           status={floatingStatus}
           statusMessage={floatingStatusMessage}
-          sessionStatus={floatingSessionsStatus}
-          sessionStatusMessage={floatingSessionsStatusMessage}
         />
       </main>
     );
@@ -548,11 +616,14 @@ export function App({ initialSurface }: AppProps = {}) {
     return (
       <main className="app-shell app-shell--orb">
         <OrbSurface
-          collapsed={overview === null}
-          stale={staleMessage !== null}
+          collapsed={effectivePeekSnapshot.status === "loading"}
+          stale={effectivePeekSnapshot.status === "stale"}
           onPointerEnter={() => void desktopApi?.showOrb()}
           onPointerLeave={() => void desktopApi?.hideOrb()}
-          onClick={() => void desktopApi?.pinPeekCard()}
+          onActivate={() => void desktopApi?.pinPeekCard()}
+          onDragStart={(offset) => void desktopApi?.orbDragStart(offset)}
+          onDragMove={(screenPoint) => void desktopApi?.orbDragMove(screenPoint)}
+          onDragEnd={() => void desktopApi?.orbDragEnd()}
         />
       </main>
     );
@@ -562,10 +633,12 @@ export function App({ initialSurface }: AppProps = {}) {
     return (
       <main className="app-shell app-shell--peek">
         <PeekCardDashboard
-          status={overview === null ? "loading" : staleMessage ? "stale" : "ready"}
-          metrics={peekMetrics}
+          status={effectivePeekSnapshot.status}
+          metrics={effectivePeekSnapshot.metrics}
           onPin={() => void desktopApi?.pinPeekCard()}
           onExpand={() => void desktopApi?.expandOrbDetail()}
+          onPointerEnter={() => void desktopApi?.peekEnter?.()}
+          onPointerLeave={() => void desktopApi?.peekLeave?.()}
         />
       </main>
     );
@@ -799,6 +872,47 @@ function averageToolDuration(rows: ToolRow[] | null): number {
   return totals.count > 0 ? totals.duration / totals.count : 0;
 }
 
+function buildPeekMetrics(overview: OverviewResponse | null, rows: ToolRow[] | null): PeekMetrics {
+  return {
+    totalTokens: overview?.totalTokens ?? 0,
+    totalToolCalls: overview?.totalToolCalls ?? 0,
+    editOperationCount: overview?.editOperationCount ?? 0,
+    affectedFileCount: overview?.affectedFileCount ?? 0,
+    insertions: overview?.insertions ?? 0,
+    deletions: overview?.deletions ?? 0,
+    successRate: overview?.successRate ?? 0,
+    failedExecutions: overview?.failedExecutions ?? 0,
+    averageDurationMs: averageToolDuration(rows)
+  };
+}
+
+function parseDesktopOrbSnapshot(snapshot: unknown): DesktopOrbSnapshot | null {
+  if (!isRecord(snapshot) || !isRecord(snapshot.metrics)) {
+    return null;
+  }
+
+  const status =
+    snapshot.status === "ready" || snapshot.status === "stale" || snapshot.status === "loading"
+      ? snapshot.status
+      : "loading";
+
+  return {
+    status,
+    updatedAt: typeof snapshot.updatedAt === "string" ? snapshot.updatedAt : null,
+    metrics: {
+      totalTokens: readNumber(snapshot.metrics.totalTokens),
+      totalToolCalls: readNumber(snapshot.metrics.totalToolCalls),
+      editOperationCount: readNumber(snapshot.metrics.editOperationCount),
+      affectedFileCount: readNumber(snapshot.metrics.affectedFileCount),
+      insertions: readNumber(snapshot.metrics.insertions),
+      deletions: readNumber(snapshot.metrics.deletions),
+      successRate: readNumber(snapshot.metrics.successRate),
+      failedExecutions: readNumber(snapshot.metrics.failedExecutions),
+      averageDurationMs: readNumber(snapshot.metrics.averageDurationMs)
+    }
+  };
+}
+
 function buildPanelStatusMessage(
   panelName: string,
   override: TimeScopeSelection | null,
@@ -832,6 +946,14 @@ function buildPanelStatusMessage(
 
 function messageFromError(error: unknown): string {
   return error instanceof Error ? error.message : "Failed to refresh scoped tool data.";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readNumber(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
 function buildToolEmptyMessage(

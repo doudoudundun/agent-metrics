@@ -104,6 +104,37 @@ describe("PeekCardDashboard", () => {
     expect(screen.queryByText("Recent sessions")).not.toBeInTheDocument();
   });
 
+  it("forwards pointer lifecycle events from the peek surface", () => {
+    const onPointerEnter = vi.fn();
+    const onPointerLeave = vi.fn();
+
+    render(
+      <PeekCardDashboard
+        status="ready"
+        metrics={{
+          totalTokens: 45678,
+          totalToolCalls: 12,
+          editOperationCount: 4,
+          affectedFileCount: 7,
+          insertions: 42,
+          deletions: 8,
+          successRate: 0.8333,
+          failedExecutions: 2,
+          averageDurationMs: 15
+        }}
+        onPointerEnter={onPointerEnter}
+        onPointerLeave={onPointerLeave}
+      />
+    );
+
+    const card = screen.getByLabelText("Desktop peek card");
+    fireEvent.pointerEnter(card);
+    fireEvent.pointerLeave(card);
+
+    expect(onPointerEnter).toHaveBeenCalledTimes(1);
+    expect(onPointerLeave).toHaveBeenCalledTimes(1);
+  });
+
   it("desktop-orb-peek surface renders compact metrics, ignores zero-count tool rows, and skips sessions requests", async () => {
     window.history.replaceState({}, "", "/?surface=desktop-orb-peek");
     const desktopBridge: AgentMetricsDesktopBridge = {
@@ -115,7 +146,15 @@ describe("PeekCardDashboard", () => {
       showOrb: vi.fn().mockResolvedValue(undefined),
       hideOrb: vi.fn().mockResolvedValue(undefined),
       pinPeekCard: vi.fn().mockResolvedValue(undefined),
-      expandOrbDetail: vi.fn().mockResolvedValue(undefined)
+      expandOrbDetail: vi.fn().mockResolvedValue(undefined),
+      getOrbSnapshot: vi.fn().mockResolvedValue(null),
+      setOrbSnapshot: vi.fn().mockResolvedValue(undefined),
+      markOrbStale: vi.fn().mockResolvedValue(undefined),
+      peekEnter: vi.fn().mockResolvedValue(undefined),
+      peekLeave: vi.fn().mockResolvedValue(undefined),
+      orbDragStart: vi.fn().mockResolvedValue(undefined),
+      orbDragMove: vi.fn().mockResolvedValue(undefined),
+      orbDragEnd: vi.fn().mockResolvedValue(undefined)
     };
     window.agentMetricsDesktop = desktopBridge;
 
@@ -129,10 +168,63 @@ describe("PeekCardDashboard", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Pin" }));
     fireEvent.click(screen.getByRole("button", { name: "Expand" }));
+    fireEvent.pointerEnter(screen.getByLabelText("Desktop peek card"));
+    fireEvent.pointerLeave(screen.getByLabelText("Desktop peek card"));
 
     await waitFor(() => {
       expect(desktopBridge.pinPeekCard).toHaveBeenCalledTimes(1);
       expect(desktopBridge.expandOrbDetail).toHaveBeenCalledTimes(1);
+      expect(desktopBridge.peekEnter).toHaveBeenCalledTimes(1);
+      expect(desktopBridge.peekLeave).toHaveBeenCalledTimes(1);
+      expect(desktopBridge.setOrbSnapshot).toHaveBeenCalled();
+    });
+    expect(apiMocks.fetchSessions).not.toHaveBeenCalled();
+  });
+
+  it("keeps the last shared snapshot visible when compact refresh fails", async () => {
+    window.history.replaceState({}, "", "/?surface=desktop-orb-peek");
+    const desktopBridge: AgentMetricsDesktopBridge = {
+      getRuntimeStatus: vi.fn(),
+      getSettings: vi.fn(),
+      updateSettings: vi.fn(),
+      showMainWindow: vi.fn(),
+      toggleFloatingWindow: vi.fn().mockResolvedValue({ visible: true }),
+      showOrb: vi.fn().mockResolvedValue(undefined),
+      hideOrb: vi.fn().mockResolvedValue(undefined),
+      pinPeekCard: vi.fn().mockResolvedValue(undefined),
+      expandOrbDetail: vi.fn().mockResolvedValue(undefined),
+      getOrbSnapshot: vi.fn().mockResolvedValue({
+        status: "ready",
+        updatedAt: "2026-05-27T10:30:00.000Z",
+        metrics: {
+          totalTokens: 9988,
+          totalToolCalls: 7,
+          editOperationCount: 2,
+          affectedFileCount: 1,
+          insertions: 18,
+          deletions: 4,
+          successRate: 0.5,
+          failedExecutions: 3,
+          averageDurationMs: 64
+        }
+      }),
+      setOrbSnapshot: vi.fn().mockResolvedValue(undefined),
+      markOrbStale: vi.fn().mockResolvedValue(undefined),
+      peekEnter: vi.fn().mockResolvedValue(undefined),
+      peekLeave: vi.fn().mockResolvedValue(undefined),
+      orbDragStart: vi.fn().mockResolvedValue(undefined),
+      orbDragMove: vi.fn().mockResolvedValue(undefined),
+      orbDragEnd: vi.fn().mockResolvedValue(undefined)
+    };
+    window.agentMetricsDesktop = desktopBridge;
+    apiMocks.fetchOverview.mockRejectedValue(new Error("Metrics core unavailable"));
+
+    render(<App />);
+
+    expect(await screen.findByText("9,988")).toBeInTheDocument();
+    expect(await screen.findByText("Showing stale data")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(desktopBridge.markOrbStale).toHaveBeenCalled();
     });
     expect(apiMocks.fetchSessions).not.toHaveBeenCalled();
   });

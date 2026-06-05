@@ -11,8 +11,9 @@ import {
 } from "./orb-state.js";
 import {
   createDesktopMetricsSnapshot,
-  updateDesktopMetricsSnapshot
+  type DesktopMetricsSnapshot
 } from "./orb-snapshot.js";
+import { resolveOrbDragBounds, resolvePeekCardBounds } from "./orb-layout.js";
 import { createProcessSupervisor } from "./runtime/process-supervisor.js";
 import {
   buildDashboardUrl,
@@ -53,6 +54,7 @@ type BrowserWindowLike = {
   loadURL(url: string): Promise<void>;
   on(event: "close" | "move" | "resize" | "closed", listener: (event: PreventableEvent) => void): void;
   restore(): void;
+  setBounds(bounds: RectangleLike): void;
   show(): void;
 };
 
@@ -105,6 +107,8 @@ let orbState = createOrbSurfaceState("orbHidden");
 let desktopSnapshot = createDesktopMetricsSnapshot();
 let hoverOpenTimer: NodeJS.Timeout | null = null;
 let hoverCloseTimer: NodeJS.Timeout | null = null;
+let orbDragPointerOffset: { x: number; y: number } | null = null;
+let orbBoundsPersistTimer: NodeJS.Timeout | null = null;
 
 const supervisor = createProcessSupervisor({ runtimePaths });
 
@@ -209,6 +213,54 @@ function clearHoverTimers(): void {
   hoverCloseTimer = null;
 }
 
+function clearOrbBoundsPersistTimer(): void {
+  clearTimeout(orbBoundsPersistTimer ?? undefined);
+  orbBoundsPersistTimer = null;
+}
+
+function queueOrbBoundsSave(bounds: WindowBounds): void {
+  clearOrbBoundsPersistTimer();
+  orbBoundsPersistTimer = setTimeout(() => {
+    orbBoundsPersistTimer = null;
+    void updateSettings({ orbBounds: bounds });
+  }, 120);
+}
+
+function getVisibleWorkArea(bounds: WindowBounds): WindowBounds {
+  return toWindowBounds(screen.getPrimaryDisplay().workArea);
+}
+
+function positionPeekCardWindow(): void {
+  if (orbWindow === null || peekCardWindow === null) {
+    return;
+  }
+
+  const orbBounds = captureWindowBounds(orbWindow);
+  const peekBounds = captureWindowBounds(peekCardWindow);
+  const nextBounds = resolvePeekCardBounds({
+    orbBounds,
+    peekSize: {
+      width: peekBounds.width,
+      height: peekBounds.height
+    },
+    workArea: getVisibleWorkArea(orbBounds)
+  });
+
+  peekCardWindow.setBounds(nextBounds);
+}
+
+function moveOrbWindow(nextBounds: WindowBounds): void {
+  if (orbWindow === null) {
+    return;
+  }
+
+  orbWindow.setBounds(nextBounds);
+
+  if (peekCardWindow?.isVisible()) {
+    positionPeekCardWindow();
+  }
+}
+
 function schedulePeekCardOpen(): void {
   if (peekCardWindow === null || orbWindow === null) {
     return;
@@ -220,9 +272,26 @@ function schedulePeekCardOpen(): void {
   hoverOpenTimer = setTimeout(() => {
     hoverOpenTimer = null;
     orbState = hoverOrb(orbState);
+    positionPeekCardWindow();
     peekCardWindow?.show();
     peekCardWindow?.focus();
   }, 150);
+}
+
+function keepPeekCardOpen(): void {
+  if (peekCardWindow === null) {
+    return;
+  }
+
+  clearTimeout(hoverCloseTimer ?? undefined);
+  hoverCloseTimer = null;
+
+  if (orbState.mode === "orbDocked") {
+    orbState = hoverOrb(orbState);
+  }
+
+  positionPeekCardWindow();
+  peekCardWindow.show();
 }
 
 function schedulePeekCardClose(): void {
@@ -251,16 +320,44 @@ function markDesktopSnapshotStale(): void {
   };
 }
 
-function restoreDesktopSnapshot(): void {
-  if (desktopSnapshot.updatedAt === null) {
-    return;
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readNumber(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function readNullableString(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function parseDesktopSnapshot(snapshot: unknown): DesktopMetricsSnapshot | null {
+  if (!isRecord(snapshot)) {
+    return null;
   }
 
-  desktopSnapshot = updateDesktopMetricsSnapshot(
-    desktopSnapshot,
-    desktopSnapshot.metrics,
-    desktopSnapshot.updatedAt
-  );
+  const status: DesktopMetricsSnapshot["status"] =
+    snapshot.status === "ready" || snapshot.status === "stale" || snapshot.status === "loading"
+      ? snapshot.status
+      : "loading";
+  const metricsValue = isRecord(snapshot.metrics) ? snapshot.metrics : {};
+
+  return {
+    status,
+    updatedAt: readNullableString(snapshot.updatedAt),
+    metrics: {
+      totalTokens: readNumber(metricsValue.totalTokens),
+      totalToolCalls: readNumber(metricsValue.totalToolCalls),
+      editOperationCount: readNumber(metricsValue.editOperationCount),
+      affectedFileCount: readNumber(metricsValue.affectedFileCount),
+      insertions: readNumber(metricsValue.insertions),
+      deletions: readNumber(metricsValue.deletions),
+      successRate: readNumber(metricsValue.successRate),
+      failedExecutions: readNumber(metricsValue.failedExecutions),
+      averageDurationMs: readNumber(metricsValue.averageDurationMs)
+    }
+  };
 }
 
 function toggleFloatingWindow(): { visible: boolean } {
@@ -314,13 +411,22 @@ function registerIpcHandlers(): void {
   ipcMain.handle("desktop:update-settings", async (_event: unknown, patch: unknown) =>
     updateSettings((patch ?? {}) as Record<string, unknown>)
   );
+  ipcMain.handle("desktop:get-orb-snapshot", async () => desktopSnapshot);
+  ipcMain.handle("desktop:set-orb-snapshot", async (_event: unknown, snapshot: unknown) => {
+    const nextSnapshot = parseDesktopSnapshot(snapshot);
+
+    if (nextSnapshot !== null) {
+      desktopSnapshot = nextSnapshot;
+    }
+  });
+  ipcMain.handle("desktop:mark-orb-stale", async () => {
+    markDesktopSnapshotStale();
+  });
   ipcMain.handle("desktop:show-main-window", async () => {
     showMainWindow();
   });
   ipcMain.handle("desktop:toggle-floating-window", async () => toggleFloatingWindow());
   ipcMain.handle("desktop:show-orb", async () => {
-    restoreDesktopSnapshot();
-
     if (orbWindow?.isVisible()) {
       schedulePeekCardOpen();
       return;
@@ -336,10 +442,62 @@ function registerIpcHandlers(): void {
 
     hideOrbWindow();
   });
+  ipcMain.handle("desktop:peek-enter", async () => {
+    keepPeekCardOpen();
+  });
+  ipcMain.handle("desktop:peek-leave", async () => {
+    schedulePeekCardClose();
+  });
+  ipcMain.handle("desktop:orb-drag-start", async (_event: unknown, offset: unknown) => {
+    if (!isRecord(offset)) {
+      return;
+    }
+
+    const x = readNumber(offset.x);
+    const y = readNumber(offset.y);
+
+    orbDragPointerOffset = { x, y };
+    clearHoverTimers();
+  });
+  ipcMain.handle("desktop:orb-drag-move", async (_event: unknown, screenPoint: unknown) => {
+    if (!isRecord(screenPoint) || orbWindow === null || orbDragPointerOffset === null) {
+      return;
+    }
+
+    const currentBounds = captureWindowBounds(orbWindow);
+    const nextBounds = resolveOrbDragBounds({
+      pointerScreenPoint: {
+        x: readNumber(screenPoint.x),
+        y: readNumber(screenPoint.y)
+      },
+      pointerOffset: orbDragPointerOffset,
+      orbSize: {
+        width: currentBounds.width,
+        height: currentBounds.height
+      },
+      workArea: getVisibleWorkArea(currentBounds)
+    });
+
+    moveOrbWindow(nextBounds);
+  });
+  ipcMain.handle("desktop:orb-drag-end", async () => {
+    if (orbWindow !== null) {
+      queueOrbBoundsSave(captureWindowBounds(orbWindow));
+    }
+
+    orbDragPointerOffset = null;
+  });
   ipcMain.handle("desktop:pin-peek-card", async () => {
     clearTimeout(hoverCloseTimer ?? undefined);
     hoverCloseTimer = null;
-    orbState = pinPeekCard(orbState);
+
+    if (orbState.mode === "orbDocked") {
+      orbState = pinPeekCard(hoverOrb(orbState));
+    } else {
+      orbState = pinPeekCard(orbState);
+    }
+
+    positionPeekCardWindow();
     peekCardWindow?.show();
     peekCardWindow?.focus();
   });
@@ -376,13 +534,14 @@ async function bootstrap(): Promise<void> {
   floatingWindow = new BrowserWindow({
     ...getFloatingWindowOptions(settings.floatingWindowBounds),
     alwaysOnTop: true,
+    frame: false,
     fullscreenable: false,
     maximizable: false,
     minimizable: false,
     resizable: true,
     show: false,
     skipTaskbar: true,
-    title: "Agent Metrics Floating",
+    transparent: true,
     webPreferences: {
       preload: preloadPath,
       contextIsolation: true,
@@ -392,12 +551,13 @@ async function bootstrap(): Promise<void> {
 
   if (process.platform === "win32" && settings.enableOrb) {
     orbWindow = new BrowserWindow({
-      width: settings.orbBounds?.width ?? 56,
-      height: settings.orbBounds?.height ?? 56,
+      width: Math.max(settings.orbBounds?.width ?? 0, 76),
+      height: Math.max(settings.orbBounds?.height ?? 0, 76),
       x: settings.orbBounds?.x,
       y: settings.orbBounds?.y,
       alwaysOnTop: true,
       frame: false,
+      hasShadow: false,
       resizable: false,
       show: settings.showOrbOnStartup,
       skipTaskbar: true,
@@ -436,6 +596,22 @@ async function bootstrap(): Promise<void> {
       event.preventDefault();
       hideOrbWindow();
     });
+    orbWindow.on("move", () => {
+      if (orbWindow === null) {
+        return;
+      }
+
+      if (orbDragPointerOffset === null) {
+        queueOrbBoundsSave(captureWindowBounds(orbWindow));
+      }
+
+      if (peekCardWindow?.isVisible()) {
+        positionPeekCardWindow();
+      }
+    });
+    orbWindow.on("closed", () => {
+      clearOrbBoundsPersistTimer();
+    });
 
     peekCardWindow.on("close", (event: PreventableEvent) => {
       if (quitting) {
@@ -444,6 +620,7 @@ async function bootstrap(): Promise<void> {
 
       event.preventDefault();
       clearHoverTimers();
+      orbDragPointerOffset = null;
       orbState = dismissPeekCard(orbState);
       peekCardWindow?.hide();
     });
@@ -483,7 +660,6 @@ async function bootstrap(): Promise<void> {
   ): Promise<void> => {
     try {
       await loadWindow.loadURL(getDashboardUrl(surface));
-      restoreDesktopSnapshot();
     } catch (error) {
       markDesktopSnapshotStale();
       throw error;
