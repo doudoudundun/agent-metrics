@@ -35,12 +35,10 @@ export function createDesktopMetricsSnapshot(): DesktopMetricsSnapshot {
 }
 
 export function updateDesktopMetricsSnapshot(
-  current: DesktopMetricsSnapshot,
+  _current: DesktopMetricsSnapshot,
   metrics: DesktopOrbMetrics,
   updatedAt: string
 ): DesktopMetricsSnapshot {
-  void current;
-
   return {
     status: "ready",
     metrics,

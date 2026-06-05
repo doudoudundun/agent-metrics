@@ -15,6 +15,12 @@ describe("orb state", () => {
     );
   });
 
+  it("keeps the current mode when hover does not match a docked orb", () => {
+    expect(hoverOrb(createOrbSurfaceState("peekVisible"))).toEqual(
+      createOrbSurfaceState("peekVisible")
+    );
+  });
+
   it("pins the peek card from the visible peek state", () => {
     expect(pinPeekCard(createOrbSurfaceState("peekVisible"))).toEqual(
       createOrbSurfaceState("peekPinned")
@@ -36,9 +42,27 @@ describe("orb state", () => {
     );
   });
 
+  it("keeps the current mode when leaving a non-visible peek region", () => {
+    expect(leaveOrbRegion(createOrbSurfaceState("peekPinned"))).toEqual(
+      createOrbSurfaceState("peekPinned")
+    );
+  });
+
   it("dismisses a pinned peek card back to the docked orb", () => {
     expect(dismissPeekCard(createOrbSurfaceState("peekPinned"))).toEqual(
       createOrbSurfaceState("orbDocked")
+    );
+  });
+
+  it("keeps the current mode when dismiss does not match a pinned peek card", () => {
+    expect(dismissPeekCard(createOrbSurfaceState("orbDocked"))).toEqual(
+      createOrbSurfaceState("orbDocked")
+    );
+  });
+
+  it("keeps detail visible when expanding a non-peek state", () => {
+    expect(expandOrbDetail(createOrbSurfaceState("detailVisible"))).toEqual(
+      createOrbSurfaceState("detailVisible")
     );
   });
 });
