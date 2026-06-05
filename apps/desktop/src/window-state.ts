@@ -5,12 +5,19 @@ export type WindowBounds = {
   height: number;
 };
 
+export type OrbDockEdge = "left" | "right";
+
 export type DesktopSettings = {
   closeBehavior: "hide-to-tray" | "quit-app";
   launchAtLogin: boolean;
   showMainWindowOnStartup: boolean;
   reopenFloatingWindowOnStartup: boolean;
-  preferredSurface: "main-window" | "floating-window";
+  preferredSurface: "main-window" | "floating-window" | "orb";
+  enableOrb: boolean;
+  showOrbOnStartup: boolean;
+  orbDockEdge: OrbDockEdge;
+  orbCollapsed: boolean;
+  orbBounds: WindowBounds | null;
   mainWindowBounds: WindowBounds | null;
   floatingWindowBounds: WindowBounds | null;
 };
@@ -24,6 +31,11 @@ export function defaultDesktopSettings(): DesktopSettings {
     showMainWindowOnStartup: true,
     reopenFloatingWindowOnStartup: false,
     preferredSurface: "main-window",
+    enableOrb: true,
+    showOrbOnStartup: true,
+    orbDockEdge: "right",
+    orbCollapsed: false,
+    orbBounds: null,
     mainWindowBounds: null,
     floatingWindowBounds: { x: 80, y: 80, width: 440, height: 320 }
   };
@@ -81,9 +93,20 @@ export function sanitizeDesktopSettings(value: unknown): DesktopSettings {
         ? value.reopenFloatingWindowOnStartup
         : defaults.reopenFloatingWindowOnStartup,
     preferredSurface:
-      value.preferredSurface === "main-window" || value.preferredSurface === "floating-window"
+      value.preferredSurface === "main-window" ||
+      value.preferredSurface === "floating-window" ||
+      value.preferredSurface === "orb"
         ? value.preferredSurface
         : defaults.preferredSurface,
+    enableOrb: typeof value.enableOrb === "boolean" ? value.enableOrb : defaults.enableOrb,
+    showOrbOnStartup:
+      typeof value.showOrbOnStartup === "boolean"
+        ? value.showOrbOnStartup
+        : defaults.showOrbOnStartup,
+    orbDockEdge: value.orbDockEdge === "left" ? value.orbDockEdge : defaults.orbDockEdge,
+    orbCollapsed:
+      typeof value.orbCollapsed === "boolean" ? value.orbCollapsed : defaults.orbCollapsed,
+    orbBounds: sanitizeWindowBounds(value.orbBounds),
     mainWindowBounds: sanitizeWindowBounds(value.mainWindowBounds),
     floatingWindowBounds:
       sanitizeWindowBounds(value.floatingWindowBounds) ?? defaults.floatingWindowBounds

@@ -35,6 +35,18 @@ describe("window state", () => {
     expect(defaultDesktopSettings().closeBehavior).toBe("hide-to-tray");
   });
 
+  it("enables the orb by default", () => {
+    expect(defaultDesktopSettings().enableOrb).toBe(true);
+  });
+
+  it("shows the orb on startup by default", () => {
+    expect(defaultDesktopSettings().showOrbOnStartup).toBe(true);
+  });
+
+  it("docks the orb to the right by default", () => {
+    expect(defaultDesktopSettings().orbDockEdge).toBe("right");
+  });
+
   it("falls back to defaults when the settings file is missing", async () => {
     const filePath = await createTempSettingsPath();
 
@@ -88,6 +100,35 @@ describe("window state", () => {
     ).toEqual(defaultDesktopSettings());
   });
 
+  it("preserves valid orb persistence values", () => {
+    expect(
+      sanitizeDesktopSettings({
+        preferredSurface: "orb",
+        enableOrb: false,
+        showOrbOnStartup: false,
+        orbDockEdge: "left",
+        orbCollapsed: true,
+        orbBounds: { x: 16, y: 24, width: 72, height: 72 }
+      })
+    ).toEqual({
+      ...defaultDesktopSettings(),
+      preferredSurface: "orb",
+      enableOrb: false,
+      showOrbOnStartup: false,
+      orbDockEdge: "left",
+      orbCollapsed: true,
+      orbBounds: { x: 16, y: 24, width: 72, height: 72 }
+    });
+  });
+
+  it("resets invalid orb bounds to null", () => {
+    expect(
+      sanitizeDesktopSettings({
+        orbBounds: { x: 16, y: 24, width: 0, height: 72 }
+      }).orbBounds
+    ).toBeNull();
+  });
+
   it("throws a contextual error for malformed JSON", async () => {
     const filePath = await createTempSettingsPath();
 
@@ -106,6 +147,11 @@ describe("window state", () => {
       showMainWindowOnStartup: false,
       reopenFloatingWindowOnStartup: true,
       preferredSurface: "floating-window" as const,
+      enableOrb: false,
+      showOrbOnStartup: false,
+      orbDockEdge: "left" as const,
+      orbCollapsed: true,
+      orbBounds: { x: 40, y: 50, width: 80, height: 80 },
       mainWindowBounds: { x: 100, y: 120, width: 900, height: 700 },
       floatingWindowBounds: { x: 20, y: 30, width: 450, height: 320 }
     };
