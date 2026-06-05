@@ -1,9 +1,13 @@
 export type DesktopOrbMetrics = {
   totalTokens: number;
-  totalCostUsd: number;
-  activeTasks: number;
-  completedTasks: number;
-  pendingApprovals: number;
+  totalToolCalls: number;
+  editOperationCount: number;
+  affectedFileCount: number;
+  insertions: number;
+  deletions: number;
+  successRate: number;
+  failedExecutions: number;
+  averageDurationMs: number;
 };
 
 export type DesktopMetricsSnapshot = {
@@ -17,10 +21,14 @@ export function createDesktopMetricsSnapshot(): DesktopMetricsSnapshot {
     status: "loading",
     metrics: {
       totalTokens: 0,
-      totalCostUsd: 0,
-      activeTasks: 0,
-      completedTasks: 0,
-      pendingApprovals: 0
+      totalToolCalls: 0,
+      editOperationCount: 0,
+      affectedFileCount: 0,
+      insertions: 0,
+      deletions: 0,
+      successRate: 0,
+      failedExecutions: 0,
+      averageDurationMs: 0
     },
     updatedAt: null
   };
