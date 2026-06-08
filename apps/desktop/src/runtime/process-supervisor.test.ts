@@ -127,6 +127,16 @@ describe("process supervisor", () => {
         stdio: "ignore"
       })
     );
+    expect(spawn).not.toHaveBeenNthCalledWith(
+      3,
+      expect.any(String),
+      expect.any(Array),
+      expect.objectContaining({
+        env: expect.objectContaining({
+          AGENT_METRICS_CORE_TRANSCRIPT_SYNC: "0"
+        })
+      })
+    );
     expect(supervisor.getStatus()).toEqual({
       state: "running",
       children: [
@@ -135,6 +145,75 @@ describe("process supervisor", () => {
         { name: "core", state: "running", pid: undefined }
       ]
     });
+  });
+
+  it("uses an explicit node runtime without Electron compatibility shims", async () => {
+    const spawn = vi.fn(() => createMockChild());
+    const env = {
+      PATH: "/usr/bin",
+      CUSTOM_FLAG: "present"
+    };
+
+    const supervisor = createProcessSupervisor({
+      runtimePaths: {
+        dataRoot: "/runtime-data",
+        cliEntrypoint: "/bundle/cli/dist/index.js",
+        cliWorkingDirectory: "/bundle/cli",
+        coreEntrypoint: "/bundle/core/dist/server.js",
+        coreWorkingDirectory: "/bundle/core"
+      },
+      nodeExecutablePath: "/usr/local/bin/node",
+      spawn,
+      process: { execPath: "/Applications/Agent Metrics.app/Contents/MacOS/Agent Metrics", env }
+    });
+
+    await supervisor.start();
+
+    expect(spawn).toHaveBeenNthCalledWith(
+      1,
+      "/usr/local/bin/node",
+      [
+        "/bundle/cli/dist/index.js",
+        "hooks",
+        "watch",
+        "--scope",
+        "global",
+        "--repo-root",
+        "/runtime-data",
+        "--cli-path",
+        "/bundle/cli/dist/index.js"
+      ],
+      expect.objectContaining({
+        cwd: "/bundle/cli",
+        env,
+        stdio: "ignore"
+      })
+    );
+  });
+
+  it("reuses an already healthy external runtime chain without spawning children", async () => {
+    const spawn = vi.fn();
+    const isExternalRuntimeHealthy = vi.fn(async () => true);
+
+    const supervisor = createProcessSupervisor({
+      runtimePaths: {
+        dataRoot: "/runtime-data",
+        cliEntrypoint: "/bundle/cli/dist/index.js",
+        cliWorkingDirectory: "/bundle/cli",
+        coreEntrypoint: "/bundle/core/dist/server.js",
+        coreWorkingDirectory: "/bundle/core"
+      },
+      spawn,
+      isExternalRuntimeHealthy,
+      process: { execPath: "/Applications/Agent Metrics.app/Contents/MacOS/Agent Metrics" }
+    });
+
+    await expect(supervisor.start()).resolves.toEqual({
+      state: "running",
+      children: []
+    });
+    expect(isExternalRuntimeHealthy).toHaveBeenCalledExactlyOnceWith();
+    expect(spawn).not.toHaveBeenCalled();
   });
 
   it("rolls back already-started children when a later spawn throws and allows retry", async () => {

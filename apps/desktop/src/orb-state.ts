@@ -38,6 +38,18 @@ export function pinPeekCard(state: OrbSurfaceState): OrbSurfaceState {
   return state;
 }
 
+export function togglePeekCardPin(state: OrbSurfaceState): OrbSurfaceState {
+  if (state.mode === "peekPinned") {
+    return createOrbSurfaceState("orbDocked");
+  }
+
+  if (state.mode === "orbDocked") {
+    return createOrbSurfaceState("peekPinned");
+  }
+
+  return pinPeekCard(state);
+}
+
 export function dismissPeekCard(state: OrbSurfaceState): OrbSurfaceState {
   if (state.mode === "peekPinned") {
     return createOrbSurfaceState("orbDocked");

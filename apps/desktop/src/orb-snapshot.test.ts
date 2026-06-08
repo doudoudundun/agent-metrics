@@ -10,6 +10,7 @@ describe("orb snapshot", () => {
 
     expect(snapshot.status).toBe("loading");
     expect(snapshot.metrics.totalTokens).toBe(0);
+    expect(snapshot.metrics.cacheReadTokens).toBe(0);
     expect(snapshot.metrics.totalToolCalls).toBe(0);
     expect(snapshot.metrics.editOperationCount).toBe(0);
     expect(snapshot.metrics.affectedFileCount).toBe(0);
@@ -25,6 +26,7 @@ describe("orb snapshot", () => {
     const updatedAt = "2026-06-05T09:30:00.000Z";
     const metrics = {
       totalTokens: 1200,
+      cacheReadTokens: 450,
       totalToolCalls: 24,
       editOperationCount: 7,
       affectedFileCount: 3,
@@ -43,6 +45,7 @@ describe("orb snapshot", () => {
 
     expect(snapshot.status).toBe("ready");
     expect(snapshot.metrics.totalTokens).toBe(1200);
+    expect(snapshot.metrics.cacheReadTokens).toBe(450);
     expect(snapshot.metrics.totalToolCalls).toBe(24);
     expect(snapshot.metrics.editOperationCount).toBe(7);
     expect(snapshot.metrics.affectedFileCount).toBe(3);

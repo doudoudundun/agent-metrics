@@ -105,6 +105,9 @@ export function App({ initialSurface }: AppProps = {}) {
   const isCompactSurface = isFloatingSurface || isOrbSurface || isPeekSurface;
   const isFullDashboardSurface = !isCompactSurface;
   const desktopApi = getAgentMetricsDesktopBridge();
+  const orbDockEdge = isOrbSurface
+    ? (new URLSearchParams(window.location.search).get("dockEdge") as "left" | "right" | null)
+    : null;
   const [overview, setOverview] = useState<OverviewResponse | null>(null);
   const [baseTools, setBaseTools] = useState<PanelToolsState>(INITIAL_PANEL_TOOLS_STATE);
   const [baseSessions, setBaseSessions] = useState<SessionsState>(INITIAL_SESSIONS_STATE);
@@ -120,6 +123,7 @@ export function App({ initialSurface }: AppProps = {}) {
   const [loadErrorMessage, setLoadErrorMessage] = useState<string | null>(null);
   const [staleMessage, setStaleMessage] = useState<string | null>(null);
   const [sharedPeekSnapshot, setSharedPeekSnapshot] = useState<DesktopOrbSnapshot | null>(null);
+  const [peekPinned, setPeekPinned] = useState(false);
 
   const applyLoadedOverview = useEffectEvent((nextOverview: OverviewResponse) => {
     startTransition(() => {
@@ -152,6 +156,24 @@ export function App({ initialSurface }: AppProps = {}) {
 
     startTransition(() => {
       setStaleMessage(message);
+    });
+  });
+
+  const handlePeekPin = useEffectEvent(() => {
+    void desktopApi?.pinPeekCard().then((result) => {
+      startTransition(() => {
+        setPeekPinned(result.pinned);
+      });
+    });
+  });
+
+  const handlePeekPinButton = useEffectEvent(() => {
+    const pinAction = peekPinned ? desktopApi?.togglePeekCardPin : desktopApi?.pinPeekCard;
+
+    void pinAction?.().then((result) => {
+      startTransition(() => {
+        setPeekPinned(result.pinned);
+      });
     });
   });
 
@@ -573,7 +595,7 @@ export function App({ initialSurface }: AppProps = {}) {
       </div>
     ) : null;
   const peekMetrics = buildPeekMetrics(overview, baseTools.rows);
-  const effectivePeekSnapshot =
+  const effectivePeekSnapshot: DesktopOrbSnapshot =
     overview === null && sharedPeekSnapshot !== null
       ? sharedPeekSnapshot
       : {
@@ -618,11 +640,12 @@ export function App({ initialSurface }: AppProps = {}) {
         <OrbSurface
           collapsed={effectivePeekSnapshot.status === "loading"}
           stale={effectivePeekSnapshot.status === "stale"}
+          dockEdge={orbDockEdge}
           onPointerEnter={() => void desktopApi?.showOrb()}
           onPointerLeave={() => void desktopApi?.hideOrb()}
-          onActivate={() => void desktopApi?.pinPeekCard()}
-          onDragStart={(offset) => void desktopApi?.orbDragStart(offset)}
-          onDragMove={(screenPoint) => void desktopApi?.orbDragMove(screenPoint)}
+          onActivate={handlePeekPin}
+          onContextMenu={() => void desktopApi?.showOrbMenu?.()}
+          onDragStart={() => void desktopApi?.orbDragStart()}
           onDragEnd={() => void desktopApi?.orbDragEnd()}
         />
       </main>
@@ -635,7 +658,8 @@ export function App({ initialSurface }: AppProps = {}) {
         <PeekCardDashboard
           status={effectivePeekSnapshot.status}
           metrics={effectivePeekSnapshot.metrics}
-          onPin={() => void desktopApi?.pinPeekCard()}
+          pinned={peekPinned}
+          onPin={handlePeekPinButton}
           onExpand={() => void desktopApi?.expandOrbDetail()}
           onPointerEnter={() => void desktopApi?.peekEnter?.()}
           onPointerLeave={() => void desktopApi?.peekLeave?.()}
@@ -875,6 +899,7 @@ function averageToolDuration(rows: ToolRow[] | null): number {
 function buildPeekMetrics(overview: OverviewResponse | null, rows: ToolRow[] | null): PeekMetrics {
   return {
     totalTokens: overview?.totalTokens ?? 0,
+    cacheReadTokens: overview?.cacheReadTokens ?? 0,
     totalToolCalls: overview?.totalToolCalls ?? 0,
     editOperationCount: overview?.editOperationCount ?? 0,
     affectedFileCount: overview?.affectedFileCount ?? 0,
@@ -901,6 +926,7 @@ function parseDesktopOrbSnapshot(snapshot: unknown): DesktopOrbSnapshot | null {
     updatedAt: typeof snapshot.updatedAt === "string" ? snapshot.updatedAt : null,
     metrics: {
       totalTokens: readNumber(snapshot.metrics.totalTokens),
+      cacheReadTokens: readNumber(snapshot.metrics.cacheReadTokens),
       totalToolCalls: readNumber(snapshot.metrics.totalToolCalls),
       editOperationCount: readNumber(snapshot.metrics.editOperationCount),
       affectedFileCount: readNumber(snapshot.metrics.affectedFileCount),

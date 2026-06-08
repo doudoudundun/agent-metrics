@@ -87,6 +87,7 @@ describe("PeekCardDashboard", () => {
         status="ready"
         metrics={{
           totalTokens: 45678,
+          cacheReadTokens: 2345,
           totalToolCalls: 12,
           editOperationCount: 4,
           affectedFileCount: 7,
@@ -113,6 +114,7 @@ describe("PeekCardDashboard", () => {
         status="ready"
         metrics={{
           totalTokens: 45678,
+          cacheReadTokens: 2345,
           totalToolCalls: 12,
           editOperationCount: 4,
           affectedFileCount: 7,
@@ -135,6 +137,100 @@ describe("PeekCardDashboard", () => {
     expect(onPointerLeave).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps peek interactions isolated when pressing an action button", () => {
+    const onPointerLeave = vi.fn();
+    const onPin = vi.fn();
+
+    render(
+      <PeekCardDashboard
+        status="ready"
+        metrics={{
+          totalTokens: 45678,
+          cacheReadTokens: 2345,
+          totalToolCalls: 12,
+          editOperationCount: 4,
+          affectedFileCount: 7,
+          insertions: 42,
+          deletions: 8,
+          successRate: 0.8333,
+          failedExecutions: 2,
+          averageDurationMs: 15
+        }}
+        onPin={onPin}
+        onPointerLeave={onPointerLeave}
+      />
+    );
+
+    const pinButton = screen.getByRole("button", { name: "Pin" });
+    fireEvent.pointerDown(pinButton);
+    fireEvent.pointerUp(pinButton);
+    fireEvent.click(pinButton);
+
+    expect(onPointerLeave).not.toHaveBeenCalled();
+    expect(onPin).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not leave the peek surface when moving onto an action button", () => {
+    const onPointerLeave = vi.fn();
+
+    render(
+      <PeekCardDashboard
+        status="ready"
+        metrics={{
+          totalTokens: 45678,
+          cacheReadTokens: 2345,
+          totalToolCalls: 12,
+          editOperationCount: 4,
+          affectedFileCount: 7,
+          insertions: 42,
+          deletions: 8,
+          successRate: 0.8333,
+          failedExecutions: 2,
+          averageDurationMs: 15
+        }}
+        onPointerLeave={onPointerLeave}
+      />
+    );
+
+    const card = screen.getByLabelText("Desktop peek card");
+    const event = new Event("pointerout", { bubbles: true });
+    Object.defineProperty(event, "relatedTarget", {
+      value: screen.getByRole("button", { name: "Pin" })
+    });
+    fireEvent(card, event);
+
+    expect(onPointerLeave).not.toHaveBeenCalled();
+  });
+
+  it("shows an unpin action when the peek card is pinned", () => {
+    const onPin = vi.fn();
+
+    render(
+      <PeekCardDashboard
+        status="ready"
+        pinned={true}
+        metrics={{
+          totalTokens: 45678,
+          cacheReadTokens: 2345,
+          totalToolCalls: 12,
+          editOperationCount: 4,
+          affectedFileCount: 7,
+          insertions: 42,
+          deletions: 8,
+          successRate: 0.8333,
+          failedExecutions: 2,
+          averageDurationMs: 15
+        }}
+        onPin={onPin}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Unpin" }));
+
+    expect(screen.queryByRole("button", { name: "Pin" })).not.toBeInTheDocument();
+    expect(onPin).toHaveBeenCalledTimes(1);
+  });
+
   it("desktop-orb-peek surface renders compact metrics, ignores zero-count tool rows, and skips sessions requests", async () => {
     window.history.replaceState({}, "", "/?surface=desktop-orb-peek");
     const desktopBridge: AgentMetricsDesktopBridge = {
@@ -145,7 +241,8 @@ describe("PeekCardDashboard", () => {
       toggleFloatingWindow: vi.fn().mockResolvedValue({ visible: true }),
       showOrb: vi.fn().mockResolvedValue(undefined),
       hideOrb: vi.fn().mockResolvedValue(undefined),
-      pinPeekCard: vi.fn().mockResolvedValue(undefined),
+      pinPeekCard: vi.fn().mockResolvedValue({ pinned: true }),
+      togglePeekCardPin: vi.fn().mockResolvedValue({ pinned: true }),
       expandOrbDetail: vi.fn().mockResolvedValue(undefined),
       getOrbSnapshot: vi.fn().mockResolvedValue(null),
       setOrbSnapshot: vi.fn().mockResolvedValue(undefined),
@@ -163,8 +260,11 @@ describe("PeekCardDashboard", () => {
     expect(await screen.findByText("Total Tokens")).toBeInTheDocument();
     expect(screen.queryByText("Recent Sessions")).not.toBeInTheDocument();
     await waitFor(() => {
-      expect(screen.getByText("15 ms")).toBeInTheDocument();
+      expect(screen.getByText("2,345 cache read")).toBeInTheDocument();
     });
+    expect(screen.getByText("4 edits / 7 files / +42 / -8")).toBeInTheDocument();
+    expect(screen.queryByText("Success Rate")).not.toBeInTheDocument();
+    expect(screen.queryByText("Avg Duration")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Pin" }));
     fireEvent.click(screen.getByRole("button", { name: "Expand" }));
@@ -173,6 +273,7 @@ describe("PeekCardDashboard", () => {
 
     await waitFor(() => {
       expect(desktopBridge.pinPeekCard).toHaveBeenCalledTimes(1);
+      expect(desktopBridge.togglePeekCardPin).not.toHaveBeenCalled();
       expect(desktopBridge.expandOrbDetail).toHaveBeenCalledTimes(1);
       expect(desktopBridge.peekEnter).toHaveBeenCalledTimes(1);
       expect(desktopBridge.peekLeave).toHaveBeenCalledTimes(1);
@@ -191,13 +292,15 @@ describe("PeekCardDashboard", () => {
       toggleFloatingWindow: vi.fn().mockResolvedValue({ visible: true }),
       showOrb: vi.fn().mockResolvedValue(undefined),
       hideOrb: vi.fn().mockResolvedValue(undefined),
-      pinPeekCard: vi.fn().mockResolvedValue(undefined),
+      pinPeekCard: vi.fn().mockResolvedValue({ pinned: true }),
+      togglePeekCardPin: vi.fn().mockResolvedValue({ pinned: true }),
       expandOrbDetail: vi.fn().mockResolvedValue(undefined),
       getOrbSnapshot: vi.fn().mockResolvedValue({
         status: "ready",
         updatedAt: "2026-05-27T10:30:00.000Z",
         metrics: {
           totalTokens: 9988,
+          cacheReadTokens: 4321,
           totalToolCalls: 7,
           editOperationCount: 2,
           affectedFileCount: 1,

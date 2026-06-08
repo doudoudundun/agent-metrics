@@ -11,6 +11,79 @@ beforeEach(() => {
 });
 
 describe("parseRawHooksOnce", () => {
+  it("replays legacy raw hook payloads without envelope metadata", async () => {
+    const repoRoot = await mkdtemp(join(tmpdir(), "agent-metrics-parse-"));
+    const paths = getHookPaths(repoRoot);
+
+    await mkdir(join(paths.rawHookLogPath, ".."), { recursive: true });
+    await writeFile(
+      paths.rawHookLogPath,
+      JSON.stringify({
+        session_id: "ses_legacy",
+        cwd: repoRoot,
+        hook_event_name: "PreToolUse",
+        tool_name: "Read",
+        tool_use_id: "tool_legacy_1",
+        timestamp: "2026-06-08T12:00:00.000Z"
+      }) + "\n",
+      "utf8"
+    );
+
+    await parseRawHooksOnce({ repoRoot });
+
+    const eventLines = await readJsonLines(paths.eventLogPath);
+    const parserState = JSON.parse(await readFile(paths.parserStatePath, "utf8")) as {
+      nextLine: number;
+      seenRawEventIds: string[];
+    };
+
+    expect(eventLines).toHaveLength(1);
+    expect(eventLines[0]).toMatchObject({
+      type: "tool.called",
+      session_id: "ses_legacy",
+      tool_name: "Read"
+    });
+    expect(parserState.nextLine).toBe(1);
+    expect(parserState.seenRawEventIds).toHaveLength(1);
+  });
+
+  it("skips malformed raw hook lines without dropping the whole file", async () => {
+    const repoRoot = await mkdtemp(join(tmpdir(), "agent-metrics-parse-"));
+    const paths = getHookPaths(repoRoot);
+
+    await mkdir(join(paths.rawHookLogPath, ".."), { recursive: true });
+    await writeFile(
+      paths.rawHookLogPath,
+      [
+        "{bad json",
+        JSON.stringify({
+          session_id: "ses_after_bad_line",
+          cwd: repoRoot,
+          hook_event_name: "PreToolUse",
+          tool_name: "Read",
+          tool_use_id: "tool_after_bad_line",
+          timestamp: "2026-06-08T12:00:00.000Z"
+        })
+      ].join("\n") + "\n",
+      "utf8"
+    );
+
+    await parseRawHooksOnce({ repoRoot });
+
+    const eventLines = await readJsonLines(paths.eventLogPath);
+    const parserState = JSON.parse(await readFile(paths.parserStatePath, "utf8")) as {
+      nextLine: number;
+      seenRawEventIds: string[];
+    };
+
+    expect(eventLines).toHaveLength(1);
+    expect(eventLines[0]).toMatchObject({
+      type: "tool.called",
+      session_id: "ses_after_bad_line"
+    });
+    expect(parserState.nextLine).toBe(2);
+  });
+
   it("replays raw envelopes, syncs transcript events, and dedupes on rerun", async () => {
     const repoRoot = await mkdtemp(join(tmpdir(), "agent-metrics-parse-"));
     const filePath = join(repoRoot, "src", "app.ts");
@@ -111,6 +184,96 @@ describe("parseRawHooksOnce", () => {
     expect(parserState.nextLine).toBe(2);
     expect(parserState.seenRawEventIds).toHaveLength(2);
     expect(await listDir(paths.snapshotRoot)).toEqual([]);
+  });
+
+  it("syncs the referenced transcript without discovering unrelated Claude projects", async () => {
+    const repoRoot = await mkdtemp(join(tmpdir(), "agent-metrics-parse-"));
+    const transcriptPath = join(repoRoot, "claude-session.jsonl");
+    const discoveryRoot = await mkdtemp(join(tmpdir(), "agent-metrics-discovery-"));
+    const unrelatedTranscriptPath = join(discoveryRoot, "project", "unrelated.jsonl");
+
+    process.env.AGENT_METRICS_CLAUDE_DISCOVERY_ROOTS = discoveryRoot;
+    await mkdir(join(discoveryRoot, "project"), { recursive: true });
+    await writeClaudeTranscript(transcriptPath, [
+      {
+        type: "user",
+        sessionId: "ses_1",
+        cwd: repoRoot,
+        promptId: "prompt_1",
+        timestamp: "2026-05-27T10:00:00.000Z",
+        message: { role: "user", content: "Ship it." }
+      }
+    ]);
+    await writeClaudeTranscript(unrelatedTranscriptPath, [
+      {
+        type: "user",
+        sessionId: "ses_unrelated",
+        cwd: discoveryRoot,
+        promptId: "prompt_unrelated",
+        timestamp: "2026-05-27T11:00:00.000Z",
+        message: { role: "user", content: "Ignore me." }
+      }
+    ]);
+
+    await handleHookEvent({
+      repoRoot,
+      payload: {
+        session_id: "ses_1",
+        cwd: repoRoot,
+        hook_event_name: "SessionStart",
+        transcript_path: transcriptPath
+      }
+    });
+
+    await parseRawHooksOnce({ repoRoot });
+
+    const paths = getHookPaths(repoRoot);
+    const eventLines = await readJsonLines(paths.eventLogPath);
+
+    expect(eventLines.map((line) => line.session_id)).toEqual(["ses_1", "ses_1"]);
+  });
+
+  it("keeps parsing tool events when transcript state is locked", async () => {
+    const repoRoot = await mkdtemp(join(tmpdir(), "agent-metrics-parse-"));
+    const transcriptPath = join(repoRoot, "claude-session.jsonl");
+    const paths = getHookPaths(repoRoot);
+
+    await mkdir(join(paths.transcriptManifestPath, ".."), { recursive: true });
+    await writeFile(join(paths.transcriptManifestPath, "..", "transcript-state.lock"), "", "utf8");
+    await writeClaudeTranscript(transcriptPath, [
+      {
+        type: "user",
+        sessionId: "ses_locked",
+        cwd: repoRoot,
+        promptId: "prompt_locked",
+        timestamp: "2026-05-27T10:00:00.000Z",
+        message: { role: "user", content: "Ship it." }
+      }
+    ]);
+
+    await handleHookEvent({
+      repoRoot,
+      payload: {
+        session_id: "ses_locked",
+        cwd: repoRoot,
+        hook_event_name: "PreToolUse",
+        tool_name: "Read",
+        tool_use_id: "tool_locked_1",
+        transcript_path: transcriptPath
+      }
+    });
+
+    await writeFile(join(paths.transcriptManifestPath, "..", "transcript-state.lock"), "", "utf8");
+    await parseRawHooksOnce({ repoRoot });
+
+    const eventLines = await readJsonLines(paths.eventLogPath);
+    const parserState = JSON.parse(await readFile(paths.parserStatePath, "utf8")) as {
+      nextLine: number;
+      seenRawEventIds: string[];
+    };
+
+    expect(eventLines.some((line) => line.type === "tool.called")).toBe(true);
+    expect(parserState.nextLine).toBe(1);
   });
 });
 

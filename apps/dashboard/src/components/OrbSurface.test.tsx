@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "../App";
 import type { AgentMetricsDesktopBridge } from "../desktop-mode";
@@ -103,8 +103,18 @@ describe("OrbSurface", () => {
 
     const button = screen.getByRole("button", { name: "Open desktop peek card" });
     fireEvent.pointerEnter(button);
-    fireEvent.mouseDown(button, { button: 0, clientX: 18, clientY: 18, screenX: 200, screenY: 300 });
-    fireEvent.mouseUp(button, { button: 0, clientX: 18, clientY: 18, screenX: 200, screenY: 300 });
+    fireEvent.pointerDown(button, {
+      button: 0,
+      pointerId: 1,
+      clientX: 18,
+      clientY: 18
+    });
+    fireEvent.pointerUp(button, {
+      button: 0,
+      pointerId: 1,
+      clientX: 18,
+      clientY: 18
+    });
     fireEvent.click(button);
     fireEvent.pointerLeave(button);
 
@@ -113,10 +123,21 @@ describe("OrbSurface", () => {
     expect(onActivate).toHaveBeenCalledTimes(1);
   });
 
+  it("requests the orb context menu on right click and suppresses the default menu", () => {
+    const onContextMenu = vi.fn();
+
+    render(<OrbSurface collapsed={false} stale={false} onContextMenu={onContextMenu} />);
+
+    const button = screen.getByRole("button", { name: "Open desktop peek card" });
+    const prevented = !fireEvent.contextMenu(button);
+
+    expect(onContextMenu).toHaveBeenCalledTimes(1);
+    expect(prevented).toBe(true);
+  });
+
   it("starts dragging without firing activate when the pointer moves", () => {
     const onActivate = vi.fn();
     const onDragStart = vi.fn();
-    const onDragMove = vi.fn();
     const onDragEnd = vi.fn();
 
     render(
@@ -125,26 +146,22 @@ describe("OrbSurface", () => {
         stale={false}
         onActivate={onActivate}
         onDragStart={onDragStart}
-        onDragMove={onDragMove}
         onDragEnd={onDragEnd}
       />
     );
 
     const button = screen.getByRole("button", { name: "Open desktop peek card" });
-    fireEvent.mouseDown(button, { button: 0, clientX: 20, clientY: 22, screenX: 300, screenY: 400 });
-    fireEvent.mouseMove(button, { clientX: 32, clientY: 38, screenX: 312, screenY: 416 });
-    fireEvent.mouseMove(button, { clientX: 35, clientY: 42, screenX: 315, screenY: 420 });
-    fireEvent.mouseUp(button, { button: 0, clientX: 35, clientY: 42, screenX: 315, screenY: 420 });
+    fireEvent.mouseDown(button, { button: 0, clientX: 20, clientY: 22 });
+    fireEvent.mouseMove(button, { clientX: 32, clientY: 38 });
+    fireEvent.mouseUp(button, { button: 0, clientX: 32, clientY: 38 });
     fireEvent.click(button);
 
-    expect(onDragStart).toHaveBeenCalledWith({ x: 20, y: 22 });
-    expect(onDragMove).toHaveBeenNthCalledWith(1, { x: 312, y: 416 });
-    expect(onDragMove).toHaveBeenNthCalledWith(2, { x: 315, y: 420 });
+    expect(onDragStart).toHaveBeenCalledTimes(1);
     expect(onDragEnd).toHaveBeenCalledTimes(1);
     expect(onActivate).not.toHaveBeenCalled();
   });
 
-  it("desktop-orb surface forwards bridge actions and skips tools and sessions requests", async () => {
+  it("desktop-orb surface forwards bridge actions and skips tools and sessions requests", () => {
     window.history.replaceState({}, "", "/?surface=desktop-orb");
     const desktopBridge: AgentMetricsDesktopBridge = {
       getRuntimeStatus: vi.fn(),
@@ -154,7 +171,8 @@ describe("OrbSurface", () => {
       toggleFloatingWindow: vi.fn().mockResolvedValue({ visible: true }),
       showOrb: vi.fn().mockResolvedValue(undefined),
       hideOrb: vi.fn().mockResolvedValue(undefined),
-      pinPeekCard: vi.fn().mockResolvedValue(undefined),
+      pinPeekCard: vi.fn().mockResolvedValue({ pinned: true }),
+      togglePeekCardPin: vi.fn().mockResolvedValue({ pinned: true }),
       expandOrbDetail: vi.fn().mockResolvedValue(undefined),
       getOrbSnapshot: vi.fn().mockResolvedValue(null),
       setOrbSnapshot: vi.fn().mockResolvedValue(undefined),
@@ -163,30 +181,41 @@ describe("OrbSurface", () => {
       peekLeave: vi.fn().mockResolvedValue(undefined),
       orbDragStart: vi.fn().mockResolvedValue(undefined),
       orbDragMove: vi.fn().mockResolvedValue(undefined),
-      orbDragEnd: vi.fn().mockResolvedValue(undefined)
+      orbDragEnd: vi.fn().mockResolvedValue(undefined),
+      showOrbMenu: vi.fn().mockResolvedValue(undefined)
     };
     window.agentMetricsDesktop = desktopBridge;
 
     render(<App />);
 
-    const button = await screen.findByRole("button", { name: "Open desktop peek card" });
+    const button = screen.getByRole("button", { name: "Open desktop peek card" });
     fireEvent.pointerEnter(button);
-    fireEvent.mouseDown(button, { button: 0, clientX: 16, clientY: 16, screenX: 420, screenY: 520 });
-    fireEvent.mouseUp(button, { button: 0, clientX: 16, clientY: 16, screenX: 420, screenY: 520 });
+    fireEvent.pointerDown(button, {
+      button: 0,
+      pointerId: 1,
+      clientX: 16,
+      clientY: 16
+    });
+    fireEvent.pointerUp(button, {
+      button: 0,
+      pointerId: 1,
+      clientX: 16,
+      clientY: 16
+    });
     fireEvent.click(button);
-    fireEvent.mouseDown(button, { button: 0, clientX: 12, clientY: 14, screenX: 430, screenY: 530 });
-    fireEvent.mouseMove(button, { clientX: 22, clientY: 24, screenX: 440, screenY: 540 });
-    fireEvent.mouseUp(button, { button: 0, clientX: 22, clientY: 24, screenX: 440, screenY: 540 });
+    fireEvent.contextMenu(button);
+    fireEvent.mouseDown(button, { button: 0, clientX: 12, clientY: 14 });
+    fireEvent.mouseMove(button, { clientX: 22, clientY: 24 });
+    fireEvent.mouseUp(button, { button: 0, clientX: 22, clientY: 24 });
     fireEvent.pointerLeave(button);
 
-    await waitFor(() => {
-      expect(desktopBridge.showOrb).toHaveBeenCalledTimes(1);
-      expect(desktopBridge.hideOrb).toHaveBeenCalledTimes(1);
-      expect(desktopBridge.pinPeekCard).toHaveBeenCalledTimes(1);
-      expect(desktopBridge.orbDragStart).toHaveBeenCalledWith({ x: 12, y: 14 });
-      expect(desktopBridge.orbDragMove).toHaveBeenCalledWith({ x: 440, y: 540 });
-      expect(desktopBridge.orbDragEnd).toHaveBeenCalledTimes(1);
-    });
+    expect(desktopBridge.showOrb).toHaveBeenCalledTimes(1);
+    expect(desktopBridge.hideOrb).toHaveBeenCalledTimes(1);
+    expect(desktopBridge.pinPeekCard).toHaveBeenCalledTimes(1);
+    expect(desktopBridge.togglePeekCardPin).not.toHaveBeenCalled();
+    expect(desktopBridge.showOrbMenu).toHaveBeenCalledTimes(1);
+    expect(desktopBridge.orbDragStart).toHaveBeenCalledTimes(1);
+    expect(desktopBridge.orbDragEnd).toHaveBeenCalledTimes(1);
     expect(apiMocks.fetchTools).not.toHaveBeenCalled();
     expect(apiMocks.fetchSessions).not.toHaveBeenCalled();
   });

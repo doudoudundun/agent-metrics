@@ -1,5 +1,5 @@
 import { spawn as nodeSpawn, type SpawnOptions } from "node:child_process";
-import { join } from "node:path";
+import { join, posix, win32 } from "node:path";
 import type { DesktopRuntimePaths } from "../runtime-paths.js";
 
 type SupervisorState = "idle" | "running" | "degraded" | "stopped";
@@ -22,6 +22,8 @@ type ProcessLike = {
   readonly env?: NodeJS.ProcessEnv;
   readonly execPath: string;
 };
+
+type RuntimeHealthCheck = () => boolean | Promise<boolean>;
 
 type ManagedChild = {
   readonly child: SpawnedChild;
@@ -46,6 +48,8 @@ export type ProcessSupervisorStatus = {
 
 export function createProcessSupervisor({
   runtimePaths,
+  nodeExecutablePath,
+  isExternalRuntimeHealthy = () => false,
   spawn = nodeSpawn as SpawnFn,
   process = globalThis.process
 }: {
@@ -53,6 +57,8 @@ export function createProcessSupervisor({
     DesktopRuntimePaths,
     "dataRoot" | "cliEntrypoint" | "cliWorkingDirectory" | "coreEntrypoint" | "coreWorkingDirectory"
   >;
+  nodeExecutablePath?: string;
+  isExternalRuntimeHealthy?: RuntimeHealthCheck;
   spawn?: SpawnFn;
   process?: ProcessLike;
 }) {
@@ -124,11 +130,13 @@ export function createProcessSupervisor({
     args: readonly string[],
     extraEnv: NodeJS.ProcessEnv = {}
   ): ManagedChild {
-    const child = spawn(process.execPath, args, {
+    const command = nodeExecutablePath ?? process.execPath;
+    const useElectronAsNode = nodeExecutablePath === undefined;
+    const child = spawn(command, args, {
       cwd,
       env: {
         ...process.env,
-        ELECTRON_RUN_AS_NODE: "1",
+        ...(useElectronAsNode ? { ELECTRON_RUN_AS_NODE: "1" } : {}),
         ...extraEnv
       },
       stdio: "ignore"
@@ -159,10 +167,33 @@ export function createProcessSupervisor({
     return managedChild;
   }
 
+  function joinDataPath(rootPath: string, ...segments: string[]): string {
+    if (rootPath.includes("/") && !rootPath.includes("\\")) {
+      return posix.join(rootPath, ...segments);
+    }
+
+    if (rootPath.includes("\\") && !rootPath.includes("/")) {
+      return win32.join(rootPath, ...segments);
+    }
+
+    return join(rootPath, ...segments);
+  }
+
   return {
     async start(): Promise<ProcessSupervisorStatus> {
       return runLifecycleOperation(async () => {
         if (state === "running") {
+          return this.getStatus();
+        }
+
+        const externalRuntimeHealthy = isExternalRuntimeHealthy();
+        const shouldReuseExternalRuntime = isPromiseLike(externalRuntimeHealthy)
+          ? await externalRuntimeHealthy
+          : externalRuntimeHealthy;
+
+        if (shouldReuseExternalRuntime) {
+          managedChildren.length = 0;
+          state = "running";
           return this.getStatus();
         }
 
@@ -212,13 +243,13 @@ export function createProcessSupervisor({
               runtimePaths.coreWorkingDirectory,
               [runtimePaths.coreEntrypoint],
               {
-                AGENT_METRICS_DB_PATH: join(
+                AGENT_METRICS_DB_PATH: joinDataPath(
                   runtimePaths.dataRoot,
                   "data",
                   "sqlite",
                   "metrics.sqlite"
                 ),
-                AGENT_METRICS_EVENT_LOG_PATH: join(
+                AGENT_METRICS_EVENT_LOG_PATH: joinDataPath(
                   runtimePaths.dataRoot,
                   "data",
                   "events",
@@ -262,4 +293,8 @@ export function createProcessSupervisor({
       });
     }
   };
+}
+
+function isPromiseLike(value: boolean | Promise<boolean>): value is Promise<boolean> {
+  return typeof value === "object" && value !== null && "then" in value;
 }

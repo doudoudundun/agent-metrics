@@ -1,5 +1,5 @@
 import { mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
 import { buildHookPayloadFromInput, handleHookEvent } from "./collect.js";
@@ -216,6 +216,35 @@ describe("handleHookEvent", () => {
         })
       ])
     );
+  });
+
+  it("keeps hook collection successful when transcript manifest is locked", async () => {
+    const repoRoot = await mkdtemp(join(tmpdir(), "agent-metrics-hooks-"));
+    const transcriptPath = join(repoRoot, "claude-session.jsonl");
+    const paths = getHookPaths(repoRoot);
+
+    await mkdir(dirname(paths.transcriptManifestPath), { recursive: true });
+    await writeFile(join(dirname(paths.transcriptManifestPath), "transcript-state.lock"), "", "utf8");
+
+    await handleHookEvent({
+      repoRoot,
+      payload: {
+        session_id: "ses_locked",
+        cwd: repoRoot,
+        hook_event_name: "SessionStart",
+        transcript_path: transcriptPath
+      }
+    });
+
+    const rawLines = await readJsonLines(paths.rawHookLogPath);
+
+    expect(rawLines).toHaveLength(1);
+    expect(rawLines[0]).toMatchObject({
+      hook_event_name: "SessionStart",
+      payload: {
+        session_id: "ses_locked"
+      }
+    });
   });
 
   it("normalizes a relative cwd against repoRoot before recording transcript metadata", async () => {

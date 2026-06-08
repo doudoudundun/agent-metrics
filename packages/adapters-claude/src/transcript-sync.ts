@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, open, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -29,11 +29,14 @@ type TranscriptLedger = {
   keys: string[];
 };
 
+const STALE_TRANSCRIPT_LOCK_MS = 30_000;
+
 export async function recordClaudeTranscriptReference(input: {
   manifestPath: string;
   transcriptPath: string;
   workspacePath: string;
   sessionId?: string;
+  lockTimeoutMs?: number;
 }): Promise<void> {
   await withTranscriptStateLock(input.manifestPath, async () => {
     if (input.transcriptPath.length === 0 || input.workspacePath.length === 0) {
@@ -60,7 +63,7 @@ export async function recordClaudeTranscriptReference(input: {
     }
 
     await writeJsonFileAtomic(input.manifestPath, manifest);
-  });
+  }, input.lockTimeoutMs);
 }
 
 export async function syncKnownClaudeTranscripts(input: {
@@ -615,11 +618,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 async function withTranscriptStateLock<T>(
   manifestPath: string,
-  action: () => Promise<T>
+  action: () => Promise<T>,
+  lockTimeoutMs = 5000
 ): Promise<T> {
   const lockPath = join(dirname(manifestPath), "transcript-state.lock");
   await mkdir(dirname(lockPath), { recursive: true });
-  const deadline = Date.now() + 5000;
+  const deadline = Date.now() + lockTimeoutMs;
 
   while (true) {
     let handle:
@@ -632,6 +636,11 @@ async function withTranscriptStateLock<T>(
     } catch (error) {
       if (!isExistingFileError(error) || Date.now() >= deadline) {
         throw error;
+      }
+
+      if (await isStaleTranscriptLock(lockPath)) {
+        await rm(lockPath, { force: true });
+        continue;
       }
 
       await delay(25);
@@ -651,4 +660,14 @@ async function withTranscriptStateLock<T>(
 
 function isExistingFileError(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "EEXIST";
+}
+
+async function isStaleTranscriptLock(lockPath: string): Promise<boolean> {
+  try {
+    const details = await stat(lockPath);
+
+    return Date.now() - details.mtimeMs > STALE_TRANSCRIPT_LOCK_MS;
+  } catch {
+    return false;
+  }
 }

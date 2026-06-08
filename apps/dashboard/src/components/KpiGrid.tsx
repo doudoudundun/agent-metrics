@@ -8,6 +8,30 @@ type KpiGridProps = {
 
 const NUMBER_FORMAT = new Intl.NumberFormat("en-US");
 
+function formatToolCallMeta(overview: OverviewResponse): ReactNode {
+  const unresolvedExecutions = Math.max(
+    0,
+    overview.totalToolCalls - overview.successfulExecutions - overview.failedExecutions
+  );
+
+  if (unresolvedExecutions === 0) {
+    return (
+      <>
+        {NUMBER_FORMAT.format(overview.successfulExecutions)} ok /{" "}
+        {NUMBER_FORMAT.format(overview.failedExecutions)} failed
+      </>
+    );
+  }
+
+  return (
+    <>
+      {NUMBER_FORMAT.format(overview.successfulExecutions)} ok /{" "}
+      {NUMBER_FORMAT.format(overview.failedExecutions)} failed /{" "}
+      {NUMBER_FORMAT.format(unresolvedExecutions)} pending
+    </>
+  );
+}
+
 export function KpiGrid({ overview, scopeLabel }: KpiGridProps) {
   const cacheTokens = overview.cacheReadTokens + overview.cacheCreationTokens;
   const primaryItems: Array<{
@@ -32,12 +56,7 @@ export function KpiGrid({ overview, scopeLabel }: KpiGridProps) {
       label: "Tool Calls",
       value: NUMBER_FORMAT.format(overview.totalToolCalls),
       tone: "steady",
-      meta: (
-        <>
-          {NUMBER_FORMAT.format(overview.successfulExecutions)} ok /{" "}
-          {NUMBER_FORMAT.format(overview.failedExecutions)} failed
-        </>
-      )
+      meta: formatToolCallMeta(overview)
     },
     {
       label: "Edit Operations",

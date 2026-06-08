@@ -80,4 +80,141 @@ describe("ensureClaudeHooks", () => {
     expect(result.status).toBe("invalid-json");
     expect(await readFile(settingsPath, "utf8")).toBe("{ invalid");
   });
+
+  it("replaces duplicate managed hooks from different runtimes with the current one", async () => {
+    const root = await mkdtemp(join(tmpdir(), "agent-metrics-settings-"));
+    const repoRoot = await mkdtemp(join(tmpdir(), "agent-metrics-data-"));
+    const settingsPath = join(root, "settings.json");
+    const portableRepoRoot = repoRoot.replace(/\\/g, "/");
+    const packagedCliPath =
+      "C:/Users/test/AppData/Local/Programs/AgentMetrics/resources/runtime/cli/dist/index.js";
+    const devCliPath = "D:/projects/dev/agent-metrics/apps/cli/dist/index.js";
+
+    await writeFile(
+      settingsPath,
+      JSON.stringify(
+        {
+          hooks: {
+            PreToolUse: [
+              {
+                matcher: "*",
+                hooks: [
+                  {
+                    type: "command",
+                    command:
+                      `node "${packagedCliPath}" hooks collect --hook-event-name "PreToolUse" --repo-root "${portableRepoRoot}"`
+                  },
+                  {
+                    type: "command",
+                    command: "node",
+                    args: [
+                      devCliPath,
+                      "hooks",
+                      "collect",
+                      "--hook-event-name",
+                      "PreToolUse",
+                      "--repo-root",
+                      portableRepoRoot
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const result = await ensureClaudeHooks({
+      repoRoot,
+      cliPath: devCliPath,
+      settingsPath
+    });
+    const settings = JSON.parse(await readFile(settingsPath, "utf8")) as {
+      hooks: {
+        PreToolUse: Array<{
+          matcher: string;
+          hooks: Array<{ command: string; args?: string[] }>;
+        }>;
+      };
+    };
+
+    expect(result.status).toBe("updated");
+    expect(settings.hooks.PreToolUse).toEqual([
+      {
+        matcher: "*",
+        hooks: [
+          {
+            type: "command",
+            command:
+              `node "${devCliPath}" hooks collect --hook-event-name "PreToolUse" --repo-root "${portableRepoRoot}"`
+          }
+        ]
+      }
+    ]);
+  });
+
+  it("rewrites malformed managed command strings that still point at the agent-metrics cli", async () => {
+    const root = await mkdtemp(join(tmpdir(), "agent-metrics-settings-"));
+    const repoRoot = await mkdtemp(join(tmpdir(), "agent-metrics-data-"));
+    const settingsPath = join(root, "settings.json");
+    const portableRepoRoot = repoRoot.replace(/\\/g, "/");
+    const devCliPath = "D:/projects/dev/agent-metrics/apps/cli/dist/index.js";
+
+    await writeFile(
+      settingsPath,
+      JSON.stringify(
+        {
+          hooks: {
+            PreToolUse: [
+              {
+                matcher: "*",
+                hooks: [
+                  {
+                    type: "command",
+                    command:
+                      'node "D:/projects/dev/agent-metrics/apps//cli/dist//index.js" hooks collect --hook-event-name "PreToolUse" --repo-root "C:/Users/test/AppData/Roaming/Agent"'
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const result = await ensureClaudeHooks({
+      repoRoot,
+      cliPath: devCliPath,
+      settingsPath
+    });
+    const settings = JSON.parse(await readFile(settingsPath, "utf8")) as {
+      hooks: {
+        PreToolUse: Array<{
+          matcher: string;
+          hooks: Array<{ command: string }>;
+        }>;
+      };
+    };
+
+    expect(result.status).toBe("updated");
+    expect(settings.hooks.PreToolUse).toEqual([
+      {
+        matcher: "*",
+        hooks: [
+          {
+            type: "command",
+            command:
+              `node "${devCliPath}" hooks collect --hook-event-name "PreToolUse" --repo-root "${portableRepoRoot}"`
+          }
+        ]
+      }
+    ]);
+  });
 });

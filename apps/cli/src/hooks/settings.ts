@@ -1,6 +1,7 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { ensureParentDir } from "@agent-metrics/shared-utils";
 import {
   buildClaudeHooksConfig,
@@ -37,6 +38,20 @@ export async function ensureClaudeHooks(input: {
   cliPath?: string;
   settingsPath?: string;
 }): Promise<EnsureClaudeHooksResult> {
+  return ensureClaudeHooksWithRetry({
+    repoRoot: resolve(input.repoRoot),
+    cliPath: input.cliPath,
+    settingsPath: resolve(input.settingsPath ?? getDefaultClaudeSettingsPath()),
+    retriesRemaining: 4
+  });
+}
+
+async function ensureClaudeHooksWithRetry(input: {
+  repoRoot: string;
+  cliPath?: string;
+  settingsPath: string;
+  retriesRemaining: number;
+}): Promise<EnsureClaudeHooksResult> {
   const settingsPath = resolve(input.settingsPath ?? getDefaultClaudeSettingsPath());
   const existing = await readSettingsJson(settingsPath);
 
@@ -52,7 +67,7 @@ export async function ensureClaudeHooks(input: {
     hooks: mergeHookTrees(
       existing.value.hooks,
       buildClaudeHooksConfig({
-        repoRoot: resolve(input.repoRoot),
+        repoRoot: input.repoRoot,
         cliPath: input.cliPath
       })
     )
@@ -66,7 +81,20 @@ export async function ensureClaudeHooks(input: {
   }
 
   await ensureParentDir(settingsPath);
-  await writeFile(settingsPath, `${JSON.stringify(nextSettings, null, 2)}\n`, "utf8");
+  const currentContents = await readRawSettingsFile(settingsPath);
+
+  if (currentContents !== existing.contents) {
+    if (input.retriesRemaining <= 0) {
+      throw new Error(`Claude settings changed repeatedly while updating ${settingsPath}`);
+    }
+
+    return ensureClaudeHooksWithRetry({
+      ...input,
+      retriesRemaining: input.retriesRemaining - 1
+    });
+  }
+
+  await writeSettingsJsonAtomic(settingsPath, nextSettings);
 
   return {
     status: existing.contents === null ? "created" : "updated",
@@ -124,6 +152,34 @@ async function readSettingsJson(settingsPath: string): Promise<ReadSettingsResul
     }
 
     throw error;
+  }
+}
+
+async function readRawSettingsFile(settingsPath: string): Promise<string | null> {
+  try {
+    return await readFile(settingsPath, "utf8");
+  } catch (error) {
+    if (isMissingFileError(error)) {
+      return null;
+    }
+
+    throw error;
+  }
+}
+
+async function writeSettingsJsonAtomic(settingsPath: string, value: JsonObject): Promise<void> {
+  await mkdir(dirname(settingsPath), { recursive: true });
+  const tempPath = `${settingsPath}.${randomUUID()}.tmp`;
+  await writeFile(tempPath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+
+  try {
+    await rename(tempPath, settingsPath);
+  } catch (error) {
+    await rm(settingsPath, { force: true });
+    await rename(tempPath, settingsPath);
+    if (error) {
+      return;
+    }
   }
 }
 
@@ -269,7 +325,7 @@ function isManagedAgentMetricsHook(
 }
 
 function isAgentMetricsCliPath(filePath: string): boolean {
-  return filePath.replace(/\\/g, "/").endsWith("/apps/cli/dist/index.js");
+  return normalizeAgentMetricsPath(filePath).endsWith("/cli/dist/index.js");
 }
 
 function isManagedAgentMetricsArgs(
@@ -291,15 +347,19 @@ function isManagedAgentMetricsCommandString(
   command: string,
   eventName: keyof ClaudeHooksConfig
 ): boolean {
-  const normalized = command.replace(/\\"/g, "\"");
+  const normalized = normalizeAgentMetricsPath(command.replace(/\\"/g, "\""));
 
   return (
     normalized.startsWith("node ") &&
-    normalized.includes("/apps/cli/dist/index.js") &&
+    normalized.includes("/cli/dist/index.js") &&
     normalized.includes(" hooks collect ") &&
     normalized.includes(`--hook-event-name "${eventName}"`) &&
     normalized.includes("--repo-root ")
   );
+}
+
+function normalizeAgentMetricsPath(value: string): string {
+  return value.replace(/\\/g, "/").replace(/\/{2,}/g, "/");
 }
 
 function isRecord(value: unknown): value is JsonObject {

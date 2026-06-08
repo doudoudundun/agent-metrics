@@ -11,13 +11,13 @@ export async function loadParserState(statePath: string): Promise<ParserState> {
     const contents = await readFile(statePath, "utf8");
     const parsed = JSON.parse(contents) as unknown;
 
-    if (!isParserState(parsed)) {
+    if (!isRecord(parsed)) {
       return createEmptyParserState();
     }
 
     return {
-      nextLine: parsed.nextLine,
-      seenRawEventIds: [...parsed.seenRawEventIds]
+      nextLine: normalizeNextLine(parsed.nextLine),
+      seenRawEventIds: normalizeSeenRawEventIds(parsed.seenRawEventIds)
     };
   } catch {
     return createEmptyParserState();
@@ -25,8 +25,11 @@ export async function loadParserState(statePath: string): Promise<ParserState> {
 }
 
 export async function saveParserState(statePath: string, state: ParserState): Promise<void> {
+  const existingState = await loadParserState(statePath);
+  const nextState = mergeParserState(existingState, state);
+
   await mkdir(dirname(statePath), { recursive: true });
-  await writeFile(statePath, JSON.stringify(state, null, 2), "utf8");
+  await writeFile(statePath, JSON.stringify(nextState, null, 2), "utf8");
 }
 
 function createEmptyParserState(): ParserState {
@@ -36,16 +39,23 @@ function createEmptyParserState(): ParserState {
   };
 }
 
-function isParserState(value: unknown): value is ParserState {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "nextLine" in value &&
-    typeof value.nextLine === "number" &&
-    Number.isInteger(value.nextLine) &&
-    value.nextLine >= 0 &&
-    "seenRawEventIds" in value &&
-    Array.isArray(value.seenRawEventIds) &&
-    value.seenRawEventIds.every((entry) => typeof entry === "string")
-  );
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function normalizeNextLine(value: unknown): number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : 0;
+}
+
+function normalizeSeenRawEventIds(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((entry) => typeof entry === "string") : [];
+}
+
+function mergeParserState(existingState: ParserState, nextState: ParserState): ParserState {
+  return {
+    nextLine: Math.max(existingState.nextLine, nextState.nextLine),
+    seenRawEventIds: Array.from(
+      new Set([...existingState.seenRawEventIds, ...nextState.seenRawEventIds])
+    )
+  };
 }

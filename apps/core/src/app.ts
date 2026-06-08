@@ -1138,13 +1138,14 @@ export function buildApp(input: BuildAppInput): MetricsApp {
         }
       })
     : null;
-  const syncTranscriptState = agentPaths
+  const syncTranscriptState = agentPaths && process.env.AGENT_METRICS_CORE_TRANSCRIPT_SYNC !== "0"
     ? createRecentResultAction(async () => {
         const result = await syncKnownClaudeTranscripts({
           manifestPath: agentPaths.transcriptManifestPath,
           eventLogPath: input.eventLogPath ?? agentPaths.eventLogPath,
           transcriptCursorPath: agentPaths.transcriptCursorPath,
-          transcriptLedgerPath: agentPaths.transcriptLedgerPath
+          transcriptLedgerPath: agentPaths.transcriptLedgerPath,
+          discoveryRoots: []
         });
         persistClaudeSessionContexts(db, result.sessionContexts);
       }, REQUEST_SYNC_TTL_MS)

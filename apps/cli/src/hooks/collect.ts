@@ -97,12 +97,17 @@ export async function handleHookEvent(input: {
 
   const transcriptPath = normalizeTranscriptPath(normalizedPayload.transcript_path, workspacePath);
   if (transcriptPath) {
-    await recordClaudeTranscriptReference({
-      manifestPath: paths.transcriptManifestPath,
-      transcriptPath,
-      workspacePath,
-      sessionId: normalizeOptionalString(normalizedPayload.session_id)
-    });
+    try {
+      await recordClaudeTranscriptReference({
+        manifestPath: paths.transcriptManifestPath,
+        transcriptPath,
+        workspacePath,
+        sessionId: normalizeOptionalString(normalizedPayload.session_id),
+        lockTimeoutMs: 0
+      });
+    } catch {
+      // Raw hooks are the source of truth; parser replay can recover transcript metadata later.
+    }
   }
 
   if (normalizedPayload.hook_event_name === "PreToolUse") {

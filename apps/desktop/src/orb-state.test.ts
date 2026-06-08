@@ -5,7 +5,8 @@ import {
   expandOrbDetail,
   hoverOrb,
   leaveOrbRegion,
-  pinPeekCard
+  pinPeekCard,
+  togglePeekCardPin
 } from "./orb-state.js";
 
 describe("orb state", () => {
@@ -29,6 +30,18 @@ describe("orb state", () => {
 
   it("keeps the current mode when pin does not match a visible peek card", () => {
     expect(pinPeekCard(createOrbSurfaceState("orbDocked"))).toEqual(
+      createOrbSurfaceState("orbDocked")
+    );
+  });
+
+  it("toggles peek pinning from docked, visible, and pinned states", () => {
+    expect(togglePeekCardPin(createOrbSurfaceState("orbDocked"))).toEqual(
+      createOrbSurfaceState("peekPinned")
+    );
+    expect(togglePeekCardPin(createOrbSurfaceState("peekVisible"))).toEqual(
+      createOrbSurfaceState("peekPinned")
+    );
+    expect(togglePeekCardPin(createOrbSurfaceState("peekPinned"))).toEqual(
       createOrbSurfaceState("orbDocked")
     );
   });

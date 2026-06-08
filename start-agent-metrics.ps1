@@ -16,6 +16,14 @@ $CoreUrl = "http://127.0.0.1:$CorePort/api/overview"
 $DashboardUrl = "http://127.0.0.1:$DashboardPort"
 $DashboardApiUrl = "$DashboardUrl/api/overview"
 $RuntimeDir = Join-Path $RepoRoot ".runtime"
+$DataRoot =
+  if ($env:AGENT_METRICS_DATA_ROOT) {
+    $env:AGENT_METRICS_DATA_ROOT
+  } elseif ($env:APPDATA) {
+    Join-Path $env:APPDATA "Agent Metrics\agent-metrics-data"
+  } else {
+    Join-Path $RepoRoot "data-runtime"
+  }
 $HookWatcherOutLog = Join-Path $RuntimeDir "hook-watcher.out.log"
 $HookWatcherErrLog = Join-Path $RuntimeDir "hook-watcher.err.log"
 $HookWatcherPidPath = Join-Path $RuntimeDir "hook-watcher.pid"
@@ -33,6 +41,7 @@ $CoreWorkingDir = Join-Path $RepoRoot "apps\\core"
 $DashboardWorkingDir = Join-Path $RepoRoot "apps\\dashboard"
 $CliEntry = Join-Path $CliWorkingDir "dist\\index.js"
 $CoreEntry = Join-Path $CoreWorkingDir "dist\\server.js"
+$DataMigrationEntry = Join-Path $RepoRoot "apps\\desktop\\dist\\data-root-migration.js"
 $ViteEntry = Join-Path $RepoRoot "node_modules\\vite\\bin\\vite.js"
 $ManagedNodeVersion = if ($env:AGENT_METRICS_NODE_VERSION) { $env:AGENT_METRICS_NODE_VERSION } else { "22.22.3" }
 $ManagedNodeFolder = "node-v$ManagedNodeVersion-win-x64"
@@ -198,6 +207,22 @@ function Invoke-RepoCommand([string[]]$Command) {
   }
 }
 
+function Join-ProcessArguments([string[]]$Arguments) {
+  return (($Arguments | ForEach-Object { Quote-ProcessArgument $_ }) -join " ")
+}
+
+function Quote-ProcessArgument([string]$Argument) {
+  if ([string]::IsNullOrEmpty($Argument)) {
+    return '""'
+  }
+
+  if ($Argument -notmatch '[\s"]') {
+    return $Argument
+  }
+
+  return '"' + $Argument.Replace('"', '\"') + '"'
+}
+
 function Invoke-PnpmCommand([string[]]$Arguments) {
   $command = @($NodeExecutable, $CorepackEntrypoint, "pnpm") + $Arguments
   Invoke-RepoCommand -Command $command
@@ -281,7 +306,7 @@ function Ensure-Bootstrap() {
     }
   }
 
-  if ($Rebuild -or -not (Test-Path $CliEntry) -or -not (Test-Path $CoreEntry) -or -not (Test-Path $ViteEntry)) {
+  if ($Rebuild -or -not (Test-Path $CliEntry) -or -not (Test-Path $CoreEntry) -or -not (Test-Path $DataMigrationEntry) -or -not (Test-Path $ViteEntry)) {
     Write-Step "Building workspace packages"
     Push-Location $RepoRoot
     try {
@@ -298,7 +323,7 @@ function Ensure-ClaudeHooks() {
   Write-Step "Ensuring Claude hooks"
   Push-Location $CliWorkingDir
   try {
-    Invoke-RepoCommand -Command @($NodeExecutable, "dist/index.js", "hooks", "ensure", "--scope", "global", "--repo-root", $RepoRoot)
+    Invoke-RepoCommand -Command @($NodeExecutable, "dist/index.js", "hooks", "ensure", "--scope", "global", "--repo-root", $DataRoot, "--cli-path", $CliEntry)
   } finally {
     Pop-Location
   }
@@ -323,7 +348,7 @@ function Get-ManagedHookWatcherPid() {
     $null -eq $process -or
     $process.Name -ne "node.exe" -or
     $process.CommandLine -notmatch "hooks\s+watch" -or
-    $process.CommandLine -notlike "*$RepoRoot*"
+    $process.CommandLine -notlike "*$DataRoot*"
   ) {
     Remove-Item $HookWatcherPidPath -ErrorAction SilentlyContinue
     return $null
@@ -342,7 +367,7 @@ function Start-HookWatcherIfNeeded() {
 
   Write-Step "Starting Claude hook watcher"
   $process = Start-Process -FilePath $NodeExecutable `
-    -ArgumentList @("dist/index.js", "hooks", "watch", "--scope", "global", "--repo-root", $RepoRoot) `
+    -ArgumentList (Join-ProcessArguments @("dist/index.js", "hooks", "watch", "--scope", "global", "--repo-root", $DataRoot, "--cli-path", $CliEntry)) `
     -WorkingDirectory $CliWorkingDir `
     -RedirectStandardOutput $HookWatcherOutLog `
     -RedirectStandardError $HookWatcherErrLog `
@@ -384,7 +409,7 @@ function Get-ManagedParserPid() {
     $null -eq $process -or
     $process.Name -ne "node.exe" -or
     $process.CommandLine -notmatch "hooks\s+parse" -or
-    $process.CommandLine -notlike "*$RepoRoot*"
+    $process.CommandLine -notlike "*$DataRoot*"
   ) {
     Remove-Item $ParserPidPath -ErrorAction SilentlyContinue
     return $null
@@ -403,7 +428,7 @@ function Start-ParserIfNeeded() {
 
   Write-Step "Starting raw hook parser"
   $process = Start-Process -FilePath $NodeExecutable `
-    -ArgumentList @("dist/index.js", "hooks", "parse", "--follow", "--repo-root", $RepoRoot) `
+    -ArgumentList (Join-ProcessArguments @("dist/index.js", "hooks", "parse", "--follow", "--repo-root", $DataRoot)) `
     -WorkingDirectory $CliWorkingDir `
     -RedirectStandardOutput $ParserOutLog `
     -RedirectStandardError $ParserErrLog `
@@ -494,13 +519,40 @@ function Start-CoreIfNeeded() {
   }
 
   Write-Step "Starting core API"
-  $process = Start-Process -FilePath $NodeExecutable `
-    -ArgumentList @("dist/server.js") `
-    -WorkingDirectory $CoreWorkingDir `
-    -RedirectStandardOutput $CoreOutLog `
-    -RedirectStandardError $CoreErrLog `
-    -WindowStyle Hidden `
-    -PassThru
+  $previousDbPath = $env:AGENT_METRICS_DB_PATH
+  $previousEventLogPath = $env:AGENT_METRICS_EVENT_LOG_PATH
+  $previousRepoRoot = $env:AGENT_METRICS_REPO_ROOT
+  $env:AGENT_METRICS_DB_PATH = Join-Path $DataRoot "data\sqlite\metrics.sqlite"
+  $env:AGENT_METRICS_EVENT_LOG_PATH = Join-Path $DataRoot "data\events\events.jsonl"
+  $env:AGENT_METRICS_REPO_ROOT = $DataRoot
+  try {
+    $process = Start-Process -FilePath $NodeExecutable `
+      -ArgumentList (Join-ProcessArguments @("dist/server.js")) `
+      -WorkingDirectory $CoreWorkingDir `
+      -RedirectStandardOutput $CoreOutLog `
+      -RedirectStandardError $CoreErrLog `
+      -WindowStyle Hidden `
+      -PassThru
+  } finally {
+    if ($null -eq $previousDbPath) {
+      Remove-Item Env:AGENT_METRICS_DB_PATH -ErrorAction SilentlyContinue
+    } else {
+      $env:AGENT_METRICS_DB_PATH = $previousDbPath
+    }
+
+    if ($null -eq $previousEventLogPath) {
+      Remove-Item Env:AGENT_METRICS_EVENT_LOG_PATH -ErrorAction SilentlyContinue
+    } else {
+      $env:AGENT_METRICS_EVENT_LOG_PATH = $previousEventLogPath
+    }
+
+    if ($null -eq $previousRepoRoot) {
+      Remove-Item Env:AGENT_METRICS_REPO_ROOT -ErrorAction SilentlyContinue
+    } else {
+      $env:AGENT_METRICS_REPO_ROOT = $previousRepoRoot
+    }
+
+  }
 
   Wait-UntilHealthy -Name "Core API" -Url $CoreUrl -Validator {
     param($Response)
@@ -579,7 +631,7 @@ function Start-DashboardIfNeeded() {
 
   Write-Step "Starting dashboard"
   $process = Start-Process -FilePath $NodeExecutable `
-    -ArgumentList @($ViteEntry, "--host", "127.0.0.1", "--port", "$DashboardPort") `
+    -ArgumentList (Join-ProcessArguments @($ViteEntry, "--host", "127.0.0.1", "--port", "$DashboardPort")) `
     -WorkingDirectory $DashboardWorkingDir `
     -RedirectStandardOutput $DashboardOutLog `
     -RedirectStandardError $DashboardErrLog `
@@ -596,7 +648,27 @@ function Start-DashboardIfNeeded() {
   Write-Step "Dashboard started with PID $($process.Id)"
 }
 
+function Invoke-DataRootMigration() {
+  if (-not $env:APPDATA) {
+    return
+  }
+
+  $legacyDataRoot = Join-Path $env:APPDATA "Electron\agent-metrics-data"
+
+  if (-not (Test-Path -LiteralPath $legacyDataRoot)) {
+    return
+  }
+
+  Write-Step "Migrating legacy Electron data root into shared Agent Metrics data"
+  Invoke-RepoCommand -Command @($NodeExecutable, $DataMigrationEntry, "--data-root", $DataRoot, "--legacy-root", $legacyDataRoot)
+}
+
 Ensure-Bootstrap
+Invoke-DataRootMigration
+New-Item -ItemType Directory -Force -Path (Join-Path $DataRoot "data\hooks\raw") | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $DataRoot "data\events") | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $DataRoot "data\hooks\state") | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $DataRoot "data\sqlite") | Out-Null
 Ensure-ClaudeHooks
 Start-HookWatcherIfNeeded
 Start-ParserIfNeeded
@@ -609,14 +681,15 @@ Write-Host "Parser:    raw hook bus -> normalized events"
 Write-Host "Dashboard: $DashboardUrl"
 Write-Host "API:       $CoreUrl"
 Write-Host "Node:      $NodeExecutable ($NodeResolutionSource)"
+Write-Host "Data:      $DataRoot"
 Write-Host "Logs:      $RuntimeDir"
 Write-Host ""
 Write-Host "Next step: open Claude Code in a test workspace and trigger Read, Search/Grep, Edit, and Bash."
 Write-Host "Manual fallback: .\install-claude-hooks.ps1"
 Write-Host "Expected logs:"
-Write-Host "  data\hooks\raw\claude-code.jsonl"
-Write-Host "  data\events\events.jsonl"
-Write-Host "  data\hooks\state\parser-state.json"
+Write-Host "  $(Join-Path $DataRoot "data\hooks\raw\claude-code.jsonl")"
+Write-Host "  $(Join-Path $DataRoot "data\events\events.jsonl")"
+Write-Host "  $(Join-Path $DataRoot "data\hooks\state\parser-state.json")"
 
 if (-not $NoBrowser) {
   Start-Process $DashboardUrl | Out-Null

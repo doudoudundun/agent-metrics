@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import { appendJsonLine } from "@agent-metrics/shared-utils";
 import {
@@ -13,17 +13,23 @@ import { loadParserState, saveParserState } from "./parser-state.js";
 import { parseClaudeRawEnvelope } from "./raw-envelope.js";
 import { collectChangedSnapshots } from "./snapshots.js";
 
+const PARSER_STATE_FLUSH_INTERVAL = 100;
+
 export async function parseRawHooksOnce(input: { repoRoot: string }): Promise<void> {
   const paths = getHookPaths(input.repoRoot);
   const state = await loadParserState(paths.parserStatePath);
   const rawLines = await readJsonLines(paths.rawHookLogPath);
   const pendingLines = rawLines.slice(state.nextLine);
+  let processedLines = 0;
+  let shouldSyncTranscripts = false;
 
   for (const line of pendingLines) {
     state.nextLine += 1;
+    processedLines += 1;
 
     const envelope = parseClaudeRawEnvelope(line);
     if (envelope === null || state.seenRawEventIds.includes(envelope.raw_event_id)) {
+      await saveParserStatePeriodically(paths.parserStatePath, state, processedLines);
       continue;
     }
 
@@ -42,6 +48,7 @@ export async function parseRawHooksOnce(input: { repoRoot: string }): Promise<vo
         normalizedPayload.tool_use_id.length === 0
       ) {
         state.seenRawEventIds.push(envelope.raw_event_id);
+        await saveParserStatePeriodically(paths.parserStatePath, state, processedLines);
         continue;
       }
 
@@ -74,27 +81,56 @@ export async function parseRawHooksOnce(input: { repoRoot: string }): Promise<vo
 
     const transcriptPath = normalizeTranscriptPath(normalizedPayload.transcript_path, workspacePath);
     if (transcriptPath) {
-      await recordClaudeTranscriptReference({
-        manifestPath: paths.transcriptManifestPath,
-        transcriptPath,
-        workspacePath,
-        sessionId:
-          typeof normalizedPayload.session_id === "string" && normalizedPayload.session_id.length > 0
+      try {
+        await recordClaudeTranscriptReference({
+          manifestPath: paths.transcriptManifestPath,
+          transcriptPath,
+          workspacePath,
+          sessionId:
+            typeof normalizedPayload.session_id === "string" && normalizedPayload.session_id.length > 0
             ? normalizedPayload.session_id
-            : undefined
-      });
-      await syncKnownClaudeTranscripts({
-        manifestPath: paths.transcriptManifestPath,
-        eventLogPath: paths.eventLogPath,
-        transcriptCursorPath: paths.transcriptCursorPath,
-        transcriptLedgerPath: paths.transcriptLedgerPath
-      });
+            : undefined,
+          lockTimeoutMs: 0
+        });
+        shouldSyncTranscripts = true;
+      } catch {
+        // Tool events should keep flowing even when transcript sync is busy.
+      }
+
+      if (!(await pathExists(transcriptPath))) {
+        state.seenRawEventIds.push(envelope.raw_event_id);
+        await saveParserStatePeriodically(paths.parserStatePath, state, processedLines);
+        continue;
+      }
     }
 
     state.seenRawEventIds.push(envelope.raw_event_id);
+    await saveParserStatePeriodically(paths.parserStatePath, state, processedLines);
   }
 
   await saveParserState(paths.parserStatePath, state);
+
+  if (shouldSyncTranscripts) {
+    await syncKnownClaudeTranscripts({
+      manifestPath: paths.transcriptManifestPath,
+      eventLogPath: paths.eventLogPath,
+      transcriptCursorPath: paths.transcriptCursorPath,
+      transcriptLedgerPath: paths.transcriptLedgerPath,
+      discoveryRoots: []
+    });
+  }
+}
+
+async function saveParserStatePeriodically(
+  parserStatePath: string,
+  state: Awaited<ReturnType<typeof loadParserState>>,
+  processedLines: number
+): Promise<void> {
+  if (processedLines % PARSER_STATE_FLUSH_INTERVAL !== 0) {
+    return;
+  }
+
+  await saveParserState(parserStatePath, state);
 }
 
 function withFallbackTimestamp(payload: ClaudeHookPayload, timestamp: string): ClaudeHookPayload {
@@ -142,8 +178,25 @@ async function readJsonLines(filePath: string): Promise<unknown[]> {
       .trim()
       .split("\n")
       .filter((line) => line.length > 0)
-      .map((line) => JSON.parse(line) as unknown);
+      .map((line) => parseJsonLine(line));
   } catch {
     return [];
+  }
+}
+
+function parseJsonLine(line: string): unknown {
+  try {
+    return JSON.parse(line) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+async function pathExists(filePath: string): Promise<boolean> {
+  try {
+    await stat(filePath);
+    return true;
+  } catch {
+    return false;
   }
 }

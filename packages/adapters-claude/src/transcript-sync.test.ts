@@ -1,4 +1,4 @@
-import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
@@ -442,6 +442,35 @@ describe("syncKnownClaudeTranscripts", () => {
         sessionId: "ses_background_1"
       }
     ]);
+  });
+
+  it("recovers when a previous parser left behind a stale transcript state lock", async () => {
+    const repoRoot = await mkdtemp(join(tmpdir(), "agent-metrics-transcript-sync-"));
+    const transcriptPath = join(repoRoot, "claude-session.jsonl");
+    const paths = getAgentMetricsPaths(repoRoot);
+    const lockPath = join(dirname(paths.transcriptManifestPath), "transcript-state.lock");
+    const staleTime = new Date(Date.now() - 60_000);
+
+    await mkdir(dirname(lockPath), { recursive: true });
+    await writeFile(lockPath, "", "utf8");
+    await utimes(lockPath, staleTime, staleTime);
+
+    await recordClaudeTranscriptReference({
+      manifestPath: paths.transcriptManifestPath,
+      transcriptPath,
+      workspacePath: repoRoot,
+      sessionId: "ses_stale_lock"
+    });
+
+    const manifest = JSON.parse(await readFile(paths.transcriptManifestPath, "utf8")) as Array<{
+      sessionId?: string;
+    }>;
+    expect(manifest).toEqual([
+      expect.objectContaining({
+        sessionId: "ses_stale_lock"
+      })
+    ]);
+    await expect(readFile(lockPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 });
 

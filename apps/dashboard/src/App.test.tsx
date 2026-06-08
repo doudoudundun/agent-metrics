@@ -392,6 +392,44 @@ describe("App", () => {
     view.unmount();
   });
 
+  it("shows pending tool calls when total calls include unfinished events", async () => {
+    apiMocks.fetchOverview.mockResolvedValueOnce({
+      mode: "calendar",
+      range: "day",
+      timezone: "Asia/Shanghai",
+      windowStart: "2026-05-26T16:00:00.000Z",
+      windowEnd: "2026-05-27T16:00:00.000Z",
+      updatedAt: "2026-05-27T10:30:00.000Z",
+      sessionCount: 3,
+      turnCount: 24,
+      responseCount: 12,
+      totalTokens: 45678,
+      inputTokens: 22345,
+      outputTokens: 19876,
+      cacheReadTokens: 2345,
+      cacheCreationTokens: 1112,
+      tokensByModel: [],
+      totalToolCalls: 12,
+      successfulExecutions: 7,
+      failedExecutions: 2,
+      successRate: 0.5833,
+      editOperationCount: 4,
+      affectedFileCount: 7,
+      insertions: 42,
+      deletions: 8,
+      sourceBreakdown: [],
+      providerBreakdown: []
+    });
+
+    render(<App />);
+
+    const overviewRegion = await screen.findByRole("region", {
+      name: "Overview metrics for Today"
+    });
+
+    expect(within(overviewRegion).getByText(/7 ok \/ 2 failed \/ 3 pending/)).toBeInTheDocument();
+  });
+
   it("renders overview metrics before tools and sessions finish loading", async () => {
     vi.mocked(fetchTools).mockImplementationOnce(() => new Promise(() => undefined));
     vi.mocked(fetchSessions).mockImplementationOnce(() => new Promise(() => undefined));
@@ -552,7 +590,8 @@ describe("App", () => {
       toggleFloatingWindow: vi.fn().mockResolvedValue({ visible: true }),
       showOrb: vi.fn().mockResolvedValue(undefined),
       hideOrb: vi.fn().mockResolvedValue(undefined),
-      pinPeekCard: vi.fn().mockResolvedValue(undefined),
+      pinPeekCard: vi.fn().mockResolvedValue({ pinned: true }),
+      togglePeekCardPin: vi.fn().mockResolvedValue({ pinned: true }),
       expandOrbDetail: vi.fn().mockResolvedValue(undefined),
       getOrbSnapshot: vi.fn().mockResolvedValue(null),
       setOrbSnapshot: vi.fn().mockResolvedValue(undefined),

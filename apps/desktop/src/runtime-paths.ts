@@ -27,9 +27,18 @@ export function resolveDesktopRuntimePaths(input: {
   currentDir: string;
   isPackaged: boolean;
   userDataPath: string;
+  appDataPath?: string;
+  dataRootEnv?: string;
+  fileExists?: (filePath: string) => boolean;
 }): DesktopRuntimePaths {
   const pathModule = usesWindowsPaths(input.currentDir) ? win32 : posix;
-  const dataRoot = pathModule.join(input.userDataPath, "agent-metrics-data");
+  const dataRoot = resolveDesktopDataRoot({
+    userDataPath: input.userDataPath,
+    appDataPath: input.appDataPath,
+    dataRootEnv: input.dataRootEnv,
+    fileExists: input.fileExists,
+    pathModule
+  });
 
   if (!input.isPackaged) {
     const appRoot = pathModule.resolve(input.currentDir, "../../..");
@@ -74,7 +83,8 @@ export function resolveDesktopRuntimePaths(input: {
 export function buildDashboardUrl(
   baseUrl: string,
   surface: DesktopDashboardSurface,
-  apiBaseUrl?: string
+  apiBaseUrl?: string,
+  extraParams?: Record<string, string>
 ): string {
   const url = new URL(baseUrl);
 
@@ -84,7 +94,30 @@ export function buildDashboardUrl(
     url.searchParams.set("apiBase", apiBaseUrl);
   }
 
+  if (extraParams) {
+    for (const [key, value] of Object.entries(extraParams)) {
+      url.searchParams.set(key, value);
+    }
+  }
+
   return url.toString();
+}
+
+export function resolveDesktopDataRoot(input: {
+  userDataPath: string;
+  appDataPath?: string;
+  dataRootEnv?: string;
+  fileExists?: (filePath: string) => boolean;
+  pathModule?: typeof posix | typeof win32;
+}): string {
+  const envRoot = input.dataRootEnv?.trim();
+
+  if (envRoot) {
+    return envRoot;
+  }
+
+  const pathModule = input.pathModule ?? (usesWindowsPaths(input.userDataPath) ? win32 : posix);
+  return pathModule.join(input.userDataPath, "agent-metrics-data");
 }
 
 function usesWindowsPaths(filePath: string): boolean {

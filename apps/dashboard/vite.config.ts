@@ -4,6 +4,7 @@ import { defineConfig } from "vitest/config";
 const corePort = process.env.AGENT_METRICS_CORE_PORT ?? "45183";
 
 export default defineConfig({
+  base: "./",
   plugins: [react()],
   server: {
     host: "127.0.0.1",

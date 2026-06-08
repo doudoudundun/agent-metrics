@@ -2,6 +2,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
+DATA_ROOT="${AGENT_METRICS_DATA_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/Agent Metrics/agent-metrics-data}"
 CORE_PORT="${AGENT_METRICS_CORE_PORT:-45183}"
 DASHBOARD_PORT="${AGENT_METRICS_DASHBOARD_PORT:-4173}"
 CORE_URL="http://127.0.0.1:$CORE_PORT/api/overview"
@@ -180,10 +181,10 @@ ensure_command corepack
 ensure_command curl
 
 mkdir -p "$RUNTIME_DIR"
-mkdir -p "$REPO_ROOT/data/hooks/raw"
-mkdir -p "$REPO_ROOT/data/events"
-mkdir -p "$REPO_ROOT/data/hooks/state"
-mkdir -p "$REPO_ROOT/data/sqlite"
+mkdir -p "$DATA_ROOT/data/hooks/raw"
+mkdir -p "$DATA_ROOT/data/events"
+mkdir -p "$DATA_ROOT/data/hooks/state"
+mkdir -p "$DATA_ROOT/data/sqlite"
 
 if [[ ! -d "$REPO_ROOT/node_modules" ]]; then
   log "Installing workspace dependencies"
@@ -199,7 +200,7 @@ fi
 # Claude hooks
 # ----------------------------------------------------------------
 log "Ensuring Claude hooks"
-(cd "$CLI_WORKING_DIR" && node "$CLI_ENTRY" hooks ensure --scope global --repo-root "$REPO_ROOT")
+(cd "$CLI_WORKING_DIR" && node "$CLI_ENTRY" hooks ensure --scope global --repo-root "$DATA_ROOT" --cli-path "$CLI_ENTRY")
 
 # ----------------------------------------------------------------
 # Hook watcher
@@ -207,7 +208,7 @@ log "Ensuring Claude hooks"
 start_background \
   "$HOOK_WATCHER_PID_PATH" "Hook watcher" "$CLI_WORKING_DIR" \
   "$RUNTIME_DIR/hook-watcher.out.log" "$RUNTIME_DIR/hook-watcher.err.log" \
-  node "$CLI_ENTRY" hooks watch --scope global --repo-root "$REPO_ROOT"
+  node "$CLI_ENTRY" hooks watch --scope global --repo-root "$DATA_ROOT" --cli-path "$CLI_ENTRY"
 
 # ----------------------------------------------------------------
 # Parser
@@ -215,7 +216,7 @@ start_background \
 start_background \
   "$PARSER_PID_PATH" "Parser" "$CLI_WORKING_DIR" \
   "$RUNTIME_DIR/parser.out.log" "$RUNTIME_DIR/parser.err.log" \
-  node "$CLI_ENTRY" hooks parse --follow --repo-root "$REPO_ROOT"
+  node "$CLI_ENTRY" hooks parse --follow --repo-root "$DATA_ROOT"
 
 # ----------------------------------------------------------------
 # Core API
@@ -229,7 +230,11 @@ else
   start_background \
     "$CORE_PID_PATH" "Core API" "$CORE_WORKING_DIR" \
     "$RUNTIME_DIR/core.out.log" "$RUNTIME_DIR/core.err.log" \
-    node "$CORE_ENTRY"
+    env \
+      "AGENT_METRICS_DB_PATH=$DATA_ROOT/data/sqlite/metrics.sqlite" \
+      "AGENT_METRICS_EVENT_LOG_PATH=$DATA_ROOT/data/events/events.jsonl" \
+      "AGENT_METRICS_REPO_ROOT=$DATA_ROOT" \
+      node "$CORE_ENTRY"
   wait_until_healthy "Core API" "$CORE_URL" "$RUNTIME_DIR/core.err.log" is_healthy
 fi
 
@@ -257,13 +262,14 @@ info "Hooks:     ensured + watcher active"
 info "Parser:    raw hook bus -> normalized events"
 info "Dashboard: $DASHBOARD_URL"
 info "API:       $CORE_URL"
+info "Data:      $DATA_ROOT"
 info "Logs:      $RUNTIME_DIR"
 echo ""
 info "Next step: open Claude Code in a test workspace and trigger Read, Search/Grep, Edit, and Bash."
 info "Expected logs:"
-info "  $REPO_ROOT/data/hooks/raw/claude-code.jsonl"
-info "  $REPO_ROOT/data/events/events.jsonl"
-info "  $REPO_ROOT/data/hooks/state/parser-state.json"
+info "  $DATA_ROOT/data/hooks/raw/claude-code.jsonl"
+info "  $DATA_ROOT/data/events/events.jsonl"
+info "  $DATA_ROOT/data/hooks/state/parser-state.json"
 
 if [[ "$NO_BROWSER" != true ]] && command -v open &>/dev/null; then
   open "$DASHBOARD_URL"

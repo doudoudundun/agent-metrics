@@ -66,8 +66,10 @@ describe("FloatingDashboard", () => {
     expect(within(kpis).getByText("12")).toBeInTheDocument();
     expect(within(kpis).getByText("45,678")).toBeInTheDocument();
     expect(screen.getByText("4 edits / +42 / -8")).toBeInTheDocument();
+    expect(screen.getByText("2,345 cache read")).toBeInTheDocument();
     expect(screen.queryByText("Sessions")).not.toBeInTheDocument();
     expect(screen.queryByText("Recent sessions")).not.toBeInTheDocument();
+    expect(screen.queryByText(/success rate/i)).not.toBeInTheDocument();
   });
 
   it("shows a loading state instead of healthy zero metrics while overview data is pending", () => {

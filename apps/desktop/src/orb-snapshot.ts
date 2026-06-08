@@ -1,5 +1,6 @@
 export type DesktopOrbMetrics = {
   totalTokens: number;
+  cacheReadTokens: number;
   totalToolCalls: number;
   editOperationCount: number;
   affectedFileCount: number;
@@ -21,6 +22,7 @@ export function createDesktopMetricsSnapshot(): DesktopMetricsSnapshot {
     status: "loading",
     metrics: {
       totalTokens: 0,
+      cacheReadTokens: 0,
       totalToolCalls: 0,
       editOperationCount: 0,
       affectedFileCount: 0,

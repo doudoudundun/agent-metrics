@@ -64,7 +64,7 @@ export function FloatingDashboard({
           <li>
             <span>Total Tokens</span>
             <strong>{NUMBER_FORMAT.format(overview.totalTokens)}</strong>
-            <small>{Math.round(overview.successRate * 100)}% success rate</small>
+            <small>{NUMBER_FORMAT.format(overview.cacheReadTokens)} cache read</small>
           </li>
         </ul>
       ) : null}

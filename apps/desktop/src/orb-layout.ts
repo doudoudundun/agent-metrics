@@ -1,4 +1,8 @@
-import { clampBoundsToDisplay, type WindowBounds } from "./window-state.js";
+import {
+  clampBoundsToDisplay,
+  type OrbDockEdge,
+  type WindowBounds
+} from "./window-state.js";
 
 type Size = {
   width: number;
@@ -31,6 +35,37 @@ export function resolvePeekCardBounds(input: {
       y: Math.round(preferredY),
       width: peekSize.width,
       height: peekSize.height
+    },
+    workArea
+  );
+}
+
+export function resolveDefaultOrbBounds(input: {
+  workArea: WindowBounds;
+  dockEdge: OrbDockEdge;
+  orbSize?: Size;
+  horizontalMargin?: number;
+  bottomMargin?: number;
+}): WindowBounds {
+  const {
+    workArea,
+    dockEdge,
+    orbSize = { width: 104, height: 104 },
+    horizontalMargin = 16,
+    bottomMargin = 96
+  } = input;
+  const preferredX =
+    dockEdge === "left"
+      ? workArea.x + horizontalMargin
+      : workArea.x + workArea.width - orbSize.width - horizontalMargin;
+  const preferredY = workArea.y + workArea.height - orbSize.height - bottomMargin;
+
+  return clampBoundsToDisplay(
+    {
+      x: Math.round(preferredX),
+      y: Math.round(preferredY),
+      width: orbSize.width,
+      height: orbSize.height
     },
     workArea
   );

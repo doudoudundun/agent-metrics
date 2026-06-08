@@ -64,9 +64,98 @@ describe("watchClaudeSettings", () => {
     controller.abort();
     await watchPromise;
   });
+
+  it("rewrites managed hooks to the current cli path and shared repo root", async () => {
+    const repoRoot = await mkdtemp(join(tmpdir(), "agent-metrics-data-"));
+    const root = await mkdtemp(join(tmpdir(), "agent-metrics-watch-"));
+    const settingsPath = join(root, "settings.json");
+    const controller = new AbortController();
+    const cliPath = "D:/projects/dev/agent-metrics/apps/cli/dist/index.js";
+
+    await writeFile(
+      settingsPath,
+      JSON.stringify(
+        {
+          hooks: {
+            PreToolUse: [
+              {
+                matcher: "*",
+                hooks: [
+                  {
+                    type: "command",
+                    command:
+                      'node "C:/Users/test/AppData/Local/Programs/AgentMetrics/resources/runtime/cli/dist/index.js" hooks collect --hook-event-name "PreToolUse" --repo-root "C:/Users/test/AppData/Roaming/Agent Metrics/agent-metrics-data"'
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const watchPromise = watchClaudeSettings({
+      repoRoot,
+      cliPath,
+      settingsPath,
+      debounceMs: 50,
+      signal: controller.signal,
+      log: () => {}
+    });
+
+    const repaired = (await waitForHooksMatching(settingsPath, (settings) => {
+      const hooks = settings.hooks?.PreToolUse;
+      return (
+        Array.isArray(hooks) &&
+        hooks[0] !== undefined &&
+        typeof hooks[0] === "object" &&
+        hooks[0] !== null &&
+        "hooks" in hooks[0] &&
+        Array.isArray((hooks[0] as { hooks?: unknown[] }).hooks) &&
+        typeof (hooks[0] as { hooks: Array<{ command?: string }> }).hooks[0]?.command === "string" &&
+        (hooks[0] as { hooks: Array<{ command: string }> }).hooks[0].command.includes(cliPath)
+      );
+    })) as {
+      hooks: {
+        PreToolUse: Array<{
+          matcher: string;
+          hooks: Array<{ command: string }>;
+        }>;
+      };
+    };
+
+    expect(repaired.hooks.PreToolUse).toEqual([
+      {
+        matcher: "*",
+        hooks: [
+          {
+            type: "command",
+            command:
+              `node "${cliPath}" hooks collect --hook-event-name "PreToolUse" --repo-root "${repoRoot.replace(/\\/g, "/")}"`
+          }
+        ]
+      }
+    ]);
+
+    controller.abort();
+    await watchPromise;
+  });
 });
 
 async function waitForHooks(settingsPath: string): Promise<{
+  theme?: string;
+  hooks?: Record<string, unknown>;
+}> {
+  return waitForHooksMatching(settingsPath, (settings) => settings.hooks?.PreToolUse !== undefined);
+}
+
+async function waitForHooksMatching(
+  settingsPath: string,
+  predicate: (settings: { theme?: string; hooks?: Record<string, unknown> }) => boolean
+): Promise<{
   theme?: string;
   hooks?: Record<string, unknown>;
 }> {
@@ -78,7 +167,7 @@ async function waitForHooks(settingsPath: string): Promise<{
       hooks?: Record<string, unknown>;
     };
 
-    if (repaired.hooks?.PreToolUse !== undefined) {
+    if (predicate(repaired)) {
       return repaired;
     }
 

@@ -13,16 +13,18 @@ export type AgentMetricsDesktopBridge = {
   toggleFloatingWindow: () => Promise<{ visible: boolean }>;
   showOrb: () => Promise<void>;
   hideOrb: () => Promise<void>;
-  pinPeekCard: () => Promise<void>;
+  pinPeekCard: () => Promise<{ pinned: boolean }>;
+  togglePeekCardPin: () => Promise<{ pinned: boolean }>;
   expandOrbDetail: () => Promise<void>;
   getOrbSnapshot: () => Promise<unknown>;
   setOrbSnapshot: (snapshot: Record<string, unknown>) => Promise<void>;
   markOrbStale: () => Promise<void>;
   peekEnter: () => Promise<void>;
   peekLeave: () => Promise<void>;
-  orbDragStart: (offset: { x: number; y: number }) => Promise<void>;
-  orbDragMove: (screenPoint: { x: number; y: number }) => Promise<void>;
+  orbDragStart: () => Promise<void>;
+  orbDragMove: () => Promise<void>;
   orbDragEnd: () => Promise<void>;
+  showOrbMenu?: () => Promise<void>;
 };
 
 export function resolveDesktopSurface(search: string): {
@@ -62,6 +64,7 @@ export function getAgentMetricsDesktopBridge(
     typeof bridge.showOrb !== "function" ||
     typeof bridge.hideOrb !== "function" ||
     typeof bridge.pinPeekCard !== "function" ||
+    typeof bridge.togglePeekCardPin !== "function" ||
     typeof bridge.expandOrbDetail !== "function" ||
     typeof bridge.getOrbSnapshot !== "function" ||
     typeof bridge.setOrbSnapshot !== "function" ||

@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { buildDashboardUrl, resolveDesktopRuntimePaths } from "./runtime-paths.js";
+import {
+  buildDashboardUrl,
+  resolveDesktopDataRoot,
+  resolveDesktopRuntimePaths
+} from "./runtime-paths.js";
 
 describe("resolveDesktopRuntimePaths", () => {
   it("keeps development binaries rooted at the repository checkout and stores data in the shared user directory", () => {
@@ -89,5 +93,24 @@ describe("resolveDesktopRuntimePaths", () => {
     ).toBe(
       "file:///C:/Users/test/AppData/Local/Programs/AgentMetrics/resources/runtime/dashboard/index.html?surface=desktop-orb-peek&apiBase=http%3A%2F%2F127.0.0.1%3A45183"
     );
+  });
+
+  it("prefers an explicit data root environment override", () => {
+    expect(
+      resolveDesktopDataRoot({
+        userDataPath: "C:\\Users\\test\\AppData\\Roaming\\Agent Metrics",
+        dataRootEnv: "C:\\agent-metrics-data"
+      })
+    ).toBe("C:\\agent-metrics-data");
+  });
+
+  it("keeps packaged data on the canonical Agent Metrics path even when legacy Electron data exists", () => {
+    expect(
+      resolveDesktopDataRoot({
+        userDataPath: "C:\\Users\\test\\AppData\\Roaming\\Agent Metrics",
+        appDataPath: "C:\\Users\\test\\AppData\\Roaming",
+        fileExists: (filePath) => filePath.includes("\\Electron\\agent-metrics-data")
+      })
+    ).toBe("C:\\Users\\test\\AppData\\Roaming\\Agent Metrics\\agent-metrics-data");
   });
 });
