@@ -117,7 +117,12 @@ export function resolveDesktopDataRoot(input: {
   }
 
   const pathModule = input.pathModule ?? (usesWindowsPaths(input.userDataPath) ? win32 : posix);
-  return pathModule.join(input.userDataPath, "agent-metrics-data");
+  const userDataRoot =
+    input.appDataPath && pathModule.basename(input.userDataPath) === "Electron"
+      ? pathModule.join(input.appDataPath, "Agent Metrics")
+      : input.userDataPath;
+
+  return pathModule.join(userDataRoot, "agent-metrics-data");
 }
 
 function usesWindowsPaths(filePath: string): boolean {

@@ -51,6 +51,7 @@ export type OverviewResponse = {
   totalToolCalls: number;
   successfulExecutions: number;
   failedExecutions: number;
+  startedOnlyExecutions: number;
   successRate: number;
   editOperationCount: number;
   affectedFileCount: number;
@@ -65,6 +66,17 @@ export type ToolRow = {
   count: number;
   failures: number;
   averageDurationMs: number;
+};
+
+export type TokenTrendPoint = {
+  bucketStart: string;
+  label: string;
+  totalTokens: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  cacheHitRate: number;
 };
 
 export type SessionRow = {
@@ -124,6 +136,7 @@ export type AggregateRowsResponse<T> = AggregateMeta & {
 };
 
 export type ToolRowsResponse = AggregateRowsResponse<ToolRow>;
+export type TokenTrendResponse = AggregateRowsResponse<TokenTrendPoint>;
 export type SessionRowsResponse = AggregateRowsResponse<SessionRow>;
 
 async function fetchJson<T>(path: string): Promise<T> {
@@ -153,6 +166,16 @@ export async function fetchTools(
   return parseAggregateRowsResponse<ToolRow>(
     await fetchJson<unknown>(withScope("/api/tools", scope, sourceVendor)),
     "/api/tools"
+  );
+}
+
+export async function fetchTokenTrend(
+  scope: TimeScopeSelection = DEFAULT_TIME_SCOPE,
+  sourceVendor: SourceVendor = "all"
+): Promise<TokenTrendResponse> {
+  return parseAggregateRowsResponse<TokenTrendPoint>(
+    await fetchJson<unknown>(withScope("/api/token-trend", scope, sourceVendor)),
+    "/api/token-trend"
   );
 }
 
@@ -227,6 +250,7 @@ function parseOverviewResponse(response: unknown, path: string): OverviewRespons
     totalToolCalls: readMetric(payload, "totalToolCalls"),
     successfulExecutions: readMetric(payload, "successfulExecutions"),
     failedExecutions: readMetric(payload, "failedExecutions"),
+    startedOnlyExecutions: readMetric(payload, "startedOnlyExecutions"),
     successRate: readMetric(payload, "successRate"),
     editOperationCount: readMetric(payload, "editOperationCount"),
     affectedFileCount: readMetric(payload, "affectedFileCount"),

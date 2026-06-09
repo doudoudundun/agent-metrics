@@ -16,6 +16,14 @@ export function FloatingDashboard({
   statusMessage = null
 }: FloatingDashboardProps) {
   const showMetrics = overview !== null;
+  const closedToolCalls =
+    overview === null ? 0 : overview.successfulExecutions + overview.failedExecutions;
+  const displayedToolCalls =
+    overview === null
+      ? 0
+      : overview.totalToolCalls === closedToolCalls
+        ? overview.totalToolCalls
+        : closedToolCalls;
 
   return (
     <section className="floating-dashboard" aria-label="Floating dashboard">
@@ -58,8 +66,11 @@ export function FloatingDashboard({
           </li>
           <li>
             <span>Tool Calls</span>
-            <strong>{NUMBER_FORMAT.format(overview.totalToolCalls)}</strong>
-            <small>{NUMBER_FORMAT.format(overview.failedExecutions)} failed runs</small>
+            <strong>{NUMBER_FORMAT.format(displayedToolCalls)}</strong>
+            <small>
+              {NUMBER_FORMAT.format(overview.successfulExecutions)} ok /{" "}
+              {NUMBER_FORMAT.format(overview.failedExecutions)} failed
+            </small>
           </li>
           <li>
             <span>Total Tokens</span>

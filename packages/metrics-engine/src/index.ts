@@ -62,6 +62,7 @@ export type OverviewMetrics = {
   totalToolCalls: number;
   successfulExecutions: number;
   failedExecutions: number;
+  startedOnlyExecutions: number;
   successRate: number;
   editOperationCount: number;
   turnCount: number;
@@ -86,7 +87,8 @@ export function buildOverviewMetrics(input: {
 }): OverviewMetrics {
   const successfulExecutions = input.toolEvents.filter((row) => row.status === "succeeded").length;
   const failedExecutions = input.toolEvents.filter((row) => row.status === "failed").length;
-  const totalToolCalls = input.toolEvents.length;
+  const startedOnlyExecutions = input.toolEvents.filter((row) => row.status === "started").length;
+  const totalToolCalls = successfulExecutions + failedExecutions;
   const editOperationCount = input.codeEdits.reduce((sum, row) => sum + row.edit_operation_count, 0);
   const turnCount = input.prompts.length;
   const responseCount = input.responses.length;
@@ -126,6 +128,7 @@ export function buildOverviewMetrics(input: {
     totalToolCalls,
     successfulExecutions,
     failedExecutions,
+    startedOnlyExecutions,
     successRate: totalToolCalls === 0 ? 0 : successfulExecutions / totalToolCalls,
     editOperationCount,
     turnCount,

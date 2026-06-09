@@ -1,7 +1,8 @@
 import { mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import * as claudeAdapter from "@agent-metrics/adapters-claude";
 import { handleHookEvent } from "./collect.js";
 import { parseRawHooksOnce } from "./parser.js";
 import { getHookPaths } from "./paths.js";
@@ -274,6 +275,45 @@ describe("parseRawHooksOnce", () => {
 
     expect(eventLines.some((line) => line.type === "tool.called")).toBe(true);
     expect(parserState.nextLine).toBe(1);
+  });
+
+  it("keeps hook-derived events flowing when transcript sync throws", async () => {
+    const repoRoot = await mkdtemp(join(tmpdir(), "agent-metrics-parse-"));
+    const transcriptPath = join(repoRoot, "claude-session.jsonl");
+    const syncSpy = vi
+      .spyOn(claudeAdapter, "syncKnownClaudeTranscripts")
+      .mockRejectedValueOnce(new Error("sync failed"));
+
+    await writeClaudeTranscript(transcriptPath, [
+      {
+        type: "user",
+        sessionId: "ses_sync_failure",
+        cwd: repoRoot,
+        promptId: "prompt_sync_failure",
+        timestamp: "2026-05-27T10:00:00.000Z",
+        message: { role: "user", content: "Ship it." }
+      }
+    ]);
+
+    await handleHookEvent({
+      repoRoot,
+      payload: {
+        session_id: "ses_sync_failure",
+        cwd: repoRoot,
+        hook_event_name: "PreToolUse",
+        tool_name: "Read",
+        tool_use_id: "tool_sync_failure_1",
+        transcript_path: transcriptPath
+      }
+    });
+
+    await expect(parseRawHooksOnce({ repoRoot })).resolves.toBeUndefined();
+
+    const paths = getHookPaths(repoRoot);
+    const eventLines = await readJsonLines(paths.eventLogPath);
+
+    expect(eventLines.some((line) => line.type === "tool.called")).toBe(true);
+    syncSpy.mockRestore();
   });
 });
 

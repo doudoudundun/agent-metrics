@@ -5,7 +5,7 @@ export type WindowBounds = {
   height: number;
 };
 
-export type OrbDockEdge = "left" | "right";
+export type OrbDockEdge = "left" | "right" | null;
 
 export type DesktopSettings = {
   closeBehavior: "hide-to-tray" | "quit-app";
@@ -103,7 +103,10 @@ export function sanitizeDesktopSettings(value: unknown): DesktopSettings {
       typeof value.showOrbOnStartup === "boolean"
         ? value.showOrbOnStartup
         : defaults.showOrbOnStartup,
-    orbDockEdge: value.orbDockEdge === "left" ? value.orbDockEdge : defaults.orbDockEdge,
+    orbDockEdge:
+      value.orbDockEdge === "left" || value.orbDockEdge === "right" || value.orbDockEdge === null
+        ? value.orbDockEdge
+        : defaults.orbDockEdge,
     orbCollapsed:
       typeof value.orbCollapsed === "boolean" ? value.orbCollapsed : defaults.orbCollapsed,
     orbBounds: sanitizeWindowBounds(value.orbBounds),

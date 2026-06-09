@@ -1217,6 +1217,101 @@ describe("core api", () => {
     await app.close();
   });
 
+  it("returns scoped token trend rows with codex cache-adjusted input tokens", async () => {
+    const workspacePath = "D:/projects/dev/agent-metrics";
+
+    for (const event of [
+      {
+        event_id: "evt_trend_codex",
+        session_id: "ses_trend_codex",
+        timestamp: "2026-05-26T02:10:00.000Z",
+        source_vendor: "codex",
+        source_adapter: "codex-rollout",
+        workspace_path: workspacePath,
+        type: "token.usage.recorded",
+        message_id: "msg_trend_codex",
+        model: "gpt-5-codex",
+        provider_id: "ai",
+        provider_base_url: "https://api.psydo.top",
+        provider_host: "api.psydo.top",
+        input_tokens: 100,
+        output_tokens: 20,
+        cache_creation_input_tokens: 10,
+        cache_read_input_tokens: 40,
+        server_tool_use: "{}",
+        usage_source: "codex-rollout"
+      },
+      {
+        event_id: "evt_trend_claude",
+        session_id: "ses_trend_claude",
+        timestamp: "2026-05-27T03:20:00.000Z",
+        source_vendor: "claude-code",
+        source_adapter: "claude-transcript",
+        workspace_path: workspacePath,
+        type: "token.usage.recorded",
+        message_id: "msg_trend_claude",
+        model: "claude-sonnet-4-20250514",
+        provider_id: "anthropic",
+        provider_base_url: "https://api.anthropic.com",
+        provider_host: "api.anthropic.com",
+        input_tokens: 80,
+        output_tokens: 30,
+        cache_creation_input_tokens: 5,
+        cache_read_input_tokens: 15,
+        server_tool_use: "{}",
+        usage_source: "claude-transcript"
+      }
+    ]) {
+      await appendJsonLine(logPath, event);
+    }
+
+    const app = buildApp({ dbPath, ...scopedAppInput });
+    await ingestEventLog({ app, eventLogPath: logPath });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/token-trend?mode=calendar&range=week"
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      mode: "calendar",
+      range: "week",
+      timezone: "Asia/Shanghai",
+      windowStart: "2026-05-24T16:00:00.000Z",
+      windowEnd: "2026-05-27T10:30:00.000Z",
+      updatedAt: "2026-05-27T10:30:00.000Z",
+      rows: [
+        {
+          label: "05-26",
+          totalTokens: 130,
+          inputTokens: 60,
+          outputTokens: 20,
+          cacheReadTokens: 40,
+          cacheCreationTokens: 10
+        },
+        {
+          label: "05-27",
+          totalTokens: 130,
+          inputTokens: 80,
+          outputTokens: 30,
+          cacheReadTokens: 15,
+          cacheCreationTokens: 5
+        }
+      ]
+    });
+
+    const payload = response.json() as {
+      rows: Array<{ bucketStart: string; cacheHitRate: number }>;
+    };
+    expect(payload.rows[0]?.bucketStart).toBe("2026-05-26T02:10:00.000Z");
+    expect(payload.rows[1]?.bucketStart).toBe("2026-05-27T03:20:00.000Z");
+    expect(payload.rows[0]?.cacheHitRate).toBeCloseTo(40 / 110, 6);
+    expect(payload.rows[1]?.cacheHitRate).toBeCloseTo(0.15, 6);
+
+    await app.close();
+  });
+
   it("returns scoped tool rankings and metadata", async () => {
     await seedScopedAggregateDataset();
 

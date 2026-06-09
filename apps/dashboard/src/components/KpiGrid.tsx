@@ -8,13 +8,24 @@ type KpiGridProps = {
 
 const NUMBER_FORMAT = new Intl.NumberFormat("en-US");
 
-function formatToolCallMeta(overview: OverviewResponse): ReactNode {
-  const unresolvedExecutions = Math.max(
-    0,
-    overview.totalToolCalls - overview.successfulExecutions - overview.failedExecutions
-  );
+function resolveDisplayedToolCalls(overview: OverviewResponse): number {
+  const closedToolCalls = overview.successfulExecutions + overview.failedExecutions;
 
-  if (unresolvedExecutions === 0) {
+  if (overview.startedOnlyExecutions > 0) {
+    return overview.totalToolCalls;
+  }
+
+  if (closedToolCalls > 0 && overview.totalToolCalls !== closedToolCalls) {
+    return closedToolCalls;
+  }
+
+  return overview.totalToolCalls;
+}
+
+function formatToolCallMeta(overview: OverviewResponse): ReactNode {
+  const startedOnlyExecutions = Math.max(0, overview.startedOnlyExecutions);
+
+  if (startedOnlyExecutions === 0) {
     return (
       <>
         {NUMBER_FORMAT.format(overview.successfulExecutions)} ok /{" "}
@@ -27,13 +38,14 @@ function formatToolCallMeta(overview: OverviewResponse): ReactNode {
     <>
       {NUMBER_FORMAT.format(overview.successfulExecutions)} ok /{" "}
       {NUMBER_FORMAT.format(overview.failedExecutions)} failed /{" "}
-      {NUMBER_FORMAT.format(unresolvedExecutions)} pending
+      {NUMBER_FORMAT.format(startedOnlyExecutions)} started-only
     </>
   );
 }
 
 export function KpiGrid({ overview, scopeLabel }: KpiGridProps) {
   const cacheTokens = overview.cacheReadTokens + overview.cacheCreationTokens;
+  const displayedToolCalls = resolveDisplayedToolCalls(overview);
   const primaryItems: Array<{
     label: string;
     value: string;
@@ -54,7 +66,7 @@ export function KpiGrid({ overview, scopeLabel }: KpiGridProps) {
     },
     {
       label: "Tool Calls",
-      value: NUMBER_FORMAT.format(overview.totalToolCalls),
+      value: NUMBER_FORMAT.format(displayedToolCalls),
       tone: "steady",
       meta: formatToolCallMeta(overview)
     },

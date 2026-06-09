@@ -111,13 +111,17 @@ export async function parseRawHooksOnce(input: { repoRoot: string }): Promise<vo
   await saveParserState(paths.parserStatePath, state);
 
   if (shouldSyncTranscripts) {
-    await syncKnownClaudeTranscripts({
-      manifestPath: paths.transcriptManifestPath,
-      eventLogPath: paths.eventLogPath,
-      transcriptCursorPath: paths.transcriptCursorPath,
-      transcriptLedgerPath: paths.transcriptLedgerPath,
-      discoveryRoots: []
-    });
+    try {
+      await syncKnownClaudeTranscripts({
+        manifestPath: paths.transcriptManifestPath,
+        eventLogPath: paths.eventLogPath,
+        transcriptCursorPath: paths.transcriptCursorPath,
+        transcriptLedgerPath: paths.transcriptLedgerPath,
+        discoveryRoots: []
+      });
+    } catch {
+      // Hook-derived tool metrics should keep flowing even when transcript sync fails transiently.
+    }
   }
 }
 

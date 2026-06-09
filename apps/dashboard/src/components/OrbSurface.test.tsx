@@ -123,6 +123,22 @@ describe("OrbSurface", () => {
     expect(onActivate).toHaveBeenCalledTimes(1);
   });
 
+  it("reveals a docked orb while hovering and hides it after leaving", () => {
+    render(<OrbSurface collapsed={false} stale={false} dockEdge="right" />);
+
+    const surface = screen.getByLabelText("Desktop orb surface");
+    const button = screen.getByRole("button", { name: "Open desktop peek card" });
+
+    expect(surface).toHaveAttribute("data-dock-edge", "right");
+    expect(surface).toHaveAttribute("data-revealed", "false");
+
+    fireEvent.pointerEnter(button);
+    expect(surface).toHaveAttribute("data-revealed", "true");
+
+    fireEvent.pointerLeave(button);
+    expect(surface).toHaveAttribute("data-revealed", "false");
+  });
+
   it("requests the orb context menu on right click and suppresses the default menu", () => {
     const onContextMenu = vi.fn();
 
@@ -161,8 +177,19 @@ describe("OrbSurface", () => {
     expect(onActivate).not.toHaveBeenCalled();
   });
 
+  it("desktop-orb surface applies dock edge from the URL", () => {
+    window.history.replaceState({}, "", "/?surface=desktop-orb&dockEdge=left");
+
+    render(<App />);
+
+    const surface = screen.getByLabelText("Desktop orb surface");
+
+    expect(surface).toHaveAttribute("data-dock-edge", "left");
+    expect(surface).toHaveAttribute("data-revealed", "false");
+  });
+
   it("desktop-orb surface forwards bridge actions and skips tools and sessions requests", () => {
-    window.history.replaceState({}, "", "/?surface=desktop-orb");
+    window.history.replaceState({}, "", "/?surface=desktop-orb&dockEdge=right");
     const desktopBridge: AgentMetricsDesktopBridge = {
       getRuntimeStatus: vi.fn(),
       getSettings: vi.fn(),
@@ -188,6 +215,7 @@ describe("OrbSurface", () => {
 
     render(<App />);
 
+    expect(screen.getByLabelText("Desktop orb surface")).toHaveAttribute("data-dock-edge", "right");
     const button = screen.getByRole("button", { name: "Open desktop peek card" });
     fireEvent.pointerEnter(button);
     fireEvent.pointerDown(button, {

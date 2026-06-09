@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   fetchOverview,
+  fetchTokenTrend,
   buildExportUrl,
   fetchSessionDetail,
   fetchSessions,
@@ -46,6 +47,7 @@ describe("api client", () => {
       totalToolCalls: 0,
       successfulExecutions: 0,
       failedExecutions: 0,
+      startedOnlyExecutions: 0,
       successRate: 0,
       editOperationCount: 0,
       affectedFileCount: 0,
@@ -114,6 +116,7 @@ describe("api client", () => {
       totalToolCalls: 0,
       successfulExecutions: 0,
       failedExecutions: 0,
+      startedOnlyExecutions: 0,
       successRate: 0,
       editOperationCount: 0,
       affectedFileCount: 0,
@@ -157,6 +160,7 @@ describe("api client", () => {
       totalToolCalls: 12,
       successfulExecutions: 10,
       failedExecutions: 2,
+      startedOnlyExecutions: 0,
       successRate: 0.8333,
       editOperationCount: 4,
       affectedFileCount: 7,
@@ -196,6 +200,7 @@ describe("api client", () => {
       totalToolCalls: 12,
       successfulExecutions: 10,
       failedExecutions: 2,
+      startedOnlyExecutions: 0,
       successRate: 0.8333,
       editOperationCount: 4,
       affectedFileCount: 7,
@@ -224,6 +229,7 @@ describe("api client", () => {
       totalToolCalls: 12,
       successfulExecutions: 10,
       failedExecutions: 2,
+      startedOnlyExecutions: 0,
       successRate: 0.8333,
       editOperationCount: 4,
       affectedFileCount: 7,
@@ -247,6 +253,33 @@ describe("api client", () => {
 
     stubFetchJson({ rows, ...scopeMeta });
     await expect(fetchTools()).resolves.toEqual({ rows, ...scopeMeta });
+  });
+
+  it("returns scoped token trend envelopes", async () => {
+    const rows = [
+      {
+        bucketStart: "2026-05-26T16:00:00.000Z",
+        label: "05-27 00:00",
+        totalTokens: 120,
+        inputTokens: 60,
+        outputTokens: 30,
+        cacheReadTokens: 20,
+        cacheCreationTokens: 10,
+        cacheHitRate: 0.2222
+      }
+    ];
+    const scopeMeta = {
+      mode: "calendar" as const,
+      range: "day" as const,
+      timezone: "Asia/Shanghai",
+      windowStart: "2026-05-26T16:00:00.000Z",
+      windowEnd: "2026-05-27T10:30:00.000Z",
+      updatedAt: "2026-05-27T10:30:00.000Z"
+    };
+
+    stubFetchJson({ rows, ...scopeMeta });
+    await expect(fetchTokenTrend()).resolves.toEqual({ rows, ...scopeMeta });
+    expect(fetch).toHaveBeenCalledWith("/api/token-trend?mode=calendar&range=day&sourceVendor=all");
   });
 
   it("rejects legacy tool arrays that omit scoped metadata", async () => {

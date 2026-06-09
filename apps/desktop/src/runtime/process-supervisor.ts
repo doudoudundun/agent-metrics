@@ -36,6 +36,7 @@ type ManagedChild = {
 };
 
 export const CHILD_SHUTDOWN_TIMEOUT_MS = 5_000;
+export const AUTO_RECOVERY_DELAY_MS = 1_000;
 
 export type ProcessSupervisorStatus = {
   state: SupervisorState;
@@ -66,6 +67,33 @@ export function createProcessSupervisor({
   let state: SupervisorState = "idle";
   let lifecycleOperation = Promise.resolve();
   let stopIntentVersion = 0;
+  let recoveryTimer: NodeJS.Timeout | null = null;
+
+  function clearRecoveryTimer(): void {
+    if (recoveryTimer === null) {
+      return;
+    }
+
+    clearTimeout(recoveryTimer);
+    recoveryTimer = null;
+  }
+
+  function scheduleRecovery(): void {
+    if (recoveryTimer !== null || state !== "degraded") {
+      return;
+    }
+
+    const expectedStopIntentVersion = stopIntentVersion;
+    recoveryTimer = setTimeout(() => {
+      recoveryTimer = null;
+
+      if (state !== "degraded" || stopIntentVersion !== expectedStopIntentVersion) {
+        return;
+      }
+
+      void api.start().catch(() => undefined);
+    }, AUTO_RECOVERY_DELAY_MS);
+  }
 
   function runLifecycleOperation<T>(operation: () => Promise<T>): Promise<T> {
     const result = lifecycleOperation.then(operation, operation);
@@ -86,6 +114,7 @@ export function createProcessSupervisor({
 
     if (state === "running") {
       state = "degraded";
+      scheduleRecovery();
     }
   }
 
@@ -179,11 +208,13 @@ export function createProcessSupervisor({
     return join(rootPath, ...segments);
   }
 
-  return {
+  const api = {
     async start(): Promise<ProcessSupervisorStatus> {
       return runLifecycleOperation(async () => {
+        clearRecoveryTimer();
+
         if (state === "running") {
-          return this.getStatus();
+          return api.getStatus();
         }
 
         const externalRuntimeHealthy = isExternalRuntimeHealthy();
@@ -194,7 +225,7 @@ export function createProcessSupervisor({
         if (shouldReuseExternalRuntime) {
           managedChildren.length = 0;
           state = "running";
-          return this.getStatus();
+          return api.getStatus();
         }
 
         const stopIntentAtStart = stopIntentVersion;
@@ -205,7 +236,7 @@ export function createProcessSupervisor({
           if (stopIntentVersion !== stopIntentAtStart) {
             managedChildren.length = 0;
             state = "stopped";
-            return this.getStatus();
+            return api.getStatus();
           }
         }
 
@@ -268,7 +299,7 @@ export function createProcessSupervisor({
           throw error;
         }
 
-        return this.getStatus();
+        return api.getStatus();
       });
     },
 
@@ -287,12 +318,15 @@ export function createProcessSupervisor({
       stopIntentVersion += 1;
 
       return runLifecycleOperation(async () => {
+        clearRecoveryTimer();
         state = "stopped";
         await stopManagedChildren(managedChildren);
-        return this.getStatus();
+        return api.getStatus();
       });
     }
   };
+
+  return api;
 }
 
 function isPromiseLike(value: boolean | Promise<boolean>): value is Promise<boolean> {

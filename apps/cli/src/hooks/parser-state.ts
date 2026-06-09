@@ -1,6 +1,8 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
+const MAX_SEEN_RAW_EVENT_IDS = 2048;
+
 export type ParserState = {
   nextLine: number;
   seenRawEventIds: string[];
@@ -48,14 +50,28 @@ function normalizeNextLine(value: unknown): number {
 }
 
 function normalizeSeenRawEventIds(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((entry) => typeof entry === "string") : [];
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const normalized = value.filter((entry) => typeof entry === "string");
+  if (normalized.length <= MAX_SEEN_RAW_EVENT_IDS) {
+    return normalized;
+  }
+
+  return normalized.slice(-MAX_SEEN_RAW_EVENT_IDS);
 }
 
 function mergeParserState(existingState: ParserState, nextState: ParserState): ParserState {
+  const mergedSeenRawEventIds = Array.from(
+    new Set([...existingState.seenRawEventIds, ...nextState.seenRawEventIds])
+  );
+
   return {
     nextLine: Math.max(existingState.nextLine, nextState.nextLine),
-    seenRawEventIds: Array.from(
-      new Set([...existingState.seenRawEventIds, ...nextState.seenRawEventIds])
-    )
+    seenRawEventIds:
+      mergedSeenRawEventIds.length <= MAX_SEEN_RAW_EVENT_IDS
+        ? mergedSeenRawEventIds
+        : mergedSeenRawEventIds.slice(-MAX_SEEN_RAW_EVENT_IDS)
   };
 }

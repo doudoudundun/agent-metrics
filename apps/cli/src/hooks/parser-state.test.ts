@@ -44,4 +44,22 @@ describe("saveParserState", () => {
       seenRawEventIds: ["raw_100", "raw_20"]
     });
   });
+
+  it("keeps only the most recent seen raw event ids", async () => {
+    const repoRoot = await mkdtemp(join(tmpdir(), "agent-metrics-parser-state-"));
+    const statePath = join(repoRoot, "parser-state.json");
+    const seenRawEventIds = Array.from({ length: 2500 }, (_, index) => `raw_${index}`);
+
+    await saveParserState(statePath, {
+      nextLine: 2500,
+      seenRawEventIds
+    });
+
+    const state = await loadParserState(statePath);
+
+    expect(state.nextLine).toBe(2500);
+    expect(state.seenRawEventIds).toHaveLength(2048);
+    expect(state.seenRawEventIds[0]).toBe("raw_452");
+    expect(state.seenRawEventIds.at(-1)).toBe("raw_2499");
+  });
 });

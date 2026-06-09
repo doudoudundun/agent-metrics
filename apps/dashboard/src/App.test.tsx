@@ -2,7 +2,7 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
-import { fetchOverview, fetchSessions, fetchTools } from "./api";
+import { fetchOverview, fetchSessions, fetchTokenTrend, fetchTools } from "./api";
 import type { AgentMetricsDesktopBridge } from "./desktop-mode";
 
 class ResizeObserverMock {
@@ -17,6 +17,7 @@ vi.stubGlobal("ResizeObserver", ResizeObserverMock);
 
 const apiMocks = vi.hoisted(() => ({
   fetchOverview: vi.fn(),
+  fetchTokenTrend: vi.fn(),
   fetchTools: vi.fn(),
   fetchSessions: vi.fn(),
   fetchSessionDetail: vi.fn(),
@@ -32,6 +33,7 @@ describe("App", () => {
     window.history.replaceState({}, "", "/");
     delete window.agentMetricsDesktop;
     vi.mocked(fetchOverview).mockReset();
+    vi.mocked(fetchTokenTrend).mockReset();
     vi.mocked(fetchTools).mockReset();
     vi.mocked(fetchSessions).mockReset();
     apiMocks.fetchSessionDetail.mockReset();
@@ -59,6 +61,7 @@ describe("App", () => {
     expect(await screen.findByText("Total Tokens", {}, { timeout: 3000 })).toBeInTheDocument();
     await nextTick();
     vi.mocked(fetchOverview).mockClear();
+    vi.mocked(fetchTokenTrend).mockClear();
     vi.mocked(fetchTools).mockClear();
     vi.mocked(fetchSessions).mockClear();
 
@@ -70,6 +73,7 @@ describe("App", () => {
     await nextTick();
 
     expect(fetchOverview).not.toHaveBeenCalled();
+    expect(fetchTokenTrend).not.toHaveBeenCalled();
     expect(fetchTools).not.toHaveBeenCalled();
     expect(fetchSessions).not.toHaveBeenCalled();
 
@@ -173,6 +177,7 @@ describe("App", () => {
     expect(within(overviewRegion).getByText("12 responses")).toBeInTheDocument();
     expect(within(overviewRegion).getByText(/10 ok \/ 2 failed/)).toBeInTheDocument();
     expect(screen.queryByText("Estimated Tokens")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Token Trend" })).toBeInTheDocument();
     const modelUsagePanel = (await screen.findByRole("heading", { name: "Model Usage" })).closest(
       "section"
     );
@@ -197,6 +202,7 @@ describe("App", () => {
     expect(within(timelinePanel!).getByText("Token")).toBeInTheDocument();
     expect(within(timelinePanel!).getAllByText("2026-05-25 08:00:01").length).toBeGreaterThan(0);
     expect(fetchOverview).toHaveBeenCalledWith({ mode: "calendar", range: "day" }, "all");
+    expect(fetchTokenTrend).toHaveBeenCalledWith({ mode: "calendar", range: "day" }, "all");
     expect(fetchTools).toHaveBeenCalledWith({ mode: "calendar", range: "day" }, "all");
     expect(fetchSessions).toHaveBeenCalledWith({ mode: "calendar", range: "day" }, "all");
 
@@ -223,6 +229,7 @@ describe("App", () => {
       totalToolCalls: 0,
       successfulExecutions: 0,
       failedExecutions: 0,
+      startedOnlyExecutions: 0,
       successRate: 0,
       editOperationCount: 0,
       affectedFileCount: 0,
@@ -288,6 +295,7 @@ describe("App", () => {
     expect(await screen.findByText("150 tokens")).toBeInTheDocument();
     expect((await screen.findAllByText("Not available for this source yet.")).length).toBeGreaterThan(0);
     expect(fetchOverview).toHaveBeenLastCalledWith({ mode: "calendar", range: "day" }, "codex");
+    expect(fetchTokenTrend).toHaveBeenLastCalledWith({ mode: "calendar", range: "day" }, "codex");
     expect(fetchTools).toHaveBeenLastCalledWith({ mode: "calendar", range: "day" }, "codex");
     expect(fetchSessions).toHaveBeenLastCalledWith({ mode: "calendar", range: "day" }, "codex");
     expect(screen.queryByText("Failed to load dashboard metrics.")).not.toBeInTheDocument();
@@ -322,6 +330,7 @@ describe("App", () => {
         totalToolCalls: 12,
         successfulExecutions: 10,
         failedExecutions: 2,
+        startedOnlyExecutions: 0,
         successRate: 0.8333,
         editOperationCount: 4,
         affectedFileCount: 7,
@@ -392,7 +401,7 @@ describe("App", () => {
     view.unmount();
   });
 
-  it("shows pending tool calls when total calls include unfinished events", async () => {
+  it("shows started-only tool calls separately from closed executions", async () => {
     apiMocks.fetchOverview.mockResolvedValueOnce({
       mode: "calendar",
       range: "day",
@@ -409,10 +418,11 @@ describe("App", () => {
       cacheReadTokens: 2345,
       cacheCreationTokens: 1112,
       tokensByModel: [],
-      totalToolCalls: 12,
+      totalToolCalls: 9,
       successfulExecutions: 7,
       failedExecutions: 2,
-      successRate: 0.5833,
+      startedOnlyExecutions: 3,
+      successRate: 0.7778,
       editOperationCount: 4,
       affectedFileCount: 7,
       insertions: 42,
@@ -427,7 +437,49 @@ describe("App", () => {
       name: "Overview metrics for Today"
     });
 
-    expect(within(overviewRegion).getByText(/7 ok \/ 2 failed \/ 3 pending/)).toBeInTheDocument();
+    expect(within(overviewRegion).getByText("9")).toBeInTheDocument();
+    expect(within(overviewRegion).getByText(/7 ok \/ 2 failed \/ 3 started-only/)).toBeInTheDocument();
+  });
+
+  it("falls back to closed tool calls when the backend total still includes started-only events", async () => {
+    apiMocks.fetchOverview.mockResolvedValueOnce({
+      mode: "calendar",
+      range: "day",
+      timezone: "Asia/Shanghai",
+      windowStart: "2026-05-26T16:00:00.000Z",
+      windowEnd: "2026-05-27T16:00:00.000Z",
+      updatedAt: "2026-05-27T10:30:00.000Z",
+      sessionCount: 3,
+      turnCount: 24,
+      responseCount: 12,
+      totalTokens: 45678,
+      inputTokens: 22345,
+      outputTokens: 19876,
+      cacheReadTokens: 2345,
+      cacheCreationTokens: 1112,
+      tokensByModel: [],
+      totalToolCalls: 5323,
+      successfulExecutions: 2576,
+      failedExecutions: 20,
+      startedOnlyExecutions: 0,
+      successRate: 0.9923,
+      editOperationCount: 4,
+      affectedFileCount: 7,
+      insertions: 42,
+      deletions: 8,
+      sourceBreakdown: [],
+      providerBreakdown: []
+    });
+
+    render(<App />);
+
+    const overviewRegion = await screen.findByRole("region", {
+      name: "Overview metrics for Today"
+    });
+
+    expect(within(overviewRegion).getByText("2,596")).toBeInTheDocument();
+    expect(within(overviewRegion).getByText(/2,576 ok \/ 20 failed/)).toBeInTheDocument();
+    expect(within(overviewRegion).queryByText("5,323")).not.toBeInTheDocument();
   });
 
   it("renders overview metrics before tools and sessions finish loading", async () => {
@@ -470,6 +522,7 @@ describe("App", () => {
       totalToolCalls: 12,
       successfulExecutions: 10,
       failedExecutions: 2,
+      startedOnlyExecutions: 0,
       successRate: 0.8333,
       editOperationCount: 4,
       affectedFileCount: 7,
@@ -692,6 +745,7 @@ describe("App", () => {
 
     expect(await screen.findByText("6 calls total")).toBeInTheDocument();
     vi.mocked(fetchOverview).mockClear();
+    vi.mocked(fetchTokenTrend).mockClear();
     vi.mocked(fetchTools).mockClear();
     vi.mocked(fetchSessions).mockClear();
 
@@ -730,6 +784,7 @@ describe("App", () => {
       totalToolCalls: 12,
       successfulExecutions: 10,
       failedExecutions: 2,
+      startedOnlyExecutions: 0,
       successRate: 0.8333,
       editOperationCount: 4,
       affectedFileCount: 7,
@@ -789,6 +844,7 @@ describe("App", () => {
       totalToolCalls: 12,
       successfulExecutions: 10,
       failedExecutions: 2,
+      startedOnlyExecutions: 0,
       successRate: 0.8333,
       editOperationCount: 4,
       affectedFileCount: 7,
@@ -917,6 +973,7 @@ function seedApiMocks(): void {
     totalToolCalls: 12,
     successfulExecutions: 10,
     failedExecutions: 2,
+    startedOnlyExecutions: 0,
     successRate: 0.8333,
     editOperationCount: 4,
     affectedFileCount: 7,
@@ -932,6 +989,36 @@ function seedApiMocks(): void {
       }
     ],
     providerBreakdown: []
+  });
+  vi.mocked(fetchTokenTrend).mockResolvedValue({
+    mode: "calendar",
+    range: "day",
+    timezone: "Asia/Shanghai",
+    windowStart: "2026-05-26T16:00:00.000Z",
+    windowEnd: "2026-05-27T16:00:00.000Z",
+    updatedAt: "2026-05-27T10:30:00.000Z",
+    rows: [
+      {
+        bucketStart: "2026-05-27T00:00:00.000Z",
+        label: "05-27 08:00",
+        totalTokens: 15000,
+        inputTokens: 7000,
+        outputTokens: 5000,
+        cacheReadTokens: 2000,
+        cacheCreationTokens: 1000,
+        cacheHitRate: 0.2
+      },
+      {
+        bucketStart: "2026-05-27T01:00:00.000Z",
+        label: "05-27 09:00",
+        totalTokens: 18000,
+        inputTokens: 9000,
+        outputTokens: 5000,
+        cacheReadTokens: 2500,
+        cacheCreationTokens: 1500,
+        cacheHitRate: 0.1923
+      }
+    ]
   });
   vi.mocked(fetchTools).mockResolvedValue({
     mode: "calendar",

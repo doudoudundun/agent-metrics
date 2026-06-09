@@ -35,6 +35,7 @@ describe("buildOverviewMetrics", () => {
       totalToolCalls: 2,
       successfulExecutions: 1,
       failedExecutions: 1,
+      startedOnlyExecutions: 0,
       successRate: 0.5,
       editOperationCount: 1,
       turnCount: 1,
@@ -65,6 +66,7 @@ describe("buildOverviewMetrics", () => {
       totalToolCalls: 0,
       successfulExecutions: 0,
       failedExecutions: 0,
+      startedOnlyExecutions: 0,
       successRate: 0,
       editOperationCount: 0,
       turnCount: 0,
@@ -100,6 +102,28 @@ describe("buildOverviewMetrics", () => {
 
     expect(overview.inputTokens).toBe(12472);
     expect(overview.totalTokens).toBe(16130);
+  });
+
+  it("keeps started-only tool events out of the main tool-call total", () => {
+    const overview = buildOverviewMetrics({
+      sessions: [{ session_id: "ses_1" }],
+      toolEvents: [
+        { status: "started", duration_ms: null },
+        { status: "started", duration_ms: null },
+        { status: "succeeded", duration_ms: 10 },
+        { status: "failed", duration_ms: 30 }
+      ],
+      prompts: [],
+      responses: [],
+      tokenUsage: [],
+      codeEdits: []
+    });
+
+    expect(overview.totalToolCalls).toBe(2);
+    expect(overview.successfulExecutions).toBe(1);
+    expect(overview.failedExecutions).toBe(1);
+    expect(overview.startedOnlyExecutions).toBe(2);
+    expect(overview.successRate).toBe(0.5);
   });
 
   it("dedupes repeated files across multiple edit events", () => {

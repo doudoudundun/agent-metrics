@@ -113,4 +113,13 @@ describe("resolveDesktopRuntimePaths", () => {
       })
     ).toBe("C:\\Users\\test\\AppData\\Roaming\\Agent Metrics\\agent-metrics-data");
   });
+
+  it("normalizes development Electron userData paths back to the Agent Metrics appData root", () => {
+    expect(
+      resolveDesktopDataRoot({
+        userDataPath: "C:\\Users\\test\\AppData\\Roaming\\Electron",
+        appDataPath: "C:\\Users\\test\\AppData\\Roaming"
+      })
+    ).toBe("C:\\Users\\test\\AppData\\Roaming\\Agent Metrics\\agent-metrics-data");
+  });
 });

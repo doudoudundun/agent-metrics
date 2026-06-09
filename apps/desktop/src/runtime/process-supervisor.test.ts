@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  AUTO_RECOVERY_DELAY_MS,
   CHILD_SHUTDOWN_TIMEOUT_MS,
   createProcessSupervisor
 } from "./process-supervisor.js";
@@ -269,6 +270,8 @@ describe("process supervisor", () => {
   });
 
   it("updates child status when a managed process exits", async () => {
+    vi.useFakeTimers();
+
     const watcher = createMockChild(101);
     const parser = createMockChild(202);
     const core = createMockChild(303);
@@ -299,6 +302,110 @@ describe("process supervisor", () => {
         { name: "watcher", state: "running", pid: 101 },
         { name: "parser", state: "stopped", pid: 202 },
         { name: "core", state: "running", pid: 303 }
+      ]
+    });
+
+    await vi.advanceTimersByTimeAsync(AUTO_RECOVERY_DELAY_MS - 1);
+    expect(spawn).toHaveBeenCalledTimes(3);
+  });
+
+  it("auto-recovers a degraded runtime chain after the cooldown", async () => {
+    vi.useFakeTimers();
+
+    const firstWatcher = createMockChild(101);
+    const firstParser = createMockChild(202);
+    const firstCore = createMockChild(303);
+    const secondWatcher = createMockChild(404);
+    const secondParser = createMockChild(505);
+    const secondCore = createMockChild(606);
+    const spawn = vi
+      .fn()
+      .mockReturnValueOnce(firstWatcher)
+      .mockReturnValueOnce(firstParser)
+      .mockReturnValueOnce(firstCore)
+      .mockReturnValueOnce(secondWatcher)
+      .mockReturnValueOnce(secondParser)
+      .mockReturnValueOnce(secondCore);
+
+    const supervisor = createProcessSupervisor({
+      runtimePaths: {
+        dataRoot: "/runtime-data",
+        cliEntrypoint: "/bundle/cli/dist/index.js",
+        cliWorkingDirectory: "/bundle/cli",
+        coreEntrypoint: "/bundle/core/dist/server.js",
+        coreWorkingDirectory: "/bundle/core"
+      },
+      spawn,
+      process: { execPath: "/Applications/Agent Metrics.app/Contents/MacOS/Agent Metrics" }
+    });
+
+    await supervisor.start();
+    firstParser.emit("exit");
+
+    await vi.advanceTimersByTimeAsync(AUTO_RECOVERY_DELAY_MS);
+    await Promise.resolve();
+
+    expect(firstWatcher.kill).toHaveBeenCalledExactlyOnceWith("SIGTERM");
+    expect(firstCore.kill).toHaveBeenCalledExactlyOnceWith("SIGTERM");
+
+    firstWatcher.emit("exit");
+    firstCore.emit("exit");
+    await vi.waitFor(() => {
+      expect(spawn).toHaveBeenCalledTimes(6);
+    });
+
+    expect(supervisor.getStatus()).toEqual({
+      state: "running",
+      children: [
+        { name: "watcher", state: "running", pid: 404 },
+        { name: "parser", state: "running", pid: 505 },
+        { name: "core", state: "running", pid: 606 }
+      ]
+    });
+    expect(spawn).toHaveBeenCalledTimes(6);
+  });
+
+  it("cancels pending auto-recovery when the supervisor is stopped", async () => {
+    vi.useFakeTimers();
+
+    const watcher = createMockChild(101);
+    const parser = createMockChild(202);
+    const core = createMockChild(303);
+    const spawn = vi
+      .fn()
+      .mockReturnValueOnce(watcher)
+      .mockReturnValueOnce(parser)
+      .mockReturnValueOnce(core);
+
+    const supervisor = createProcessSupervisor({
+      runtimePaths: {
+        dataRoot: "/runtime-data",
+        cliEntrypoint: "/bundle/cli/dist/index.js",
+        cliWorkingDirectory: "/bundle/cli",
+        coreEntrypoint: "/bundle/core/dist/server.js",
+        coreWorkingDirectory: "/bundle/core"
+      },
+      spawn,
+      process: { execPath: "/Applications/Agent Metrics.app/Contents/MacOS/Agent Metrics" }
+    });
+
+    await supervisor.start();
+    parser.emit("exit");
+    const stopPromise = supervisor.stop();
+    await Promise.resolve();
+
+    watcher.emit("exit");
+    core.emit("exit");
+    await stopPromise;
+
+    await vi.advanceTimersByTimeAsync(AUTO_RECOVERY_DELAY_MS);
+    expect(spawn).toHaveBeenCalledTimes(3);
+    expect(supervisor.getStatus()).toEqual({
+      state: "stopped",
+      children: [
+        { name: "watcher", state: "stopped", pid: 101 },
+        { name: "parser", state: "stopped", pid: 202 },
+        { name: "core", state: "stopped", pid: 303 }
       ]
     });
   });

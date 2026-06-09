@@ -28,6 +28,7 @@ const overview: OverviewResponse = {
   totalToolCalls: 12,
   successfulExecutions: 10,
   failedExecutions: 2,
+  startedOnlyExecutions: 0,
   successRate: 0.8333,
   editOperationCount: 4,
   affectedFileCount: 7,
@@ -64,12 +65,32 @@ describe("FloatingDashboard", () => {
     expect(within(kpis).getByText("Modified Files")).toBeInTheDocument();
     expect(within(kpis).getByText("7")).toBeInTheDocument();
     expect(within(kpis).getByText("12")).toBeInTheDocument();
+    expect(screen.getByText("10 ok / 2 failed")).toBeInTheDocument();
     expect(within(kpis).getByText("45,678")).toBeInTheDocument();
     expect(screen.getByText("4 edits / +42 / -8")).toBeInTheDocument();
     expect(screen.getByText("2,345 cache read")).toBeInTheDocument();
     expect(screen.queryByText("Sessions")).not.toBeInTheDocument();
     expect(screen.queryByText("Recent sessions")).not.toBeInTheDocument();
     expect(screen.queryByText(/success rate/i)).not.toBeInTheDocument();
+  });
+
+  it("falls back to closed tool calls when the backend total is still inflated", () => {
+    render(
+      <FloatingDashboard
+        overview={{
+          ...overview,
+          totalToolCalls: 5323,
+          successfulExecutions: 2576,
+          failedExecutions: 20
+        }}
+        status="ready"
+      />
+    );
+
+    const kpis = screen.getByRole("list", { name: "Floating summary metrics" });
+    expect(within(kpis).getByText("2,596")).toBeInTheDocument();
+    expect(screen.getByText("2,576 ok / 20 failed")).toBeInTheDocument();
+    expect(screen.queryByText("5,323")).not.toBeInTheDocument();
   });
 
   it("shows a loading state instead of healthy zero metrics while overview data is pending", () => {

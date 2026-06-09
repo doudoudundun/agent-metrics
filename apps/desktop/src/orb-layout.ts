@@ -14,6 +14,10 @@ type Point = {
   y: number;
 };
 
+const DOCK_EDGE_THRESHOLD_PX = 24;
+const LEFT_DOCK_OVERSCAN_PX = 2;
+const RIGHT_DOCK_OVERSCAN_PX = 6;
+
 export function resolvePeekCardBounds(input: {
   orbBounds: WindowBounds;
   peekSize: Size;
@@ -49,9 +53,9 @@ export function resolveDefaultOrbBounds(input: {
 }): WindowBounds {
   const {
     workArea,
-    dockEdge,
+    dockEdge = "right",
     orbSize = { width: 104, height: 104 },
-    horizontalMargin = 16,
+    horizontalMargin = 0,
     bottomMargin = 96
   } = input;
   const preferredX =
@@ -88,4 +92,75 @@ export function resolveOrbDragBounds(input: {
     },
     workArea
   );
+}
+
+export function resolveOrbDockEdge(input: {
+  orbBounds: WindowBounds;
+  workArea: WindowBounds;
+}): OrbDockEdge {
+  const leftGap = input.orbBounds.x - input.workArea.x;
+  const rightGap = input.workArea.x + input.workArea.width - input.orbBounds.x - input.orbBounds.width;
+
+  if (leftGap <= DOCK_EDGE_THRESHOLD_PX) {
+    return "left";
+  }
+
+  if (rightGap <= DOCK_EDGE_THRESHOLD_PX) {
+    return "right";
+  }
+
+  return null;
+}
+
+export function resolveOrbDockPlacement(input: {
+  orbBounds: WindowBounds;
+  workArea: WindowBounds;
+}): { bounds: WindowBounds; dockEdge: OrbDockEdge } {
+  const bounds = clampBoundsToDisplay(input.orbBounds, input.workArea);
+  const dockEdge = resolveOrbDockEdge({ orbBounds: bounds, workArea: input.workArea });
+
+  if (dockEdge === "left") {
+    return {
+      bounds: { ...bounds, x: input.workArea.x - LEFT_DOCK_OVERSCAN_PX },
+      dockEdge
+    };
+  }
+
+  if (dockEdge === "right") {
+    return {
+      bounds: {
+        ...bounds,
+        x: input.workArea.x + input.workArea.width - bounds.width + RIGHT_DOCK_OVERSCAN_PX
+      },
+      dockEdge
+    };
+  }
+
+  return { bounds, dockEdge };
+}
+
+export function resolveOrbWindowPlacement(input: {
+  savedBounds: WindowBounds | null;
+  dockEdge: OrbDockEdge;
+  workArea: WindowBounds;
+  orbSize?: Size;
+}): { bounds: WindowBounds; dockEdge: OrbDockEdge } {
+  const { savedBounds, dockEdge, workArea, orbSize = { width: 104, height: 104 } } = input;
+  const bounds =
+    savedBounds === null
+      ? resolveDefaultOrbBounds({ workArea, dockEdge, orbSize })
+      : clampBoundsToDisplay(
+          {
+            ...savedBounds,
+            x:
+              dockEdge === "right"
+                ? savedBounds.x + savedBounds.width - orbSize.width
+                : savedBounds.x,
+            width: orbSize.width,
+            height: orbSize.height
+          },
+          workArea
+        );
+
+  return resolveOrbDockPlacement({ orbBounds: bounds, workArea });
 }

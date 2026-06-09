@@ -6,7 +6,11 @@ export async function followRawHooks(input: {
   signal?: AbortSignal;
 }): Promise<void> {
   while (!input.signal?.aborted) {
-    await parseRawHooksOnce({ repoRoot: input.repoRoot });
+    try {
+      await parseRawHooksOnce({ repoRoot: input.repoRoot });
+    } catch {
+      // Keep the follow loop alive so a transient parser failure does not permanently stop hook metrics.
+    }
     await delay(input.pollIntervalMs, input.signal);
   }
 }

@@ -129,13 +129,13 @@ export function OrbSurface({
       data-stale={stale}
       data-dock-edge={hasDock ? dockEdge : undefined}
       data-revealed={hasDock ? revealed : undefined}
+      onPointerEnter={handlePointerEnter}
+      onPointerLeave={handlePointerLeave}
     >
       <button
         type="button"
         className="orb-surface__button"
         aria-label="Open desktop peek card"
-        onPointerEnter={handlePointerEnter}
-        onPointerLeave={handlePointerLeave}
         onContextMenu={(event) => {
           event.preventDefault();
           onContextMenu?.();

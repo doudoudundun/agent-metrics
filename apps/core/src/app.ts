@@ -108,6 +108,17 @@ type ProviderBreakdownRow = {
   totalTokens: number;
 };
 
+type TokenTrendRow = {
+  bucketStart: string;
+  label: string;
+  totalTokens: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  cacheHitRate: number;
+};
+
 type ToolRankingRow = {
   toolName: string;
   count: number;
@@ -204,6 +215,15 @@ type TokenUsageTimelineRow = {
   sourceAdapter: string;
   providerId: string | null;
   providerHost: string | null;
+};
+
+type TokenTrendUsageRow = {
+  createdAt: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  sourceVendor: SourceVendor;
 };
 
 type SessionTimelineEntry = {
@@ -734,13 +754,16 @@ function selectSourceBreakdown(
             WHEN event_id LIKE '%:succeeded' THEN substr(event_id, 1, length(event_id) - 10)
             WHEN event_id LIKE '%:failed' THEN substr(event_id, 1, length(event_id) - 7)
             ELSE event_id
-          END AS eventId
+          END AS eventId,
+          MAX(CASE WHEN status = 'succeeded' THEN 1 ELSE 0 END) AS hasSucceeded,
+          MAX(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS hasFailed
         FROM tool_events
         ${toolWindow.whereSql}
         GROUP BY source_vendor, eventId
       )
       SELECT sourceVendor, COUNT(*) AS toolCalls
       FROM deduped_tool_events
+      WHERE hasSucceeded = 1 OR hasFailed = 1
       GROUP BY sourceVendor
     `)
     .all(...toolWindow.params)) {
@@ -792,6 +815,119 @@ function selectProviderBreakdown(
       ORDER BY totalTokens DESC, providerHost ASC, providerId ASC
     `)
     .all(...window.params);
+}
+
+function selectTokenTrend(
+  db: MetricsDatabase,
+  scope?: ResolvedTimeScope,
+  sourceVendor: SourceVendorFilter = "all"
+): TokenTrendRow[] {
+  const window = buildTimeWindow("created_at", scope, sourceVendor);
+  const rows = db
+    .prepare<TokenTrendUsageRow>(`
+      SELECT
+        created_at AS createdAt,
+        input_tokens AS inputTokens,
+        output_tokens AS outputTokens,
+        cache_read_input_tokens AS cacheReadTokens,
+        cache_creation_input_tokens AS cacheCreationTokens,
+        source_vendor AS sourceVendor
+      FROM token_usage_events
+      ${window.whereSql}
+      ORDER BY created_at ASC, event_id ASC
+    `)
+    .all(...window.params);
+
+  if (rows.length === 0) {
+    return [];
+  }
+
+  const bucketType = scope?.range === "day" ? "hour" : "day";
+  const buckets = new Map<string, TokenTrendRow>();
+
+  for (const row of rows) {
+    const bucket = resolveTokenTrendBucket(row.createdAt, scope?.timezone ?? "UTC", bucketType);
+    const displayedInputTokens = resolveDisplayedInputTokens({
+      sourceVendor: row.sourceVendor,
+      inputTokens: row.inputTokens,
+      cacheReadTokens: row.cacheReadTokens
+    });
+    const current = buckets.get(bucket.key) ?? {
+      bucketStart: row.createdAt,
+      label: bucket.label,
+      totalTokens: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+      cacheHitRate: 0
+    };
+
+    current.inputTokens += displayedInputTokens;
+    current.outputTokens += row.outputTokens;
+    current.cacheReadTokens += row.cacheReadTokens;
+    current.cacheCreationTokens += row.cacheCreationTokens;
+    current.totalTokens +=
+      displayedInputTokens +
+      row.outputTokens +
+      row.cacheReadTokens +
+      row.cacheCreationTokens;
+    buckets.set(bucket.key, current);
+  }
+
+  return Array.from(buckets.values()).map((row) => {
+    const cacheableInput = row.inputTokens + row.cacheReadTokens + row.cacheCreationTokens;
+
+    return {
+      ...row,
+      cacheHitRate: cacheableInput > 0 ? row.cacheReadTokens / cacheableInput : 0
+    };
+  });
+}
+
+function resolveTokenTrendBucket(
+  createdAt: string,
+  timezone: string,
+  bucketType: "hour" | "day"
+): { key: string; label: string } {
+  const date = new Date(createdAt);
+  const parts = new Intl.DateTimeFormat("sv-SE", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    hour12: false
+  }).formatToParts(date);
+  const year = readDatePart(parts, "year");
+  const month = readDatePart(parts, "month");
+  const day = readDatePart(parts, "day");
+  const hour = readDatePart(parts, "hour");
+
+  if (bucketType === "hour") {
+    return {
+      key: `${year}-${month}-${day} ${hour}`,
+      label: `${month}-${day} ${hour}:00`
+    };
+  }
+
+  return {
+    key: `${year}-${month}-${day}`,
+    label: `${month}-${day}`
+  };
+}
+
+function readDatePart(
+  parts: Intl.DateTimeFormatPart[],
+  type: "year" | "month" | "day" | "hour"
+): string {
+  const value = parts.find((entry) => entry.type === type)?.value;
+
+  if (!value) {
+    throw new Error(`Missing ${type} in formatted date parts.`);
+  }
+
+  return value;
 }
 
 function buildTimeWindow(
@@ -1261,6 +1397,13 @@ export function buildApp(input: BuildAppInput): MetricsApp {
       },
       scope
     );
+  });
+
+  app.get("/api/token-trend", async (request) => {
+    const scope = resolveRequestScope(request.query, input);
+    const sourceVendor = resolveSourceVendor(request.query);
+
+    return withScopeMetadata({ rows: selectTokenTrend(db, scope, sourceVendor) }, scope);
   });
 
   app.get("/api/tools", async (request) => {

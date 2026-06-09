@@ -121,6 +121,14 @@ describe("window state", () => {
     });
   });
 
+  it("preserves a centered orb without dock mode", () => {
+    expect(
+      sanitizeDesktopSettings({
+        orbDockEdge: null
+      }).orbDockEdge
+    ).toBeNull();
+  });
+
   it("resets invalid orb bounds to null", () => {
     expect(
       sanitizeDesktopSettings({

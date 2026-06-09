@@ -4,10 +4,12 @@ import type {
   SessionDetailResponse,
   SessionRow,
   SourceVendor,
+  TokenTrendPoint,
   ToolRow
 } from "./api";
 import {
   buildExportUrl,
+  fetchTokenTrend,
   fetchOverview,
   fetchSessionDetail,
   fetchSessions,
@@ -21,6 +23,7 @@ import { PeekCardDashboard } from "./components/PeekCardDashboard";
 import { RecentSessionsTable } from "./components/RecentSessionsTable";
 import { SessionTimelinePanel } from "./components/SessionTimelinePanel";
 import { TimeScopeToolbar } from "./components/TimeScopeToolbar";
+import { TokenTrendPanel } from "./components/TokenTrendPanel";
 import { ToolRankingTable } from "./components/ToolRankingTable";
 import {
   getAgentMetricsDesktopBridge,
@@ -42,6 +45,18 @@ type PanelToolsState = {
   errorMessage: string | null;
 };
 
+type TokenTrendState = {
+  rows: TokenTrendPoint[] | null;
+  loading: boolean;
+  errorMessage: string | null;
+};
+
+type RowsPanelState = {
+  rows: unknown[] | null;
+  loading: boolean;
+  errorMessage: string | null;
+};
+
 type SessionsState = {
   rows: SessionRow[] | null;
   loading: boolean;
@@ -57,6 +72,12 @@ type DesktopOrbSnapshot = {
 };
 
 const INITIAL_PANEL_TOOLS_STATE: PanelToolsState = {
+  rows: null,
+  loading: false,
+  errorMessage: null
+};
+
+const INITIAL_TOKEN_TREND_STATE: TokenTrendState = {
   rows: null,
   loading: false,
   errorMessage: null
@@ -113,8 +134,11 @@ export function App({ initialSurface }: AppProps = {}) {
   const [baseSessions, setBaseSessions] = useState<SessionsState>(INITIAL_SESSIONS_STATE);
   const [globalScope, setGlobalScope] = useState<TimeScopeSelection>(DEFAULT_TIME_SCOPE);
   const [selectedSourceVendor, setSelectedSourceVendor] = useState<SourceVendor>("all");
+  const [tokenTrendOverride, setTokenTrendOverride] = useState<TimeScopeSelection | null>(null);
   const [trendOverride, setTrendOverride] = useState<TimeScopeSelection | null>(null);
   const [rankingOverride, setRankingOverride] = useState<TimeScopeSelection | null>(null);
+  const [baseTokenTrend, setBaseTokenTrend] = useState<TokenTrendState>(INITIAL_TOKEN_TREND_STATE);
+  const [tokenTrendData, setTokenTrendData] = useState<TokenTrendState>(INITIAL_TOKEN_TREND_STATE);
   const [trendTools, setTrendTools] = useState<PanelToolsState>(INITIAL_PANEL_TOOLS_STATE);
   const [rankingTools, setRankingTools] = useState<PanelToolsState>(INITIAL_PANEL_TOOLS_STATE);
   const [selectedSession, setSelectedSession] = useState<SessionDetailResponse | null>(null);
@@ -254,6 +278,60 @@ export function App({ initialSurface }: AppProps = {}) {
   }, [desktopApi, isCompactSurface, loadErrorMessage, overview, staleMessage]);
 
   useEffect(() => {
+    if (!isFullDashboardSurface) {
+      setBaseTokenTrend(INITIAL_TOKEN_TREND_STATE);
+      return;
+    }
+
+    let active = true;
+    setBaseTokenTrend((current) => ({
+      rows: current.rows,
+      loading: true,
+      errorMessage: null
+    }));
+
+    const loadTokenTrend = async () => {
+      try {
+        const nextTrend = await fetchTokenTrend(globalScope, selectedSourceVendor);
+
+        if (!active) {
+          return;
+        }
+
+        startTransition(() => {
+          setBaseTokenTrend({
+            rows: nextTrend.rows,
+            loading: false,
+            errorMessage: null
+          });
+        });
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+
+        startTransition(() => {
+          setBaseTokenTrend((current) => ({
+            ...current,
+            loading: false,
+            errorMessage: messageFromError(error)
+          }));
+        });
+      }
+    };
+
+    void loadTokenTrend();
+    const timer = window.setInterval(() => {
+      void loadTokenTrend();
+    }, LIVE_REFRESH_MS);
+
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [globalScope, isFullDashboardSurface, selectedSourceVendor]);
+
+  useEffect(() => {
     if (isFloatingSurface || isOrbSurface) {
       setBaseTools(INITIAL_PANEL_TOOLS_STATE);
       return;
@@ -360,6 +438,60 @@ export function App({ initialSurface }: AppProps = {}) {
       window.clearInterval(timer);
     };
   }, [globalScope, isFloatingSurface, isFullDashboardSurface, selectedSourceVendor]);
+
+  useEffect(() => {
+    if (!isFullDashboardSurface || !tokenTrendOverride) {
+      setTokenTrendData(INITIAL_TOKEN_TREND_STATE);
+      return;
+    }
+
+    let active = true;
+    setTokenTrendData((current) => ({
+      rows: current.rows,
+      loading: true,
+      errorMessage: null
+    }));
+
+    const loadTokenTrend = async () => {
+      try {
+        const nextTrend = await fetchTokenTrend(tokenTrendOverride, selectedSourceVendor);
+
+        if (!active) {
+          return;
+        }
+
+        startTransition(() => {
+          setTokenTrendData({
+            rows: nextTrend.rows,
+            loading: false,
+            errorMessage: null
+          });
+        });
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+
+        startTransition(() => {
+          setTokenTrendData((current) => ({
+            ...current,
+            loading: false,
+            errorMessage: messageFromError(error)
+          }));
+        });
+      }
+    };
+
+    void loadTokenTrend();
+    const timer = window.setInterval(() => {
+      void loadTokenTrend();
+    }, LIVE_REFRESH_MS);
+
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [isFullDashboardSurface, selectedSourceVendor, tokenTrendOverride]);
 
   useEffect(() => {
     if (!isFullDashboardSurface || !trendOverride) {
@@ -712,6 +844,8 @@ export function App({ initialSurface }: AppProps = {}) {
   }
 
   const baseToolRows = baseTools.rows ?? [];
+  const baseTokenTrendRows = baseTokenTrend.rows ?? [];
+  const tokenTrendRows = tokenTrendOverride ? (tokenTrendData.rows ?? baseTokenTrendRows) : baseTokenTrendRows;
   const lastUpdated = formatScopeDateTime(overview.updatedAt, overview.timezone);
   const trendRows = trendOverride ? (trendTools.rows ?? baseToolRows) : baseToolRows;
   const rankingRows = rankingOverride ? (rankingTools.rows ?? baseToolRows) : baseToolRows;
@@ -720,6 +854,20 @@ export function App({ initialSurface }: AppProps = {}) {
     baseTools,
     baseToolRows,
     selectedSourceVendor
+  );
+  const tokenTrendEmptyMessage = buildRowsEmptyMessage(
+    "Loading global token trend...",
+    "Global token trend unavailable",
+    baseTokenTrend,
+    baseTokenTrendRows,
+    selectedSourceVendor,
+    "No token activity in this scope."
+  );
+  const tokenTrendStatusMessage = buildPanelStatusMessage(
+    "Token Trend",
+    tokenTrendOverride,
+    tokenTrendData,
+    baseTokenTrend
   );
   const trendStatusMessage = buildPanelStatusMessage(
     "Activity Snapshot",
@@ -824,6 +972,15 @@ export function App({ initialSurface }: AppProps = {}) {
 
       <section className="surface-grid surface-grid-dense">
         <div className="surface-stack">
+          <TokenTrendPanel
+            rows={tokenTrendRows}
+            scope={globalScope}
+            scopeLabel={scopeLabel}
+            override={tokenTrendOverride}
+            onOverrideChange={setTokenTrendOverride}
+            statusMessage={tokenTrendStatusMessage}
+            emptyMessage={tokenTrendEmptyMessage}
+          />
           <Suspense
             fallback={
               <section className="panel chart-panel">
@@ -942,8 +1099,8 @@ function parseDesktopOrbSnapshot(snapshot: unknown): DesktopOrbSnapshot | null {
 function buildPanelStatusMessage(
   panelName: string,
   override: TimeScopeSelection | null,
-  state: PanelToolsState,
-  baseState: PanelToolsState
+  state: RowsPanelState,
+  baseState: RowsPanelState
 ): string | null {
   if (!override) {
     if (baseState.rows && baseState.errorMessage) {
@@ -987,19 +1144,37 @@ function buildToolEmptyMessage(
   rows: ToolRow[],
   selectedSourceVendor: SourceVendor
 ): string {
+  return buildRowsEmptyMessage(
+    "Loading global tool metrics...",
+    "Global tool metrics unavailable",
+    state,
+    rows,
+    selectedSourceVendor,
+    DEFAULT_TOOL_EMPTY_MESSAGE
+  );
+}
+
+function buildRowsEmptyMessage(
+  loadingMessage: string,
+  unavailablePrefix: string,
+  state: RowsPanelState,
+  rows: unknown[],
+  selectedSourceVendor: SourceVendor,
+  defaultMessage: string
+): string {
   if (state.loading) {
-    return "Loading global tool metrics...";
+    return loadingMessage;
   }
 
   if (state.errorMessage) {
-    return `Global tool metrics unavailable: ${state.errorMessage}`;
+    return `${unavailablePrefix}: ${state.errorMessage}`;
   }
 
   if (rows.length === 0 && selectedSourceVendor !== "all") {
     return SOURCE_UNAVAILABLE_MESSAGE;
   }
 
-  return DEFAULT_TOOL_EMPTY_MESSAGE;
+  return defaultMessage;
 }
 
 function buildSessionStatusMessage(
