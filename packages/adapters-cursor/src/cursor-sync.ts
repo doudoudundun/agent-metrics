@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
@@ -71,6 +71,40 @@ type CursorGeneration = {
   outputTokens: number | null;
   cacheReadInputTokens: number | null;
   cacheCreationInputTokens: number | null;
+  usageSource: "cursor-generation" | "cursor-composer-context" | null;
+};
+
+type CursorHashRequest = {
+  sessionId: string;
+  workspacePath: string;
+  requestId: string;
+  model: string | null;
+  startedAt: number;
+  completedAt: number;
+  filesChanged: string[];
+};
+
+type CursorHashRequestRow = {
+  conversationId: string | null;
+  requestId: string | null;
+  model: string | null;
+  minCreatedAt: number | null;
+  maxCreatedAt: number | null;
+  fileNames: string | null;
+};
+
+type CursorTranscriptExtraction = {
+  prompts: CursorPrompt[];
+  generations: CursorGeneration[];
+};
+
+type CursorComposerUsageFallback = {
+  sessionId: string;
+  model: string | null;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadInputTokens: number;
+  cacheCreationInputTokens: number;
 };
 
 const CURSOR_SOURCE_VENDOR = "cursor" as const;
@@ -104,6 +138,26 @@ export function resolveDefaultCursorStorageJsonPath(): string {
   return join(homedir(), ".config", "Cursor", "User", "globalStorage", "storage.json");
 }
 
+export function resolveDefaultCursorGlobalStorageDbPath(): string {
+  if (process.platform === "win32") {
+    return join(process.env.APPDATA ?? join(homedir(), "AppData", "Roaming"), "Cursor", "User", "globalStorage", "state.vscdb");
+  }
+
+  if (process.platform === "darwin") {
+    return join(homedir(), "Library", "Application Support", "Cursor", "User", "globalStorage", "state.vscdb");
+  }
+
+  return join(homedir(), ".config", "Cursor", "User", "globalStorage", "state.vscdb");
+}
+
+export function resolveDefaultCursorProjectsRoot(): string {
+  return join(homedir(), ".cursor", "projects");
+}
+
+function resolveCursorGlobalStorageDbPath(storageJsonPath: string): string {
+  return join(dirname(storageJsonPath), "state.vscdb");
+}
+
 export async function syncCursorArtifacts(input: {
   eventLogPath: string;
   cursorPath: string;
@@ -111,6 +165,8 @@ export async function syncCursorArtifacts(input: {
   trackingDbPath?: string;
   workspaceStorageRoot?: string;
   storageJsonPath?: string;
+  globalStorageDbPath?: string;
+  cursorProjectsRoot?: string;
 }): Promise<void> {
   const trackingDbPath =
     input.trackingDbPath ??
@@ -124,8 +180,21 @@ export async function syncCursorArtifacts(input: {
     input.storageJsonPath ??
     process.env.AGENT_METRICS_CURSOR_STORAGE_JSON_PATH ??
     resolveDefaultCursorStorageJsonPath();
+  const globalStorageDbPath =
+    input.globalStorageDbPath ??
+    process.env.AGENT_METRICS_CURSOR_GLOBAL_STORAGE_DB_PATH ??
+    resolveCursorGlobalStorageDbPath(storageJsonPath);
+  const cursorProjectsRoot =
+    input.cursorProjectsRoot ??
+    process.env.AGENT_METRICS_CURSOR_PROJECTS_ROOT ??
+    resolveDefaultCursorProjectsRoot();
 
-  if (!existsSync(trackingDbPath) && !existsSync(workspaceStorageRoot)) {
+  if (
+    !existsSync(trackingDbPath) &&
+    !existsSync(workspaceStorageRoot) &&
+    !existsSync(globalStorageDbPath) &&
+    !existsSync(cursorProjectsRoot)
+  ) {
     return;
   }
 
@@ -141,6 +210,8 @@ export async function syncCursorArtifacts(input: {
   const sessions = new Map<string, CursorSession>();
   const prompts: CursorPrompt[] = [];
   const generations: CursorGeneration[] = [];
+  const hashRequests: CursorHashRequest[] = [];
+  const composerUsageFallbacks = new Map<string, CursorComposerUsageFallback>();
 
   if (existsSync(trackingDbPath)) {
     const trackingDb = new Database(trackingDbPath, { readonly: true, fileMustExist: true }) as ReadOnlyDatabase;
@@ -158,6 +229,54 @@ export async function syncCursorArtifacts(input: {
         const session = ensureSession(sessions, row.conversationId, "Cursor");
         session.updatedAt = maxNullableNumber(session.updatedAt, row.updatedAt);
         session.model = row.model ?? session.model;
+      }
+
+      if (hasTable(trackingDb, "ai_code_hashes")) {
+        const hashRows = trackingDb
+          .prepare<CursorHashRequestRow>(
+            `SELECT
+               conversationId,
+               requestId,
+               model,
+               MIN(createdAt) AS minCreatedAt,
+               MAX(createdAt) AS maxCreatedAt,
+               GROUP_CONCAT(DISTINCT fileName) AS fileNames
+             FROM ai_code_hashes
+             WHERE createdAt >= ?
+               AND conversationId IS NOT NULL
+               AND requestId IS NOT NULL
+             GROUP BY conversationId, requestId, model
+             ORDER BY maxCreatedAt ASC, conversationId ASC, requestId ASC`
+          )
+          .all(state.conversationUpdatedAt);
+
+        for (const row of hashRows) {
+          const sessionId = normalizeOptionalString(row.conversationId);
+          const requestId = normalizeOptionalString(row.requestId);
+          const startedAt = normalizeTimestampMs(row.minCreatedAt);
+          const completedAt = normalizeTimestampMs(row.maxCreatedAt);
+
+          if (!sessionId || !requestId || startedAt === null || completedAt === null) {
+            continue;
+          }
+
+          const filesChanged = parseCursorHashFiles(row.fileNames);
+          const workspacePath = inferWorkspacePathFromFiles(filesChanged) ?? "Cursor";
+          const session = ensureSession(sessions, sessionId, workspacePath);
+          session.createdAt = minNullableNumber(session.createdAt, startedAt);
+          session.updatedAt = maxNullableNumber(session.updatedAt, completedAt);
+          session.model = normalizeOptionalString(row.model) ?? session.model;
+
+          hashRequests.push({
+            sessionId,
+            workspacePath,
+            requestId,
+            model: normalizeOptionalString(row.model),
+            startedAt,
+            completedAt,
+            filesChanged
+          });
+        }
       }
     } finally {
       trackingDb.close();
@@ -212,10 +331,70 @@ export async function syncCursorArtifacts(input: {
     }
   }
 
+  if (existsSync(globalStorageDbPath)) {
+    const globalDb = new Database(globalStorageDbPath, { readonly: true, fileMustExist: true }) as ReadOnlyDatabase;
+
+    try {
+      const rows = globalDb
+        .prepare<{ key: string; value: string | null }>(
+          `SELECT key, value
+           FROM ItemTable
+           WHERE key IN ('composer.composerHeaders')`
+        )
+        .all();
+      const values = new Map(rows.map((row) => [row.key, row.value] as const));
+      const composerHeaders = parseJson(values.get("composer.composerHeaders"));
+
+      for (const composer of extractComposers(composerHeaders)) {
+        const workspacePath =
+          composer.workspacePath ?? workspaceLookup.get(composer.workspaceId ?? "") ?? "Cursor";
+        const session = ensureSession(sessions, composer.sessionId, workspacePath);
+        session.createdAt = minNullableNumber(session.createdAt, composer.createdAt);
+        session.updatedAt = maxNullableNumber(session.updatedAt, composer.updatedAt ?? composer.createdAt);
+        if (composer.editSummary) {
+          session.editSummary = composer.editSummary;
+        }
+      }
+
+      if (hasTable(globalDb, "cursorDiskKV")) {
+        const extractedFallbacks = extractComposerUsageFallbacks(
+          globalDb
+            .prepare<{ key: string; value: unknown }>(
+              `SELECT key, value
+               FROM cursorDiskKV
+               WHERE key LIKE 'composerData:%'`
+            )
+            .all()
+        );
+        for (const [sessionId, fallback] of extractedFallbacks) {
+          composerUsageFallbacks.set(sessionId, fallback);
+        }
+      }
+    } finally {
+      globalDb.close();
+    }
+  }
+
+  if (existsSync(cursorProjectsRoot)) {
+    const transcriptSessionIds = new Set(
+      Array.from(sessions.keys()).filter(
+        (sessionId) =>
+          !prompts.some((prompt) => prompt.sessionId === sessionId) ||
+          !generations.some((generation) => generation.sessionId === sessionId)
+      )
+    );
+    const transcriptExtraction = await extractCursorTranscripts(cursorProjectsRoot, sessions, transcriptSessionIds);
+    prompts.push(...transcriptExtraction.prompts);
+    generations.push(...transcriptExtraction.generations);
+  }
+
+  applyComposerUsageFallbacks(generations, sessions, composerUsageFallbacks);
+
   const events = buildCursorEvents({
     sessions,
     prompts,
-    generations
+    generations,
+    hashRequests
   }).sort(compareCursorEvents);
 
   let ledgerChanged = false;
@@ -260,6 +439,7 @@ function buildCursorEvents(input: {
   sessions: Map<string, CursorSession>;
   prompts: CursorPrompt[];
   generations: CursorGeneration[];
+  hashRequests: CursorHashRequest[];
 }): AnyEvent[] {
   const events: AnyEvent[] = [];
 
@@ -354,10 +534,55 @@ function buildCursorEvents(input: {
         cache_creation_input_tokens: generation.cacheCreationInputTokens,
         cache_read_input_tokens: generation.cacheReadInputTokens,
         server_tool_use: "{}",
-        usage_source: "cursor-generation",
+        usage_source: generation.usageSource ?? "cursor-generation",
         provider_id: null,
         provider_base_url: null,
         provider_host: null
+      });
+    }
+  }
+
+  for (const request of input.hashRequests) {
+    events.push({
+      event_id: `cursor:tool:${request.sessionId}:${request.requestId}:started`,
+      session_id: request.sessionId,
+      timestamp: toIsoTimestamp(request.startedAt),
+      source_vendor: CURSOR_SOURCE_VENDOR,
+      source_adapter: CURSOR_SOURCE_ADAPTER,
+      workspace_path: request.workspacePath,
+      type: "tool.called",
+      tool_name: "Composer",
+      status: "started",
+      argument_summary: ""
+    });
+    events.push({
+      event_id: `cursor:tool:${request.sessionId}:${request.requestId}:succeeded`,
+      session_id: request.sessionId,
+      timestamp: toIsoTimestamp(request.completedAt),
+      source_vendor: CURSOR_SOURCE_VENDOR,
+      source_adapter: CURSOR_SOURCE_ADAPTER,
+      workspace_path: request.workspacePath,
+      type: "tool.succeeded",
+      tool_name: "Composer",
+      status: "succeeded",
+      duration_ms: Math.max(0, request.completedAt - request.startedAt)
+    });
+
+    if (request.filesChanged.length > 0) {
+      events.push({
+        event_id: `cursor:edit:${request.sessionId}:${request.requestId}`,
+        session_id: request.sessionId,
+        timestamp: toIsoTimestamp(request.completedAt),
+        source_vendor: CURSOR_SOURCE_VENDOR,
+        source_adapter: CURSOR_SOURCE_ADAPTER,
+        workspace_path: request.workspacePath,
+        type: "code.edit.applied",
+        tool_name: "Composer",
+        files_changed: request.filesChanged,
+        file_count: request.filesChanged.length,
+        insertions: 0,
+        deletions: 0,
+        edit_operation_count: 1
       });
     }
   }
@@ -368,6 +593,9 @@ function buildCursorEvents(input: {
 function extractComposers(value: unknown): Array<{
   sessionId: string;
   createdAt: number;
+  updatedAt: number | null;
+  workspaceId: string | null;
+  workspacePath: string | null;
   editSummary: CursorSession["editSummary"];
 }> {
   const record = asRecord(value);
@@ -381,6 +609,20 @@ function extractComposers(value: unknown): Array<{
         normalizeOptionalString(composer?.conversationId) ??
         normalizeOptionalString(composer?.id);
       const createdAt = normalizeTimestampMs(composer?.createdAt);
+      const updatedAt = normalizeTimestampMs(
+        composer?.conversationCheckpointLastUpdatedAt ?? composer?.lastUpdatedAt ?? composer?.updatedAt
+      );
+      const workspaceIdentifier = asRecord(composer?.workspaceIdentifier);
+      const workspaceUri = asRecord(workspaceIdentifier?.uri);
+      const workspaceId =
+        normalizeOptionalString(workspaceIdentifier?.id) ??
+        normalizeOptionalString(composer?.workspaceId) ??
+        null;
+      const workspacePath =
+        normalizePathLike(workspaceUri?.external) ??
+        normalizePathLike(workspaceUri?.path) ??
+        normalizeOptionalString(workspaceUri?.fsPath) ??
+        null;
 
       if (!sessionId || createdAt === null) {
         return null;
@@ -396,6 +638,9 @@ function extractComposers(value: unknown): Array<{
       return {
         sessionId,
         createdAt,
+        updatedAt,
+        workspaceId,
+        workspacePath,
         editSummary:
           fileCount > 0 || insertions > 0 || deletions > 0
             ? {
@@ -496,10 +741,164 @@ function extractGenerations(value: unknown, workspacePath: string): CursorGenera
         cacheCreationInputTokens:
           normalizeNonNegativeInteger(
             usage?.cacheCreationInputTokens ?? usage?.cache_creation_input_tokens
-          ) ?? null
+          ) ?? null,
+        usageSource:
+          normalizeNonNegativeInteger(usage?.inputTokens ?? usage?.input_tokens ?? usage?.promptTokens) !== null &&
+          normalizeNonNegativeInteger(
+            usage?.outputTokens ?? usage?.output_tokens ?? usage?.completionTokens
+          ) !== null &&
+          normalizeNonNegativeInteger(
+            usage?.cacheReadInputTokens ?? usage?.cache_read_input_tokens
+          ) !== null &&
+          normalizeNonNegativeInteger(
+            usage?.cacheCreationInputTokens ?? usage?.cache_creation_input_tokens
+          ) !== null
+            ? "cursor-generation"
+            : null
       };
     })
     .filter((entry): entry is CursorGeneration => entry !== null);
+}
+
+async function extractCursorTranscripts(
+  cursorProjectsRoot: string,
+  sessions: Map<string, CursorSession>,
+  sessionIds: Set<string>
+): Promise<CursorTranscriptExtraction> {
+  const prompts: CursorPrompt[] = [];
+  const generations: CursorGeneration[] = [];
+
+  if (sessionIds.size === 0) {
+    return { prompts, generations };
+  }
+
+  let projectDirs: string[] = [];
+  try {
+    projectDirs = (await readdir(cursorProjectsRoot, { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => join(cursorProjectsRoot, entry.name));
+  } catch {
+    return { prompts, generations };
+  }
+
+  for (const sessionId of sessionIds) {
+    const session = sessions.get(sessionId);
+    if (!session) {
+      continue;
+    }
+
+    const existingPrompt = prompts.some((prompt) => prompt.sessionId === sessionId);
+    const existingGeneration = generations.some((generation) => generation.sessionId === sessionId);
+
+    if (existingPrompt && existingGeneration) {
+      continue;
+    }
+
+    const transcriptPath = await findCursorTranscriptPath(projectDirs, sessionId);
+    if (!transcriptPath) {
+      continue;
+    }
+
+    const transcriptText = await readOptionalText(transcriptPath);
+    if (!transcriptText) {
+      continue;
+    }
+
+    let transcriptTimestamp = session.updatedAt ?? session.createdAt ?? Date.now();
+    try {
+      transcriptTimestamp = (await stat(transcriptPath)).mtime.getTime();
+    } catch {
+      // Keep the session-derived fallback timestamp.
+    }
+
+    const extraction = extractTranscriptEvents({
+      session,
+      transcriptText,
+      transcriptTimestamp,
+      includePrompts: !existingPrompt,
+      includeGenerations: !existingGeneration
+    });
+    prompts.push(...extraction.prompts);
+    generations.push(...extraction.generations);
+  }
+
+  return { prompts, generations };
+}
+
+async function findCursorTranscriptPath(projectDirs: string[], sessionId: string): Promise<string | null> {
+  for (const projectDir of projectDirs) {
+    const transcriptPath = join(projectDir, "agent-transcripts", sessionId, `${sessionId}.jsonl`);
+    if (existsSync(transcriptPath)) {
+      return transcriptPath;
+    }
+  }
+
+  return null;
+}
+
+function extractTranscriptEvents(input: {
+  session: CursorSession;
+  transcriptText: string;
+  transcriptTimestamp: number;
+  includePrompts: boolean;
+  includeGenerations: boolean;
+}): CursorTranscriptExtraction {
+  const prompts: CursorPrompt[] = [];
+  const generations: CursorGeneration[] = [];
+  const lines = input.transcriptText.split("\n").filter((line) => line.trim().length > 0);
+  let lastTimestamp: number | null = null;
+
+  for (const [index, line] of lines.entries()) {
+    const parsed = parseJson(line);
+    const record = asRecord(parsed);
+    const role = normalizeOptionalString(record?.role);
+    const lineNumber = index + 1;
+
+    if (role === "user" && input.includePrompts) {
+      const promptText = extractTranscriptPromptText(record?.message);
+      if (promptText.length === 0) {
+        continue;
+      }
+
+      const explicitTimestamp = parseTranscriptTimestamp(extractText(asRecord(record?.message)?.content));
+      const timestamp = resolveTranscriptTimestamp(lastTimestamp, explicitTimestamp ?? input.transcriptTimestamp, lineNumber);
+      lastTimestamp = timestamp;
+      prompts.push({
+        eventId: `cursor:prompt:transcript:${input.session.sessionId}:${lineNumber}`,
+        sessionId: input.session.sessionId,
+        workspacePath: input.session.workspacePath,
+        promptId: `transcript:${input.session.sessionId}:${lineNumber}`,
+        promptChars: promptText.length,
+        timestamp: toIsoTimestamp(timestamp)
+      });
+      continue;
+    }
+
+    if (role === "assistant" && input.includeGenerations) {
+      const responseText = extractTranscriptAssistantText(record?.message);
+      if (responseText.length === 0) {
+        continue;
+      }
+
+      const timestamp = resolveTranscriptTimestamp(lastTimestamp, input.transcriptTimestamp, lineNumber);
+      lastTimestamp = timestamp;
+      generations.push({
+        sessionId: input.session.sessionId,
+        workspacePath: input.session.workspacePath,
+        messageId: `transcript:${input.session.sessionId}:${lineNumber}`,
+        timestamp: toIsoTimestamp(timestamp),
+        model: input.session.model,
+        responseChars: responseText.length,
+        inputTokens: null,
+        outputTokens: null,
+        cacheReadInputTokens: null,
+        cacheCreationInputTokens: null,
+        usageSource: null
+      });
+    }
+  }
+
+  return { prompts, generations };
 }
 
 async function collectWorkspaceStorageDatabases(root: string): Promise<string[]> {
@@ -669,16 +1068,114 @@ async function writeJsonFileAtomic(filePath: string, value: unknown): Promise<vo
   }
 }
 
-function parseJson(text: string | null | undefined): unknown {
-  if (!text) {
+function parseJson(text: string | Uint8Array | null | undefined): unknown {
+  const raw =
+    typeof text === "string"
+      ? text
+      : text instanceof Uint8Array
+        ? Buffer.from(text).toString("utf8")
+        : null;
+
+  if (!raw) {
     return null;
   }
 
   try {
-    return JSON.parse(text) as unknown;
+    return JSON.parse(raw) as unknown;
   } catch {
     return null;
   }
+}
+
+function extractComposerUsageFallbacks(
+  rows: Array<{
+    key: string;
+    value: unknown;
+  }>
+): Map<string, CursorComposerUsageFallback> {
+  const fallbacks = new Map<string, CursorComposerUsageFallback>();
+
+  for (const row of rows) {
+    const record = asRecord(parseJson(row.value as string | Uint8Array | null | undefined));
+    const sessionId =
+      normalizeOptionalString(record?.composerId) ??
+      normalizeOptionalString(record?.conversationId) ??
+      normalizeOptionalString(record?.id);
+    const promptBreakdown = asRecord(record?.promptTokenBreakdown);
+    const totalUsedTokens =
+      normalizeNonNegativeInteger(promptBreakdown?.totalUsedTokens) ??
+      normalizeNonNegativeInteger(record?.contextTokensUsed);
+
+    if (!sessionId || totalUsedTokens === null || totalUsedTokens === 0) {
+      continue;
+    }
+
+    const modelConfig = asRecord(record?.modelConfig);
+    const selectedModels = Array.isArray(modelConfig?.selectedModels) ? modelConfig.selectedModels : [];
+    const selectedModel = asRecord(selectedModels[0]);
+    const model =
+      normalizeOptionalString(selectedModel?.modelId) ??
+      normalizeOptionalString(modelConfig?.modelName) ??
+      null;
+
+    fallbacks.set(sessionId, {
+      sessionId,
+      model,
+      inputTokens: totalUsedTokens,
+      outputTokens: 0,
+      cacheReadInputTokens: 0,
+      cacheCreationInputTokens: 0
+    });
+  }
+
+  return fallbacks;
+}
+
+function applyComposerUsageFallbacks(
+  generations: CursorGeneration[],
+  sessions: Map<string, CursorSession>,
+  fallbacks: Map<string, CursorComposerUsageFallback>
+): void {
+  if (fallbacks.size === 0) {
+    return;
+  }
+
+  for (const fallback of fallbacks.values()) {
+    const target = [...generations]
+      .reverse()
+      .find(
+        (generation) =>
+          generation.sessionId === fallback.sessionId &&
+          generation.responseChars > 0 &&
+          generation.inputTokens === null &&
+          generation.outputTokens === null &&
+          generation.cacheReadInputTokens === null &&
+          generation.cacheCreationInputTokens === null
+      );
+
+    if (!target) {
+      continue;
+    }
+
+    target.inputTokens = fallback.inputTokens;
+    target.outputTokens = fallback.outputTokens;
+    target.cacheReadInputTokens = fallback.cacheReadInputTokens;
+    target.cacheCreationInputTokens = fallback.cacheCreationInputTokens;
+    target.usageSource = "cursor-composer-context";
+    target.model = target.model ?? fallback.model ?? sessions.get(fallback.sessionId)?.model ?? null;
+  }
+}
+
+function hasTable(db: ReadOnlyDatabase, tableName: string): boolean {
+  const row = db
+    .prepare<{ name: string }>(
+      `SELECT name
+       FROM sqlite_master
+       WHERE type = 'table' AND name = ?`
+    )
+    .get(tableName);
+
+  return row !== undefined;
 }
 
 function extractText(value: unknown): string {
@@ -701,6 +1198,56 @@ function extractText(value: unknown): string {
     extractText(record.message) ||
     extractText(record.value)
   );
+}
+
+function extractTranscriptPromptText(value: unknown): string {
+  const text = extractText(asRecord(value)?.content ?? value);
+  const match = /<user_query>\s*([\s\S]*?)\s*<\/user_query>/u.exec(text);
+  return (match?.[1] ?? text).trim();
+}
+
+function extractTranscriptAssistantText(value: unknown): string {
+  const content = Array.isArray(asRecord(value)?.content) ? (asRecord(value)?.content as unknown[]) : [];
+  const segments = content
+    .map((entry) => {
+      const record = asRecord(entry);
+      return normalizeOptionalString(record?.type) === "text" ? extractText(record?.text) : "";
+    })
+    .filter((entry) => entry.length > 0);
+
+  return segments.join("\n").trim();
+}
+
+function parseTranscriptTimestamp(value: string): number | null {
+  const match = /<timestamp>\s*([\s\S]*?)\s*<\/timestamp>/u.exec(value);
+  const raw = match?.[1]?.trim();
+  if (!raw) {
+    return null;
+  }
+
+  const normalized = raw.replace(
+    /\(UTC([+-]\d{1,2})(?::?(\d{2}))?\)/u,
+    (_whole, hours: string, minutes?: string) => {
+      const sign = hours.startsWith("-") ? "-" : "+";
+      const absoluteHours = hours.replace(/^[-+]/u, "").padStart(2, "0");
+      const absoluteMinutes = (minutes ?? "00").padStart(2, "0");
+      return `GMT${sign}${absoluteHours}${absoluteMinutes}`;
+    }
+  );
+  const parsed = new Date(normalized);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.getTime();
+}
+
+function resolveTranscriptTimestamp(
+  lastTimestamp: number | null,
+  fallbackTimestamp: number,
+  lineNumber: number
+): number {
+  if (lastTimestamp === null) {
+    return fallbackTimestamp + lineNumber;
+  }
+
+  return Math.max(lastTimestamp + 1, fallbackTimestamp + lineNumber);
 }
 
 function normalizeTimestampMs(value: unknown): number | null {
@@ -743,6 +1290,66 @@ function normalizeStringArray(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
     : [];
+}
+
+function parseCursorHashFiles(value: string | null): string[] {
+  if (!value) {
+    return [];
+  }
+
+  return [...new Set(value
+    .split(",")
+    .map((entry) => normalizeCursorTrackedPath(entry))
+    .filter((entry): entry is string => entry.length > 0))];
+}
+
+function normalizeCursorTrackedPath(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return "";
+  }
+
+  if (/^\/[A-Za-z]:\//u.test(trimmed)) {
+    return trimmed.slice(1);
+  }
+
+  return trimmed;
+}
+
+function inferWorkspacePathFromFiles(files: string[]): string | null {
+  if (files.length === 0) {
+    return null;
+  }
+
+  const segmentSets = files.map((filePath) => {
+    const normalized = normalizeCursorTrackedPath(filePath).replaceAll("\\", "/");
+    return normalized.split("/").filter((segment) => segment.length > 0);
+  });
+
+  if (segmentSets.length === 0 || segmentSets[0]?.length === 0) {
+    return null;
+  }
+
+  const commonSegments: string[] = [];
+  const minLength = Math.min(...segmentSets.map((segments) => segments.length));
+
+  for (let index = 0; index < minLength; index += 1) {
+    const segment = segmentSets[0]?.[index];
+    if (!segment || segmentSets.some((segments) => segments[index] !== segment)) {
+      break;
+    }
+    commonSegments.push(segment);
+  }
+
+  if (commonSegments.length === 0) {
+    return null;
+  }
+
+  if (commonSegments.length === 1 && commonSegments[0]?.endsWith(":")) {
+    return `${commonSegments[0]}/`;
+  }
+
+  return commonSegments.join("/");
 }
 
 function maxCursorValue(current: number, values: number[]): number {

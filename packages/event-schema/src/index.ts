@@ -18,6 +18,7 @@ export const UsageSourceSchema = z.enum([
   "opencode-message",
   "opencode-step-finish",
   "cursor-generation",
+  "cursor-composer-context",
   "codex-rollout",
   "codex-logs"
 ]);

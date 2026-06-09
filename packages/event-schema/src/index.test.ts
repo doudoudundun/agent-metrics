@@ -262,9 +262,27 @@ describe("AnyEventSchema", () => {
       server_tool_use: "{}",
       usage_source: "cursor-generation"
     });
+    const fallbackUsageResult = TokenUsageRecordedEventSchema.safeParse({
+      event_id: "cursor:usage:msg_2",
+      session_id: "cmp_2",
+      timestamp: "2026-05-29T10:00:06.000Z",
+      source_vendor: "cursor",
+      source_adapter: "cursor-ide",
+      workspace_path: "/Users/test/dev/agent-metrics",
+      type: "token.usage.recorded",
+      message_id: "msg_2",
+      model: "cursor-max",
+      input_tokens: 4096,
+      output_tokens: 0,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 0,
+      server_tool_use: "{}",
+      usage_source: "cursor-composer-context"
+    });
 
     expect(sessionResult.success).toBe(true);
     expect(usageResult.success).toBe(true);
+    expect(fallbackUsageResult.success).toBe(true);
   });
 
   it("parses a token.usage.recorded event from a non-Claude source with provider metadata", () => {
