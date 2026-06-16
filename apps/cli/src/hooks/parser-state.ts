@@ -1,7 +1,8 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { mkdir, open, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 
 const MAX_SEEN_RAW_EVENT_IDS = 2048;
+const STALE_PARSER_LOCK_MS = 30_000;
 
 export type ParserState = {
   nextLine: number;
@@ -32,6 +33,52 @@ export async function saveParserState(statePath: string, state: ParserState): Pr
 
   await mkdir(dirname(statePath), { recursive: true });
   await writeFile(statePath, JSON.stringify(nextState, null, 2), "utf8");
+}
+
+export async function tryWithParserStateLock<T>(
+  statePath: string,
+  action: () => Promise<T>,
+  lockTimeoutMs = 0
+): Promise<T | null> {
+  const lockPath = join(dirname(statePath), "parser-state.lock");
+  await mkdir(dirname(lockPath), { recursive: true });
+  const deadline = Date.now() + lockTimeoutMs;
+
+  while (true) {
+    let handle:
+      | Awaited<ReturnType<typeof open>>
+      | undefined;
+
+    try {
+      handle = await open(lockPath, "wx");
+      break;
+    } catch (error) {
+      if (!isExistingFileError(error)) {
+        throw error;
+      }
+
+      if (await isStaleParserLock(lockPath)) {
+        await rm(lockPath, { force: true });
+        continue;
+      }
+
+      if (Date.now() >= deadline) {
+        return null;
+      }
+
+      await delay(25);
+    } finally {
+      if (handle) {
+        await handle.close();
+      }
+    }
+  }
+
+  try {
+    return await action();
+  } finally {
+    await rm(lockPath, { force: true });
+  }
 }
 
 function createEmptyParserState(): ParserState {
@@ -74,4 +121,24 @@ function mergeParserState(existingState: ParserState, nextState: ParserState): P
         ? mergedSeenRawEventIds
         : mergedSeenRawEventIds.slice(-MAX_SEEN_RAW_EVENT_IDS)
   };
+}
+
+function isExistingFileError(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === "EEXIST";
+}
+
+async function isStaleParserLock(lockPath: string): Promise<boolean> {
+  try {
+    const details = await stat(lockPath);
+
+    return Date.now() - details.mtimeMs > STALE_PARSER_LOCK_MS;
+  } catch {
+    return false;
+  }
+}
+
+async function delay(durationMs: number): Promise<void> {
+  await new Promise<void>((resolvePromise) => {
+    setTimeout(resolvePromise, durationMs);
+  });
 }

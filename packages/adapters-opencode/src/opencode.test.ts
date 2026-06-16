@@ -474,4 +474,59 @@ describe("normalizeOpenCodeToolPartRow", () => {
       expect(AnyEventSchema.safeParse(event).success).toBe(true);
     }
   });
+
+  it("supports zcode event namespacing and adapter tagging", () => {
+    const messageRow: OpenCodeMessageRow = {
+      id: "msg_zcode_usage",
+      session_id: "sess_zcode_1",
+      time_created: 1777355829153,
+      time_updated: 1777355842420,
+      data: JSON.stringify({
+        role: "assistant",
+        time: {
+          created: 1777355829153,
+          completed: 1777355842420
+        },
+        providerID: "builtin:zai-coding-plan",
+        modelID: "GLM-5-Turbo",
+        finish: "tool-calls",
+        path: {
+          root: "C:/Users/qinyang.li/ZCodeProject"
+        },
+        tokens: {
+          input: 220,
+          output: 84,
+          reasoning: 12,
+          cache: {
+            read: 5,
+            write: 0
+          }
+        }
+      })
+    };
+
+    const events = normalizeOpenCodeMessageRow({
+      row: messageRow,
+      sessionDirectory: "C:/Users/qinyang.li/ZCodeProject",
+      partRows: [],
+      eventContext: {
+        eventNamespace: "zcode",
+        sourceAdapter: "zcode-db"
+      }
+    });
+
+    expect(events).toEqual([
+      expect.objectContaining({
+        event_id: "opencode:zcode:message:msg_zcode_usage:assistant",
+        source_vendor: "opencode",
+        source_adapter: "zcode-db"
+      }),
+      expect.objectContaining({
+        event_id: "opencode:zcode:message:msg_zcode_usage:usage",
+        source_vendor: "opencode",
+        source_adapter: "zcode-db",
+        usage_source: "opencode-message"
+      })
+    ]);
+  });
 });

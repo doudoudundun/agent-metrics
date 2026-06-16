@@ -1,3 +1,4 @@
+import { spawn, type ChildProcess } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -43,6 +44,11 @@ const DEFAULT_MAIN_WINDOW_BOUNDS = {
   height: 900
 } as const;
 const ORB_WINDOW_SIZE = 104;
+const DASHBOARD_DEV_SERVER_TIMEOUT_MS = 15_000;
+const PEEK_CARD_SIZE = {
+  width: 376,
+  height: 304
+} as const;
 
 type RectangleLike = {
   x: number;
@@ -67,6 +73,8 @@ type BrowserWindowLike = {
   setBounds(bounds: RectangleLike): void;
   setFocusable(focusable: boolean): void;
   show(): void;
+  isAlwaysOnTop(): boolean;
+  setAlwaysOnTop(flag: boolean, level?: string): void;
 };
 
 type BrowserWindowConstructor = new (options: Record<string, unknown>) => BrowserWindowLike;
@@ -154,6 +162,8 @@ let hoverCloseTimer: NodeJS.Timeout | null = null;
 let orbDragPointerOffset: { x: number; y: number } | null = null;
 let orbDragTimer: NodeJS.Timeout | null = null;
 let orbBoundsPersistTimer: NodeJS.Timeout | null = null;
+let orbTopmostTimer: NodeJS.Timeout | null = null;
+let dashboardDevProcess: ChildProcess | null = null;
 
 const supervisor = createProcessSupervisor({
   runtimePaths,
@@ -205,6 +215,82 @@ async function isCoreApiHealthy(): Promise<boolean> {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function isDashboardUiHealthy(): Promise<boolean> {
+  if (runtimePaths.dashboardWorkingDirectory === null) {
+    return true;
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 1_500);
+
+  try {
+    const response = await fetch("http://127.0.0.1:4173/", {
+      signal: controller.signal
+    });
+
+    return response.ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function waitForDashboardUiHealthy(timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    if (await isDashboardUiHealthy()) {
+      return;
+    }
+
+    await new Promise((resolvePromise) => {
+      setTimeout(resolvePromise, 250);
+    });
+  }
+
+  throw new Error("Dashboard dev server did not become healthy in time.");
+}
+
+async function ensureDashboardDevServer(): Promise<void> {
+  if (
+    app.isPackaged ||
+    runtimePaths.dashboardDevEntrypoint === null ||
+    runtimePaths.dashboardWorkingDirectory === null
+  ) {
+    return;
+  }
+
+  if (await isDashboardUiHealthy()) {
+    return;
+  }
+
+  if (dashboardDevProcess === null) {
+    const useElectronAsNode = desktopNodeExecutable === undefined;
+    dashboardDevProcess = spawn(
+      desktopNodeExecutable ?? globalThis.process.execPath,
+      [runtimePaths.dashboardDevEntrypoint, "--host", "127.0.0.1", "--port", "4173"],
+      {
+        cwd: runtimePaths.dashboardWorkingDirectory,
+        env: {
+          ...process.env,
+          ...(useElectronAsNode ? { ELECTRON_RUN_AS_NODE: "1" } : {})
+        },
+        stdio: "ignore"
+      }
+    );
+
+    dashboardDevProcess.on("exit", () => {
+      dashboardDevProcess = null;
+    });
+    dashboardDevProcess.on("error", () => {
+      dashboardDevProcess = null;
+    });
+  }
+
+  await waitForDashboardUiHealthy(DASHBOARD_DEV_SERVER_TIMEOUT_MS);
 }
 
 function isOverviewPayload(value: unknown): boolean {
@@ -304,10 +390,12 @@ function showOrbWindow(): void {
   clearHoverTimers();
   peekCardWindow?.hide();
   orbWindow.show();
+  startOrbTopmostGuard();
   orbState = createOrbSurfaceState("orbDocked");
 }
 
 function hideOrbWindow(): void {
+  stopOrbTopmostGuard();
   clearHoverTimers();
   orbWindow?.hide();
   peekCardWindow?.hide();
@@ -378,6 +466,26 @@ function clearHoverTimers(): void {
 function clearOrbBoundsPersistTimer(): void {
   clearTimeout(orbBoundsPersistTimer ?? undefined);
   orbBoundsPersistTimer = null;
+}
+
+function startOrbTopmostGuard(): void {
+  stopOrbTopmostGuard();
+  orbTopmostTimer = setInterval(() => {
+    if (orbWindow === null || orbDragPointerOffset !== null || !orbWindow.isVisible()) {
+      return;
+    }
+
+    if (!orbWindow.isAlwaysOnTop()) {
+      orbWindow.setAlwaysOnTop(true, "floating");
+    }
+  }, 2000);
+}
+
+function stopOrbTopmostGuard(): void {
+  if (orbTopmostTimer !== null) {
+    clearInterval(orbTopmostTimer);
+    orbTopmostTimer = null;
+  }
 }
 
 function stopOrbDragLoop(): void {
@@ -467,11 +575,13 @@ function positionPeekCardWindow(): void {
 
   const orbBounds = captureWindowBounds(orbWindow);
   const peekBounds = captureWindowBounds(peekCardWindow);
+  const peekWidth = peekBounds.width > 0 ? peekBounds.width : PEEK_CARD_SIZE.width;
+  const peekHeight = peekBounds.height > 0 ? peekBounds.height : PEEK_CARD_SIZE.height;
   const nextBounds = resolvePeekCardBounds({
     orbBounds,
     peekSize: {
-      width: peekBounds.width,
-      height: peekBounds.height
+      width: peekWidth,
+      height: peekHeight
     },
     workArea: getVisibleWorkArea(orbBounds)
   });
@@ -485,8 +595,15 @@ function showPeekCardWindow(): void {
   }
 
   positionPeekCardWindow();
-  peekCardWindow.setFocusable(false);
+  peekCardWindow.setFocusable(true);
   peekCardWindow.show();
+
+  if (orbState.mode === "peekPinned") {
+    peekCardWindow.focus();
+    return;
+  }
+
+  peekCardWindow.setFocusable(false);
 }
 
 function moveOrbWindow(nextBounds: WindowBounds): void {
@@ -715,6 +832,10 @@ function registerIpcHandlers(): void {
     stopOrbDragLoop();
 
     if (orbWindow !== null) {
+      orbWindow.setAlwaysOnTop(true, "floating");
+    }
+
+    if (orbWindow !== null) {
       queueOrbBoundsSave(captureWindowBounds(orbWindow));
     }
 
@@ -771,6 +892,7 @@ async function bootstrap(): Promise<void> {
   settings = await loadDesktopSettings(settingsPath);
   registerIpcHandlers();
 
+  await ensureDashboardDevServer();
   await supervisor.start();
   app.setLoginItemSettings({ openAtLogin: settings.launchAtLogin });
 
@@ -844,8 +966,8 @@ async function bootstrap(): Promise<void> {
     });
 
     peekCardWindow = new BrowserWindow({
-      width: 376,
-      height: 304,
+      width: PEEK_CARD_SIZE.width,
+      height: PEEK_CARD_SIZE.height,
       alwaysOnTop: true,
       backgroundColor: "#00000000",
       frame: false,
@@ -865,6 +987,7 @@ async function bootstrap(): Promise<void> {
 
     if (settings.showOrbOnStartup) {
       orbState = createOrbSurfaceState("orbDocked");
+      startOrbTopmostGuard();
     }
 
     orbWindow.on("close", (event: PreventableEvent) => {
@@ -1015,7 +1138,10 @@ app.on("before-quit", (event: PreventableEvent) => {
     .finally(() => {
       shutdownComplete = true;
       clearHoverTimers();
+      stopOrbTopmostGuard();
       stopOrbDragLoop();
+      dashboardDevProcess?.kill("SIGTERM");
+      dashboardDevProcess = null;
       tray?.destroy();
       tray = null;
       app.quit();

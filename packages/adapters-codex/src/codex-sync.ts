@@ -4,7 +4,7 @@ import { readdir, readFile, rename, rm, stat, writeFile, mkdir } from "node:fs/p
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
-import { appendJsonLine } from "@agent-metrics/shared-utils";
+import { appendJsonLine, loadEventLedgerWithFallback, persistEventLedger } from "@agent-metrics/shared-utils";
 import {
   extractCodexEventsFromRollout,
   type CodexProviderConfig
@@ -21,9 +21,6 @@ type SyncCursor = {
   sessionModels: Record<string, string>;
 };
 
-type EventLedger = {
-  eventIds: string[];
-};
 
 type CodexLogRow = {
   id: number;
@@ -74,13 +71,12 @@ export async function syncCodexRollouts(input: {
     process.env.AGENT_METRICS_CODEX_CONFIG_PATH ??
     resolveDefaultCodexConfigPath();
   const cursor = await loadCursor(input.cursorPath);
-  const ledger = await loadLedger(input.ledgerPath);
-  const seenEventIds = await loadEventIdsFromEventLog(input.eventLogPath, "codex:");
+  const seenEventIds = await loadEventLedgerWithFallback({
+    ledgerPath: input.ledgerPath,
+    eventLogPath: input.eventLogPath,
+    prefix: "codex:"
+  });
   const baselineEventCount = seenEventIds.size;
-
-  for (const eventId of ledger.eventIds) {
-    seenEventIds.add(eventId);
-  }
 
   const providerConfigs = await loadProviderConfigs(configPath);
   const { sessionModels, logsLastId } = loadSessionModelsFromLogs({
@@ -134,9 +130,7 @@ export async function syncCodexRollouts(input: {
   }
 
   if (ledgerChanged) {
-    await writeJsonFileAtomic(input.ledgerPath, {
-      eventIds: [...seenEventIds].sort()
-    } satisfies EventLedger);
+    await persistEventLedger(input.ledgerPath, seenEventIds);
   }
 }
 
@@ -302,53 +296,6 @@ async function loadCursor(cursorPath: string): Promise<SyncCursor> {
         : 0,
     sessionModels: parseSessionModels(parsed.sessionModels)
   };
-}
-
-async function loadLedger(ledgerPath: string): Promise<EventLedger> {
-  const parsed = await readJsonFile(ledgerPath);
-
-  if (!parsed || !isRecord(parsed) || !Array.isArray(parsed.eventIds)) {
-    return {
-      eventIds: []
-    };
-  }
-
-  return {
-    eventIds: parsed.eventIds.filter((entry): entry is string => typeof entry === "string")
-  };
-}
-
-async function loadEventIdsFromEventLog(eventLogPath: string, prefix: string): Promise<Set<string>> {
-  const eventIds = new Set<string>();
-  let contents: string;
-
-  try {
-    contents = await readFile(eventLogPath, "utf8");
-  } catch {
-    return eventIds;
-  }
-
-  for (const line of contents.split("\n").filter((entry) => entry.length > 0)) {
-    let parsed: unknown;
-
-    try {
-      parsed = JSON.parse(line) as unknown;
-    } catch {
-      continue;
-    }
-
-    if (
-      parsed &&
-      typeof parsed === "object" &&
-      "event_id" in parsed &&
-      typeof parsed.event_id === "string" &&
-      parsed.event_id.startsWith(prefix)
-    ) {
-      eventIds.add(parsed.event_id);
-    }
-  }
-
-  return eventIds;
 }
 
 async function readJsonFile(filePath: string): Promise<Record<string, unknown> | null> {

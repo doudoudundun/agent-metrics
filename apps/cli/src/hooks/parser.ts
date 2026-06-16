@@ -9,7 +9,7 @@ import {
   type ClaudeHookPayload
 } from "@agent-metrics/adapters-claude";
 import { getHookPaths } from "./paths.js";
-import { loadParserState, saveParserState } from "./parser-state.js";
+import { loadParserState, saveParserState, tryWithParserStateLock } from "./parser-state.js";
 import { parseClaudeRawEnvelope } from "./raw-envelope.js";
 import { collectChangedSnapshots } from "./snapshots.js";
 
@@ -17,112 +17,114 @@ const PARSER_STATE_FLUSH_INTERVAL = 100;
 
 export async function parseRawHooksOnce(input: { repoRoot: string }): Promise<void> {
   const paths = getHookPaths(input.repoRoot);
-  const state = await loadParserState(paths.parserStatePath);
-  const rawLines = await readJsonLines(paths.rawHookLogPath);
-  const pendingLines = rawLines.slice(state.nextLine);
-  let processedLines = 0;
-  let shouldSyncTranscripts = false;
+  await tryWithParserStateLock(paths.parserStatePath, async () => {
+    const state = await loadParserState(paths.parserStatePath);
+    const rawLines = await readJsonLines(paths.rawHookLogPath);
+    const pendingLines = rawLines.slice(state.nextLine);
+    let processedLines = 0;
+    let shouldSyncTranscripts = false;
 
-  for (const line of pendingLines) {
-    state.nextLine += 1;
-    processedLines += 1;
+    for (const line of pendingLines) {
+      state.nextLine += 1;
+      processedLines += 1;
 
-    const envelope = parseClaudeRawEnvelope(line);
-    if (envelope === null || state.seenRawEventIds.includes(envelope.raw_event_id)) {
-      await saveParserStatePeriodically(paths.parserStatePath, state, processedLines);
-      continue;
-    }
-
-    const payload = withFallbackTimestamp(envelope.payload, envelope.captured_at);
-    const workspacePath = normalizeWorkspacePath(payload.cwd, input.repoRoot);
-    const normalizedPayload = withWorkspacePath(payload, workspacePath);
-    const normalizedEvent = normalizeClaudeHookEvent(normalizedPayload);
-
-    if (normalizedEvent !== null) {
-      await appendJsonLine(paths.eventLogPath, normalizedEvent);
-    }
-
-    if (normalizedPayload.hook_event_name === "PostToolUse") {
-      if (
-        typeof normalizedPayload.tool_use_id !== "string" ||
-        normalizedPayload.tool_use_id.length === 0
-      ) {
-        state.seenRawEventIds.push(envelope.raw_event_id);
+      const envelope = parseClaudeRawEnvelope(line);
+      if (envelope === null || state.seenRawEventIds.includes(envelope.raw_event_id)) {
         await saveParserStatePeriodically(paths.parserStatePath, state, processedLines);
         continue;
       }
 
-      const changedFiles = await collectChangedSnapshots({
-        snapshotRoot: paths.snapshotRoot,
-        toolUseId: normalizedPayload.tool_use_id
-      });
+      const payload = withFallbackTimestamp(envelope.payload, envelope.captured_at);
+      const workspacePath = normalizeWorkspacePath(payload.cwd, input.repoRoot);
+      const normalizedPayload = withWorkspacePath(payload, workspacePath);
+      const normalizedEvent = normalizeClaudeHookEvent(normalizedPayload);
 
-      if (changedFiles.length > 0) {
-        await appendJsonLine(
-          paths.eventLogPath,
-          normalizeClaudeObservation({
+      if (normalizedEvent !== null) {
+        await appendJsonLine(paths.eventLogPath, normalizedEvent);
+      }
+
+      if (normalizedPayload.hook_event_name === "PostToolUse") {
+        if (
+          typeof normalizedPayload.tool_use_id !== "string" ||
+          normalizedPayload.tool_use_id.length === 0
+        ) {
+          state.seenRawEventIds.push(envelope.raw_event_id);
+          await saveParserStatePeriodically(paths.parserStatePath, state, processedLines);
+          continue;
+        }
+
+        const changedFiles = await collectChangedSnapshots({
+          snapshotRoot: paths.snapshotRoot,
+          toolUseId: normalizedPayload.tool_use_id
+        });
+
+        if (changedFiles.length > 0) {
+          await appendJsonLine(
+            paths.eventLogPath,
+            normalizeClaudeObservation({
+              sessionId:
+                typeof normalizedPayload.session_id === "string" && normalizedPayload.session_id.length > 0
+                  ? normalizedPayload.session_id
+                  : "unknown-session",
+              workspacePath,
+              observation: {
+                kind: "edit_applied",
+                toolName:
+                  typeof normalizedPayload.tool_name === "string" && normalizedPayload.tool_name.length > 0
+                    ? normalizedPayload.tool_name
+                    : "unknown",
+                files: changedFiles
+              }
+            })
+          );
+        }
+      }
+
+      const transcriptPath = normalizeTranscriptPath(normalizedPayload.transcript_path, workspacePath);
+      if (transcriptPath) {
+        try {
+          await recordClaudeTranscriptReference({
+            manifestPath: paths.transcriptManifestPath,
+            transcriptPath,
+            workspacePath,
             sessionId:
               typeof normalizedPayload.session_id === "string" && normalizedPayload.session_id.length > 0
-                ? normalizedPayload.session_id
-                : "unknown-session",
-            workspacePath,
-            observation: {
-              kind: "edit_applied",
-              toolName:
-                typeof normalizedPayload.tool_name === "string" && normalizedPayload.tool_name.length > 0
-                  ? normalizedPayload.tool_name
-                  : "unknown",
-              files: changedFiles
-            }
-          })
-        );
+              ? normalizedPayload.session_id
+              : undefined,
+            lockTimeoutMs: 0
+          });
+          shouldSyncTranscripts = true;
+        } catch {
+          // Tool events should keep flowing even when transcript sync is busy.
+        }
+
+        if (!(await pathExists(transcriptPath))) {
+          state.seenRawEventIds.push(envelope.raw_event_id);
+          await saveParserStatePeriodically(paths.parserStatePath, state, processedLines);
+          continue;
+        }
       }
+
+      state.seenRawEventIds.push(envelope.raw_event_id);
+      await saveParserStatePeriodically(paths.parserStatePath, state, processedLines);
     }
 
-    const transcriptPath = normalizeTranscriptPath(normalizedPayload.transcript_path, workspacePath);
-    if (transcriptPath) {
+    await saveParserState(paths.parserStatePath, state);
+
+    if (shouldSyncTranscripts) {
       try {
-        await recordClaudeTranscriptReference({
+        await syncKnownClaudeTranscripts({
           manifestPath: paths.transcriptManifestPath,
-          transcriptPath,
-          workspacePath,
-          sessionId:
-            typeof normalizedPayload.session_id === "string" && normalizedPayload.session_id.length > 0
-            ? normalizedPayload.session_id
-            : undefined,
-          lockTimeoutMs: 0
+          eventLogPath: paths.eventLogPath,
+          transcriptCursorPath: paths.transcriptCursorPath,
+          transcriptLedgerPath: paths.transcriptLedgerPath,
+          discoveryRoots: []
         });
-        shouldSyncTranscripts = true;
       } catch {
-        // Tool events should keep flowing even when transcript sync is busy.
-      }
-
-      if (!(await pathExists(transcriptPath))) {
-        state.seenRawEventIds.push(envelope.raw_event_id);
-        await saveParserStatePeriodically(paths.parserStatePath, state, processedLines);
-        continue;
+        // Hook-derived tool metrics should keep flowing even when transcript sync fails transiently.
       }
     }
-
-    state.seenRawEventIds.push(envelope.raw_event_id);
-    await saveParserStatePeriodically(paths.parserStatePath, state, processedLines);
-  }
-
-  await saveParserState(paths.parserStatePath, state);
-
-  if (shouldSyncTranscripts) {
-    try {
-      await syncKnownClaudeTranscripts({
-        manifestPath: paths.transcriptManifestPath,
-        eventLogPath: paths.eventLogPath,
-        transcriptCursorPath: paths.transcriptCursorPath,
-        transcriptLedgerPath: paths.transcriptLedgerPath,
-        discoveryRoots: []
-      });
-    } catch {
-      // Hook-derived tool metrics should keep flowing even when transcript sync fails transiently.
-    }
-  }
+  });
 }
 
 async function saveParserStatePeriodically(

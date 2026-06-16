@@ -41,6 +41,11 @@ export type OpenCodeProviderMetadata = {
 
 export type OpenCodeProviderRegistry = Record<string, OpenCodeProviderMetadata>;
 
+export type OpenCodeEventContext = {
+  eventNamespace?: string | null;
+  sourceAdapter?: SourceAdapter;
+};
+
 type OpenCodeTokenPayload = {
   inputTokens: number;
   outputTokens: number;
@@ -48,14 +53,18 @@ type OpenCodeTokenPayload = {
   cacheReadTokens: number;
 };
 
-export function normalizeOpenCodeSessionRow(row: OpenCodeSessionRow): AnyEvent[] {
+export function normalizeOpenCodeSessionRow(
+  row: OpenCodeSessionRow,
+  eventContext?: OpenCodeEventContext
+): AnyEvent[] {
+  const normalizedEventContext = resolveEventContext(eventContext);
   const events: AnyEvent[] = [
     {
-      event_id: `opencode:session:${row.id}:started`,
+      event_id: buildEventId(normalizedEventContext, `session:${row.id}:started`),
       session_id: row.id,
       timestamp: toIsoTimestamp(row.time_created),
       source_vendor: OPENCODE_SOURCE_VENDOR,
-      source_adapter: OPENCODE_SOURCE_ADAPTER,
+      source_adapter: normalizedEventContext.sourceAdapter,
       workspace_path: normalizeWorkspacePath(row.directory),
       type: "session.started"
     }
@@ -63,11 +72,11 @@ export function normalizeOpenCodeSessionRow(row: OpenCodeSessionRow): AnyEvent[]
 
   if (typeof row.time_archived === "number" && row.time_archived >= row.time_created) {
     events.push({
-      event_id: `opencode:session:${row.id}:ended`,
+      event_id: buildEventId(normalizedEventContext, `session:${row.id}:ended`),
       session_id: row.id,
       timestamp: toIsoTimestamp(row.time_archived),
       source_vendor: OPENCODE_SOURCE_VENDOR,
-      source_adapter: OPENCODE_SOURCE_ADAPTER,
+      source_adapter: normalizedEventContext.sourceAdapter,
       workspace_path: normalizeWorkspacePath(row.directory),
       type: "session.ended",
       duration_ms: Math.max(0, row.time_archived - row.time_created)
@@ -83,6 +92,7 @@ export function normalizeOpenCodeMessageRow(input: {
   sessionModel?: string | null;
   partRows?: OpenCodePartRow[];
   providerRegistry?: OpenCodeProviderRegistry;
+  eventContext?: OpenCodeEventContext;
 }): AnyEvent[] {
   const parsed = parseJsonRecord(input.row.data);
   if (parsed === null) {
@@ -98,15 +108,16 @@ export function normalizeOpenCodeMessageRow(input: {
   const createdAt = resolveNestedTimestamp(parsed, "time", "created") ?? input.row.time_created;
   const completedAt = resolveNestedTimestamp(parsed, "time", "completed") ?? input.row.time_updated;
   const partRows = input.partRows ?? [];
+  const eventContext = resolveEventContext(input.eventContext);
 
   if (role === "user") {
     return [
       {
-        event_id: `opencode:message:${input.row.id}:prompt`,
+        event_id: buildEventId(eventContext, `message:${input.row.id}:prompt`),
         session_id: input.row.session_id,
         timestamp: toIsoTimestamp(createdAt),
         source_vendor: OPENCODE_SOURCE_VENDOR,
-        source_adapter: OPENCODE_SOURCE_ADAPTER,
+        source_adapter: eventContext.sourceAdapter,
         workspace_path: workspacePath,
         type: "prompt.submitted",
         prompt_id: input.row.id,
@@ -134,11 +145,11 @@ export function normalizeOpenCodeMessageRow(input: {
   const usagePart = findStepFinishUsagePart(partRows);
   const events: AnyEvent[] = [
     {
-      event_id: `opencode:message:${input.row.id}:assistant`,
+      event_id: buildEventId(eventContext, `message:${input.row.id}:assistant`),
       session_id: input.row.session_id,
       timestamp: toIsoTimestamp(completedAt),
       source_vendor: OPENCODE_SOURCE_VENDOR,
-      source_adapter: OPENCODE_SOURCE_ADAPTER,
+      source_adapter: eventContext.sourceAdapter,
       workspace_path: workspacePath,
       type: "assistant.responded",
       message_id: input.row.id,
@@ -154,11 +165,11 @@ export function normalizeOpenCodeMessageRow(input: {
 
   if (tokenPayload !== null && usagePart === null) {
     events.push({
-      event_id: `opencode:message:${input.row.id}:usage`,
+      event_id: buildEventId(eventContext, `message:${input.row.id}:usage`),
       session_id: input.row.session_id,
       timestamp: toIsoTimestamp(completedAt),
       source_vendor: OPENCODE_SOURCE_VENDOR,
-      source_adapter: OPENCODE_SOURCE_ADAPTER,
+      source_adapter: eventContext.sourceAdapter,
       workspace_path: workspacePath,
       type: "token.usage.recorded",
       message_id: input.row.id,
@@ -184,6 +195,7 @@ export function normalizeOpenCodePartRow(input: {
   sessionModel?: string | null;
   messageRow?: OpenCodeMessageRow | null;
   providerRegistry?: OpenCodeProviderRegistry;
+  eventContext?: OpenCodeEventContext;
 }): AnyEvent[] {
   const parsed = parseJsonRecord(input.row.data);
   if (parsed === null) {
@@ -198,7 +210,8 @@ export function normalizeOpenCodePartRow(input: {
       sessionDirectory: input.sessionDirectory,
       sessionModel: input.sessionModel,
       messageRow: input.messageRow,
-      providerRegistry: input.providerRegistry
+      providerRegistry: input.providerRegistry,
+      eventContext: input.eventContext
     });
   }
 
@@ -215,13 +228,14 @@ export function normalizeOpenCodePartRow(input: {
     normalizeInteger(time?.end) ??
     (status === "completed" || status === "error" ? input.row.time_updated : null);
   const workspacePath = normalizeWorkspacePath(input.sessionDirectory);
+  const eventContext = resolveEventContext(input.eventContext);
   const events: AnyEvent[] = [
     {
-      event_id: `opencode:part:${input.row.id}:tool:started`,
+      event_id: buildEventId(eventContext, `part:${input.row.id}:tool:started`),
       session_id: input.row.session_id,
       timestamp: toIsoTimestamp(startAt),
       source_vendor: OPENCODE_SOURCE_VENDOR,
-      source_adapter: OPENCODE_SOURCE_ADAPTER,
+      source_adapter: eventContext.sourceAdapter,
       workspace_path: workspacePath,
       type: "tool.called",
       tool_name: toolName,
@@ -236,11 +250,11 @@ export function normalizeOpenCodePartRow(input: {
     events.push(
       status === "completed"
         ? {
-            event_id: `opencode:part:${input.row.id}:tool:succeeded`,
+            event_id: buildEventId(eventContext, `part:${input.row.id}:tool:succeeded`),
             session_id: input.row.session_id,
             timestamp: toIsoTimestamp(endAt),
             source_vendor: OPENCODE_SOURCE_VENDOR,
-            source_adapter: OPENCODE_SOURCE_ADAPTER,
+            source_adapter: eventContext.sourceAdapter,
             workspace_path: workspacePath,
             type: "tool.succeeded",
             tool_name: toolName,
@@ -248,11 +262,11 @@ export function normalizeOpenCodePartRow(input: {
             duration_ms: durationMs
           }
         : {
-            event_id: `opencode:part:${input.row.id}:tool:failed`,
+            event_id: buildEventId(eventContext, `part:${input.row.id}:tool:failed`),
             session_id: input.row.session_id,
             timestamp: toIsoTimestamp(endAt),
             source_vendor: OPENCODE_SOURCE_VENDOR,
-            source_adapter: OPENCODE_SOURCE_ADAPTER,
+            source_adapter: eventContext.sourceAdapter,
             workspace_path: workspacePath,
             type: "tool.failed",
             tool_name: toolName,
@@ -268,6 +282,7 @@ export function normalizeOpenCodePartRow(input: {
 export function normalizeOpenCodeToolPartRow(input: {
   row: OpenCodePartRow;
   sessionDirectory?: string | null;
+  eventContext?: OpenCodeEventContext;
 }): AnyEvent[] {
   return normalizeOpenCodePartRow(input);
 }
@@ -303,6 +318,7 @@ function normalizeOpenCodeStepFinishPart(input: {
   sessionModel?: string | null;
   messageRow?: OpenCodeMessageRow | null;
   providerRegistry?: OpenCodeProviderRegistry;
+  eventContext?: OpenCodeEventContext;
 }): AnyEvent[] {
   const tokenPayload = extractTokenPayload(input.part);
   if (tokenPayload === null) {
@@ -330,14 +346,15 @@ function normalizeOpenCodeStepFinishPart(input: {
     messageRecord !== null
       ? resolveWorkspacePath(messageRecord, input.sessionDirectory)
       : normalizeWorkspacePath(input.sessionDirectory);
+  const eventContext = resolveEventContext(input.eventContext);
 
   return [
     {
-      event_id: `opencode:message:${input.row.message_id}:usage`,
+      event_id: buildEventId(eventContext, `message:${input.row.message_id}:usage`),
       session_id: input.row.session_id,
       timestamp: toIsoTimestamp(input.row.time_updated),
       source_vendor: OPENCODE_SOURCE_VENDOR,
-      source_adapter: OPENCODE_SOURCE_ADAPTER,
+      source_adapter: eventContext.sourceAdapter,
       workspace_path: workspacePath,
       type: "token.usage.recorded",
       message_id: input.row.message_id,
@@ -437,6 +454,19 @@ function serializeCompactJson(value: unknown): string {
 
 function toIsoTimestamp(value: number): string {
   return new Date(value).toISOString();
+}
+
+function resolveEventContext(eventContext?: OpenCodeEventContext): Required<OpenCodeEventContext> {
+  return {
+    eventNamespace: eventContext?.eventNamespace ?? null,
+    sourceAdapter: eventContext?.sourceAdapter ?? OPENCODE_SOURCE_ADAPTER
+  };
+}
+
+function buildEventId(eventContext: Required<OpenCodeEventContext>, suffix: string): string {
+  return eventContext.eventNamespace
+    ? `opencode:${eventContext.eventNamespace}:${suffix}`
+    : `opencode:${suffix}`;
 }
 
 function normalizeOptionalString(value: unknown): string | undefined {

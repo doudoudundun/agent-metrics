@@ -35,14 +35,10 @@ function resolveDisplayedInputTokens(row: TokenUsageRow): number {
 }
 
 function resolveTotalTokens(row: TokenUsageRow): number {
-  if (row.source_vendor === "codex") {
-    return (
-      row.input_tokens + row.output_tokens + row.cache_creation_input_tokens
-    );
-  }
-
+  // total = displayedInput + output + cacheRead + cacheCreation
+  // so that "total" always equals the sum of the four displayed components.
   return (
-    row.input_tokens +
+    resolveDisplayedInputTokens(row) +
     row.output_tokens +
     row.cache_read_input_tokens +
     row.cache_creation_input_tokens

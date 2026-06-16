@@ -17,6 +17,8 @@ export type DesktopRuntimePaths = {
   coreApiBaseUrl: string;
   dashboardEntryUrl: string;
   packagedDashboardEntryUrl: string | null;
+  dashboardDevEntrypoint: string | null;
+  dashboardWorkingDirectory: string | null;
   cliEntrypoint: string;
   cliWorkingDirectory: string;
   coreEntrypoint: string;
@@ -50,6 +52,8 @@ export function resolveDesktopRuntimePaths(input: {
       coreApiBaseUrl: DEFAULT_CORE_API_BASE_URL,
       dashboardEntryUrl: buildDashboardUrl(DASHBOARD_DEV_SERVER_URL, "desktop-main"),
       packagedDashboardEntryUrl: null,
+      dashboardDevEntrypoint: pathModule.join(appRoot, "node_modules", "vite", "bin", "vite.js"),
+      dashboardWorkingDirectory: pathModule.join(appRoot, "apps", "dashboard"),
       cliEntrypoint: pathModule.join(appRoot, "apps", "cli", "dist", "index.js"),
       cliWorkingDirectory: pathModule.join(appRoot, "apps", "cli"),
       coreEntrypoint: pathModule.join(appRoot, "apps", "core", "dist", "server.js"),
@@ -73,6 +77,8 @@ export function resolveDesktopRuntimePaths(input: {
       DEFAULT_CORE_API_BASE_URL
     ),
     packagedDashboardEntryUrl,
+    dashboardDevEntrypoint: null,
+    dashboardWorkingDirectory: null,
     cliEntrypoint: pathModule.join(appRoot, "cli", "dist", "index.js"),
     cliWorkingDirectory: pathModule.join(appRoot, "cli"),
     coreEntrypoint: pathModule.join(appRoot, "core", "dist", "server.js"),

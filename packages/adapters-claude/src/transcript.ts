@@ -38,6 +38,25 @@ export type ClaudeTranscriptObservation =
       providerId: string | null;
       providerBaseUrl: string | null;
       providerHost: string | null;
+    }
+  | {
+      kind: "tool_called";
+      sessionId: string;
+      workspacePath: string;
+      timestamp: string;
+      toolUseId: string;
+      toolName: string;
+      argumentSummary: string;
+    }
+  | {
+      kind: "tool_finished";
+      sessionId: string;
+      workspacePath: string;
+      timestamp: string;
+      toolUseId: string;
+      toolName: string | null;
+      isError: boolean;
+      durationMs: number;
     };
 
 export type ClaudeSessionContext = {
@@ -76,22 +95,51 @@ export function extractClaudeTranscriptObservations(record: unknown): ClaudeTran
   const role = normalizeOptionalString(message.role);
 
   if (rowType === "user" || role === "user") {
+    const observations: ClaudeTranscriptObservation[] = [];
     const promptText = flattenClaudeContent(message.content);
     const promptId = normalizeOptionalString(row.promptId ?? row.prompt_id ?? row.uuid);
-    if (promptId === undefined) {
-      return [];
-    }
 
-    return [
-      {
+    if (promptId !== undefined) {
+      observations.push({
         kind: "prompt_submitted",
         sessionId,
         workspacePath,
         timestamp,
         promptId,
         promptChars: promptText.length
+      });
+    }
+
+    if (Array.isArray(message.content)) {
+      for (const block of message.content) {
+        const blockRecord = asRecord(block);
+        if (blockRecord === null) {
+          continue;
+        }
+
+        if (normalizeOptionalString(blockRecord.type) !== "tool_result") {
+          continue;
+        }
+
+        const toolUseId = normalizeOptionalString(blockRecord.tool_use_id ?? blockRecord.toolUseId);
+        if (toolUseId === undefined) {
+          continue;
+        }
+
+        observations.push({
+          kind: "tool_finished",
+          sessionId,
+          workspacePath,
+          timestamp,
+          toolUseId,
+          toolName: null,
+          isError: blockRecord.is_error === true,
+          durationMs: 0
+        });
       }
-    ];
+    }
+
+    return observations;
   }
 
   if (rowType !== "assistant" && role !== "assistant") {
@@ -99,6 +147,36 @@ export function extractClaudeTranscriptObservations(record: unknown): ClaudeTran
   }
 
   const observations: ClaudeTranscriptObservation[] = [];
+
+  if (Array.isArray(message.content)) {
+    for (const block of message.content) {
+      const blockRecord = asRecord(block);
+      if (blockRecord === null) {
+        continue;
+      }
+
+      if (normalizeOptionalString(blockRecord.type) !== "tool_use") {
+        continue;
+      }
+
+      const toolUseId = normalizeOptionalString(blockRecord.id ?? blockRecord.tool_use_id);
+      const toolName = normalizeOptionalString(blockRecord.name);
+      if (toolUseId === undefined || toolName === undefined) {
+        continue;
+      }
+
+      observations.push({
+        kind: "tool_called",
+        sessionId,
+        workspacePath,
+        timestamp,
+        toolUseId,
+        toolName,
+        argumentSummary: serializeCompactJson(blockRecord.input ?? {})
+      });
+    }
+  }
+
   const messageId = normalizeOptionalString(message.id ?? row.message_id);
   const model = normalizeNullableString(message.model ?? row.model);
   const responseText = flattenClaudeContent(message.content);
@@ -213,6 +291,37 @@ export function normalizeClaudeTranscriptObservation(
       provider_id: observation.providerId,
       provider_base_url: observation.providerBaseUrl,
       provider_host: observation.providerHost
+    };
+  }
+
+  if (observation.kind === "tool_called") {
+    return {
+      ...base,
+      type: "tool.called",
+      tool_name: observation.toolName,
+      status: "started",
+      argument_summary: observation.argumentSummary
+    };
+  }
+
+  if (observation.kind === "tool_finished") {
+    const toolName = observation.toolName ?? observation.toolUseId;
+    if (observation.isError) {
+      return {
+        ...base,
+        type: "tool.failed",
+        tool_name: toolName,
+        status: "failed",
+        duration_ms: observation.durationMs
+      };
+    }
+
+    return {
+      ...base,
+      type: "tool.succeeded",
+      tool_name: toolName,
+      status: "succeeded",
+      duration_ms: observation.durationMs
     };
   }
 

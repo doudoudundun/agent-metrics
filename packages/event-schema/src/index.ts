@@ -7,6 +7,7 @@ export const SourceAdapterSchema = z.enum([
   "claude-hook",
   "claude-transcript",
   "opencode-db",
+  "zcode-db",
   "cursor-ide",
   "codex-rollout",
   "codex-history",

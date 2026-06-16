@@ -186,6 +186,9 @@ async function syncTranscriptReference(input: {
     hasCompleteTrailingNewline || splitLines.length === 0 ? "" : (splitLines.pop() ?? "");
   const completeLines = splitLines.filter((line) => line.length > 0);
   let ledgerChanged = false;
+  // Maps tool_use ids encountered in this transcript to their human-readable tool names so that
+  // tool_result observations (which only carry tool_use_id) can recover the original tool name.
+  const toolUseIdToName = new Map<string, string>();
 
   for (const line of completeLines) {
     const record = parseTranscriptLine(line, input.reference);
@@ -196,6 +199,15 @@ async function syncTranscriptReference(input: {
     const observations = extractClaudeTranscriptObservations(record);
 
     for (const observation of observations) {
+      if (observation.kind === "tool_called") {
+        toolUseIdToName.set(observation.toolUseId, observation.toolName);
+      } else if (observation.kind === "tool_finished" && observation.toolName === null) {
+        const resolvedName = toolUseIdToName.get(observation.toolUseId);
+        if (resolvedName !== undefined) {
+          observation.toolName = resolvedName;
+        }
+      }
+
       const ledgerKey = buildLedgerKey(observation);
       if (input.seenKeys.has(ledgerKey)) {
         continue;
@@ -283,7 +295,15 @@ function buildLedgerKey(observation: ClaudeTranscriptObservation): string {
     return `assistant:${observation.sessionId}:${observation.messageId}`;
   }
 
-  return `usage:${observation.sessionId}:${observation.messageId}`;
+  if (observation.kind === "token_usage_recorded") {
+    return `usage:${observation.sessionId}:${observation.messageId}`;
+  }
+
+  if (observation.kind === "tool_called") {
+    return `tool_called:${observation.sessionId}:${observation.toolUseId}`;
+  }
+
+  return `tool_finished:${observation.sessionId}:${observation.toolUseId}`;
 }
 
 async function loadTranscriptManifest(manifestPath: string): Promise<ClaudeTranscriptReference[]> {

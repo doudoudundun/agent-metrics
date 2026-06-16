@@ -4,7 +4,12 @@ import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
-import { appendJsonLine } from "@agent-metrics/shared-utils";
+import type { SourceAdapter } from "@agent-metrics/event-schema";
+import {
+  appendJsonLine,
+  loadEventLedgerWithFallback,
+  persistEventLedger
+} from "@agent-metrics/shared-utils";
 import {
   normalizeOpenCodePartRow,
   normalizeOpenCodeMessageRow,
@@ -22,8 +27,8 @@ type SyncCursor = {
   pendingMessageIds: string[];
 };
 
-type EventLedger = {
-  eventIds: string[];
+type MultiSourceSyncCursor = {
+  sources: Record<string, SyncCursor>;
 };
 
 type SessionLookupRow = {
@@ -39,6 +44,27 @@ type ReadOnlyDatabase = {
   };
 };
 
+type OpenCodeSourceDefinition = {
+  key: string;
+  dbPath: string;
+  modelsPath: string;
+  eventNamespace: string | null;
+  sourceAdapter: SourceAdapter;
+};
+
+const EMPTY_CURSOR: SyncCursor = {
+  sessionUpdatedAt: 0,
+  messageUpdatedAt: 0,
+  partUpdatedAt: 0,
+  pendingMessageIds: []
+};
+
+const LEGACY_CURSOR_KEY = "opencode";
+
+function asSourceAdapter(value: string): SourceAdapter {
+  return value as SourceAdapter;
+}
+
 export function resolveDefaultOpenCodeDbPath(): string {
   return join(homedir(), ".local", "share", "opencode", "opencode.db");
 }
@@ -47,37 +73,127 @@ export function resolveDefaultOpenCodeModelsPath(): string {
   return join(homedir(), ".cache", "opencode", "models.json");
 }
 
+export function resolveDefaultZCodeDbPath(): string {
+  return join(homedir(), ".zcode", "cli", "db", "db.sqlite");
+}
+
+export function resolveDefaultZCodeModelsPath(): string {
+  return join(homedir(), ".cache", "zcode", "models.json");
+}
+
 export async function syncOpenCodeDatabase(input: {
   eventLogPath: string;
   cursorPath: string;
   ledgerPath: string;
   dbPath?: string;
   modelsPath?: string;
+  extraSources?: Array<{
+    key: string;
+    dbPath: string;
+    modelsPath?: string;
+    eventNamespace?: string | null;
+    sourceAdapter?: SourceAdapter;
+  }>;
 }): Promise<void> {
-  const dbPath =
+  const primaryDbPath =
     input.dbPath ??
     process.env.AGENT_METRICS_OPENCODE_DB_PATH ??
     resolveDefaultOpenCodeDbPath();
-  const modelsPath =
+  const primaryModelsPath =
     input.modelsPath ??
     process.env.AGENT_METRICS_OPENCODE_MODELS_PATH ??
     resolveDefaultOpenCodeModelsPath();
+  const zcodeDbPath =
+    process.env.AGENT_METRICS_ZCODE_DB_PATH ??
+    resolveDefaultZCodeDbPath();
+  const zcodeModelsPath =
+    process.env.AGENT_METRICS_ZCODE_MODELS_PATH ??
+    resolveDefaultZCodeModelsPath();
+  const sourceDefinitions: OpenCodeSourceDefinition[] = [
+    {
+      key: LEGACY_CURSOR_KEY,
+      dbPath: primaryDbPath,
+      modelsPath: primaryModelsPath,
+      eventNamespace: null,
+      sourceAdapter: asSourceAdapter("opencode-db")
+    },
+    {
+      key: "zcode",
+      dbPath: zcodeDbPath,
+      modelsPath: zcodeModelsPath,
+      eventNamespace: "zcode",
+      sourceAdapter: asSourceAdapter("zcode-db")
+    },
+    ...(input.extraSources ?? []).map((source): OpenCodeSourceDefinition => ({
+      key: source.key,
+      dbPath: source.dbPath,
+      modelsPath: source.modelsPath ?? primaryModelsPath,
+      eventNamespace: source.eventNamespace ?? source.key,
+      sourceAdapter: source.sourceAdapter ?? asSourceAdapter("opencode-db")
+    }))
+  ].filter((source, index, allSources) =>
+    allSources.findIndex((entry) => entry.key === source.key) === index
+  );
 
-  if (!existsSync(dbPath)) {
+  if (!sourceDefinitions.some((source) => existsSync(source.dbPath))) {
     return;
   }
 
-  const cursor = await loadCursor(input.cursorPath);
-  const ledger = await loadLedger(input.ledgerPath);
-  const providerRegistry = await loadProviderRegistry(modelsPath);
-  const seenEventIds = await loadEventIdsFromEventLog(input.eventLogPath, "opencode:");
+  const cursorState = await loadCursorState(input.cursorPath);
+  const seenEventIds = await loadEventLedgerWithFallback({
+    ledgerPath: input.ledgerPath,
+    eventLogPath: input.eventLogPath,
+    prefix: "opencode:"
+  });
   const baselineEventCount = seenEventIds.size;
 
-  for (const eventId of ledger.eventIds) {
-    seenEventIds.add(eventId);
+  let ledgerChanged = false;
+  let cursorChanged = false;
+
+  for (const source of sourceDefinitions) {
+    if (!existsSync(source.dbPath)) {
+      continue;
+    }
+
+    const providerRegistry = await loadProviderRegistry(source.modelsPath);
+    const nextCursor = await syncSingleSource({
+      source,
+      cursor: cursorState.sources[source.key] ?? EMPTY_CURSOR,
+      eventLogPath: input.eventLogPath,
+      seenEventIds,
+      providerRegistry
+    });
+
+    if (!isSameCursor(nextCursor, cursorState.sources[source.key] ?? EMPTY_CURSOR)) {
+      cursorState.sources[source.key] = nextCursor;
+      cursorChanged = true;
+    }
+
+    if (seenEventIds.size !== baselineEventCount) {
+      ledgerChanged = true;
+    }
   }
 
-  const db = new Database(dbPath, { readonly: true, fileMustExist: true }) as ReadOnlyDatabase;
+  if (cursorChanged) {
+    await writeJsonFileAtomic(input.cursorPath, cursorState);
+  }
+
+  if (ledgerChanged) {
+    await persistEventLedger(input.ledgerPath, seenEventIds);
+  }
+}
+
+async function syncSingleSource(input: {
+  source: OpenCodeSourceDefinition;
+  cursor: SyncCursor;
+  eventLogPath: string;
+  seenEventIds: Set<string>;
+  providerRegistry: OpenCodeProviderRegistry;
+}): Promise<SyncCursor> {
+  const db = new Database(input.source.dbPath, {
+    readonly: true,
+    fileMustExist: true
+  }) as ReadOnlyDatabase;
 
   try {
     const sessionRows = db
@@ -88,17 +204,12 @@ export async function syncOpenCodeDatabase(input: {
           time_created,
           time_updated,
           time_archived,
-          model,
-          tokens_input,
-          tokens_output,
-          tokens_reasoning,
-          tokens_cache_read,
-          tokens_cache_write
+          NULL AS model
         FROM session
         WHERE time_updated >= ?
         ORDER BY time_updated ASC, id ASC`
       )
-      .all(cursor.sessionUpdatedAt);
+      .all(input.cursor.sessionUpdatedAt);
     const messageRows = db
       .prepare<OpenCodeMessageRow>(
         `SELECT
@@ -111,10 +222,10 @@ export async function syncOpenCodeDatabase(input: {
         WHERE time_updated >= ?
         ORDER BY time_updated ASC, id ASC`
       )
-      .all(cursor.messageUpdatedAt);
+      .all(input.cursor.messageUpdatedAt);
     const pendingMessageRows = selectMessagesByIds(
       db,
-      cursor.pendingMessageIds,
+      input.cursor.pendingMessageIds,
       new Set(messageRows.map((row) => row.id))
     );
     const allMessageRows = dedupeMessageRows([...messageRows, ...pendingMessageRows]);
@@ -131,7 +242,7 @@ export async function syncOpenCodeDatabase(input: {
         WHERE time_updated >= ?
         ORDER BY time_updated ASC, id ASC`
       )
-      .all(cursor.partUpdatedAt);
+      .all(input.cursor.partUpdatedAt);
     const partMessageRows = selectMessagesByIds(
       db,
       [...new Set(updatedToolRows.map((row) => row.message_id))],
@@ -148,7 +259,6 @@ export async function syncOpenCodeDatabase(input: {
       ])
     );
     const messageLookup = new Map(allKnownMessageRows.map((row) => [row.id, row]));
-
     const partRowsByMessageId = new Map<string, OpenCodePartRow[]>();
 
     for (const row of messagePartRows) {
@@ -161,7 +271,12 @@ export async function syncOpenCodeDatabase(input: {
     }
 
     const events = [
-      ...sessionRows.flatMap((row) => normalizeOpenCodeSessionRow(row)),
+      ...sessionRows.flatMap((row) =>
+        normalizeOpenCodeSessionRow(row, {
+          eventNamespace: input.source.eventNamespace,
+          sourceAdapter: input.source.sourceAdapter
+        })
+      ),
       ...allMessageRows.flatMap((row) => {
         const session = sessionLookup.get(row.session_id);
 
@@ -170,7 +285,11 @@ export async function syncOpenCodeDatabase(input: {
           sessionDirectory: session?.directory ?? null,
           sessionModel: session?.model ?? null,
           partRows: partRowsByMessageId.get(row.id) ?? [],
-          providerRegistry
+          providerRegistry: input.providerRegistry,
+          eventContext: {
+            eventNamespace: input.source.eventNamespace,
+            sourceAdapter: input.source.sourceAdapter
+          }
         });
       }),
       ...updatedToolRows.flatMap((row) => {
@@ -182,7 +301,11 @@ export async function syncOpenCodeDatabase(input: {
           sessionDirectory: session?.directory ?? null,
           sessionModel: session?.model ?? null,
           messageRow: message,
-          providerRegistry
+          providerRegistry: input.providerRegistry,
+          eventContext: {
+            eventNamespace: input.source.eventNamespace,
+            sourceAdapter: input.source.sourceAdapter
+          }
         });
       })
     ].sort((left, right) =>
@@ -191,34 +314,21 @@ export async function syncOpenCodeDatabase(input: {
         : left.timestamp.localeCompare(right.timestamp)
     );
 
-    let ledgerChanged = seenEventIds.size !== baselineEventCount;
-
     for (const event of events) {
-      if (seenEventIds.has(event.event_id)) {
+      if (input.seenEventIds.has(event.event_id)) {
         continue;
       }
 
       await appendJsonLine(input.eventLogPath, event);
-      seenEventIds.add(event.event_id);
-      ledgerChanged = true;
+      input.seenEventIds.add(event.event_id);
     }
 
-    const nextCursor = {
-      sessionUpdatedAt: maxCursorValue(cursor.sessionUpdatedAt, sessionRows.map((row) => row.time_updated)),
-      messageUpdatedAt: maxCursorValue(cursor.messageUpdatedAt, messageRows.map((row) => row.time_updated)),
-      partUpdatedAt: maxCursorValue(cursor.partUpdatedAt, updatedToolRows.map((row) => row.time_updated)),
-      pendingMessageIds: collectPendingMessageIds(allMessageRows, seenEventIds)
-    } satisfies SyncCursor;
-
-    if (!isSameCursor(nextCursor, cursor)) {
-      await writeJsonFileAtomic(input.cursorPath, nextCursor);
-    }
-
-    if (ledgerChanged) {
-      await writeJsonFileAtomic(input.ledgerPath, {
-        eventIds: [...seenEventIds].sort()
-      } satisfies EventLedger);
-    }
+    return {
+      sessionUpdatedAt: maxCursorValue(input.cursor.sessionUpdatedAt, sessionRows.map((row) => row.time_updated)),
+      messageUpdatedAt: maxCursorValue(input.cursor.messageUpdatedAt, messageRows.map((row) => row.time_updated)),
+      partUpdatedAt: maxCursorValue(input.cursor.partUpdatedAt, updatedToolRows.map((row) => row.time_updated)),
+      pendingMessageIds: collectPendingMessageIds(allMessageRows, input.seenEventIds, input.source.eventNamespace)
+    };
   } finally {
     db.close();
   }
@@ -297,72 +407,44 @@ function loadSessionLookup(db: ReadOnlyDatabase, sessionIds: Set<string>): Map<s
   const placeholders = values.map(() => "?").join(", ");
   const rows = db
     .prepare<SessionLookupRow>(
-      `SELECT id, directory, model FROM session WHERE id IN (${placeholders})`
+      `SELECT id, directory, NULL AS model FROM session WHERE id IN (${placeholders})`
     )
     .all(...values);
 
   return new Map(rows.map((row) => [row.id, row]));
 }
 
-async function loadCursor(cursorPath: string): Promise<SyncCursor> {
+async function loadCursorState(cursorPath: string): Promise<MultiSourceSyncCursor> {
   const parsed = await readJsonFile(cursorPath);
+  if (parsed === null) {
+    return { sources: {} };
+  }
 
-  return {
-    sessionUpdatedAt: normalizeCursorValue(parsed, "sessionUpdatedAt"),
-    messageUpdatedAt: normalizeCursorValue(parsed, "messageUpdatedAt"),
-    partUpdatedAt: normalizeCursorValue(parsed, "partUpdatedAt"),
-    pendingMessageIds: normalizeStringArray(parsed, "pendingMessageIds")
-  };
-}
-
-async function loadLedger(ledgerPath: string): Promise<EventLedger> {
-  const parsed = await readJsonFile(ledgerPath);
-
-  if (
-    parsed === null ||
-    typeof parsed !== "object" ||
-    !("eventIds" in parsed) ||
-    !Array.isArray(parsed.eventIds)
-  ) {
-    return { eventIds: [] };
+  const sourcesValue = parsed.sources;
+  if (isRecord(sourcesValue)) {
+    return {
+      sources: Object.fromEntries(
+        Object.entries(sourcesValue).map(([key, value]) => [key, parseSingleCursor(value)])
+      )
+    };
   }
 
   return {
-    eventIds: parsed.eventIds.filter((entry): entry is string => typeof entry === "string")
+    sources: {
+      [LEGACY_CURSOR_KEY]: parseSingleCursor(parsed)
+    }
   };
 }
 
-async function loadEventIdsFromEventLog(eventLogPath: string, prefix: string): Promise<Set<string>> {
-  const eventIds = new Set<string>();
-  let contents: string;
+function parseSingleCursor(value: unknown): SyncCursor {
+  const record = isRecord(value) ? value : null;
 
-  try {
-    contents = await readFile(eventLogPath, "utf8");
-  } catch {
-    return eventIds;
-  }
-
-  for (const line of contents.split("\n").filter((entry) => entry.length > 0)) {
-    let parsed: unknown;
-
-    try {
-      parsed = JSON.parse(line) as unknown;
-    } catch {
-      continue;
-    }
-
-    if (
-      parsed &&
-      typeof parsed === "object" &&
-      "event_id" in parsed &&
-      typeof parsed.event_id === "string" &&
-      parsed.event_id.startsWith(prefix)
-    ) {
-      eventIds.add(parsed.event_id);
-    }
-  }
-
-  return eventIds;
+  return {
+    sessionUpdatedAt: normalizeCursorValue(record, "sessionUpdatedAt"),
+    messageUpdatedAt: normalizeCursorValue(record, "messageUpdatedAt"),
+    partUpdatedAt: normalizeCursorValue(record, "partUpdatedAt"),
+    pendingMessageIds: normalizeStringArray(record, "pendingMessageIds")
+  };
 }
 
 async function readJsonFile(filePath: string): Promise<Record<string, unknown> | null> {
@@ -434,12 +516,13 @@ function isSameStringArray(left: string[], right: string[]): boolean {
 
 function collectPendingMessageIds(
   messageRows: OpenCodeMessageRow[],
-  seenEventIds: Set<string>
+  seenEventIds: Set<string>,
+  eventNamespace: string | null
 ): string[] {
   const pending = new Set<string>();
 
   for (const row of messageRows) {
-    if (shouldRetryMessageForTokens(row, seenEventIds)) {
+    if (shouldRetryMessageForTokens(row, seenEventIds, eventNamespace)) {
       pending.add(row.id);
     }
   }
@@ -449,14 +532,15 @@ function collectPendingMessageIds(
 
 function shouldRetryMessageForTokens(
   row: OpenCodeMessageRow,
-  seenEventIds: Set<string>
+  seenEventIds: Set<string>,
+  eventNamespace: string | null
 ): boolean {
   const inspection = inspectOpenCodeMessage(row.data);
   if (inspection.role !== "assistant" || inspection.hasTokens) {
     return false;
   }
 
-  return !seenEventIds.has(buildOpenCodeUsageEventId(row.id));
+  return !seenEventIds.has(buildOpenCodeUsageEventId(row.id, eventNamespace));
 }
 
 function inspectOpenCodeMessage(data: string): {
@@ -506,8 +590,10 @@ function hasOpenCodeTokenPayload(message: Record<string, unknown>): boolean {
   );
 }
 
-function buildOpenCodeUsageEventId(messageId: string): string {
-  return `opencode:message:${messageId}:usage`;
+function buildOpenCodeUsageEventId(messageId: string, eventNamespace: string | null): string {
+  return eventNamespace
+    ? `opencode:${eventNamespace}:message:${messageId}:usage`
+    : `opencode:message:${messageId}:usage`;
 }
 
 async function loadProviderRegistry(modelsPath: string): Promise<OpenCodeProviderRegistry> {

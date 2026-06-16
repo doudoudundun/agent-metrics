@@ -1,11 +1,14 @@
-import { fileURLToPath } from "node:url";
-import { buildApp, resolveDefaultDbPath, resolveDefaultEventLogPath } from "./app.js";
+import { buildApp } from "./app.js";
+import { resolveCoreRuntimeConfig } from "./server-runtime.js";
 
-const repoRoot = process.env.AGENT_METRICS_REPO_ROOT ?? fileURLToPath(new URL("../../..", import.meta.url));
+const runtimeConfig = resolveCoreRuntimeConfig({
+  moduleUrl: import.meta.url,
+  env: process.env
+});
 const app = buildApp({
-  dbPath: process.env.AGENT_METRICS_DB_PATH ?? resolveDefaultDbPath(import.meta.url),
-  eventLogPath: process.env.AGENT_METRICS_EVENT_LOG_PATH ?? resolveDefaultEventLogPath(import.meta.url),
-  repoRoot
+  dbPath: runtimeConfig.dbPath,
+  eventLogPath: runtimeConfig.eventLogPath,
+  repoRoot: runtimeConfig.repoRoot
 });
 
 const port = Number(process.env.AGENT_METRICS_CORE_PORT ?? "45183");

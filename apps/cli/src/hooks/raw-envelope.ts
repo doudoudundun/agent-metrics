@@ -30,9 +30,11 @@ function parseLegacyClaudeRawPayload(value: Record<string, unknown>): ClaudeRawE
   }
 
   const capturedAt =
-    typeof value.timestamp === "string" && value.timestamp.length > 0
-      ? value.timestamp
-      : new Date().toISOString();
+    typeof value.timestamp === "string" && value.timestamp.length > 0 ? value.timestamp : null;
+
+  if (capturedAt === null) {
+    return null;
+  }
 
   return {
     raw_event_id: `legacy:${hashRawPayload(value)}`,

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, stat, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
@@ -129,6 +129,41 @@ describe("ingestEventLog", () => {
       successfulExecutions: 1,
       successRate: 0.5,
       sessionCount: 1
+    });
+
+    await app.close();
+  });
+
+  it("skips malformed event log lines without dropping surrounding valid events", async () => {
+    const baseEvent = {
+      session_id: "ses_skip",
+      timestamp: "2026-05-25T08:00:00.000Z",
+      source_vendor: "claude-code",
+      source_adapter: "claude",
+      workspace_path: "D:/projects/dev/agent-metrics"
+    } as const;
+
+    // valid -> corrupt -> valid: the corrupt line must not abort the batch.
+    await appendJsonLine(logPath, { ...baseEvent, event_id: "evt_skip_1", type: "session.started" });
+    await appendFile(logPath, "{ this is not valid json\n", "utf8");
+    await appendJsonLine(logPath, {
+      ...baseEvent,
+      event_id: "evt_skip_2",
+      type: "tool.succeeded",
+      tool_name: "Read",
+      status: "succeeded",
+      duration_ms: 5
+    });
+
+    const app = buildApp({ dbPath, ...may25AppInput });
+    await ingestEventLog({ app, eventLogPath: logPath });
+    const response = await app.inject({ method: "GET", url: "/api/overview" });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      sessionCount: 1,
+      totalToolCalls: 1,
+      successfulExecutions: 1
     });
 
     await app.close();

@@ -5,7 +5,7 @@
   "scripts": {
     "build": "corepack pnpm -r build",
     "dev": "corepack pnpm --parallel --filter @agent-metrics/core --filter @agent-metrics/dashboard dev",
-    "dev:desktop": "corepack pnpm --parallel --filter @agent-metrics/core --filter @agent-metrics/dashboard --filter @agent-metrics/desktop dev",
+    "dev:desktop": "corepack pnpm --parallel --filter @agent-metrics/dashboard --filter @agent-metrics/desktop dev",
     "lint": "corepack pnpm -r exec tsc --noEmit",
     "test": "corepack pnpm -r test",
     "test:desktop": "corepack pnpm --filter @agent-metrics/desktop test",

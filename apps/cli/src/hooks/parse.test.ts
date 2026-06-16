@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -46,6 +46,80 @@ describe("parseRawHooksOnce", () => {
     });
     expect(parserState.nextLine).toBe(1);
     expect(parserState.seenRawEventIds).toHaveLength(1);
+  });
+
+  it("ignores legacy raw hook payloads that are missing timestamps", async () => {
+    const repoRoot = await mkdtemp(join(tmpdir(), "agent-metrics-parse-"));
+    const paths = getHookPaths(repoRoot);
+
+    await mkdir(join(paths.rawHookLogPath, ".."), { recursive: true });
+    await writeFile(
+      paths.rawHookLogPath,
+      JSON.stringify({
+        session_id: "ses_legacy_no_timestamp",
+        cwd: repoRoot,
+        hook_event_name: "PreToolUse",
+        tool_name: "Read",
+        tool_use_id: "tool_legacy_missing_timestamp"
+      }) + "\n",
+      "utf8"
+    );
+
+    await parseRawHooksOnce({ repoRoot });
+
+    expect(await readJsonLines(paths.eventLogPath).catch(() => [])).toEqual([]);
+    expect(
+      JSON.parse(await readFile(paths.parserStatePath, "utf8")) as {
+        nextLine: number;
+        seenRawEventIds: string[];
+      }
+    ).toMatchObject({
+      nextLine: 1,
+      seenRawEventIds: []
+    });
+  });
+
+  it("skips parsing while another parser instance holds the state lock", async () => {
+    const repoRoot = await mkdtemp(join(tmpdir(), "agent-metrics-parse-"));
+    const paths = getHookPaths(repoRoot);
+
+    await mkdir(join(paths.rawHookLogPath, ".."), { recursive: true });
+    await writeFile(
+      paths.rawHookLogPath,
+      JSON.stringify({
+        session_id: "ses_locked_by_other_parser",
+        cwd: repoRoot,
+        hook_event_name: "PreToolUse",
+        tool_name: "Read",
+        tool_use_id: "tool_locked_by_other_parser",
+        timestamp: "2026-06-10T01:48:30.259Z"
+      }) + "\n",
+      "utf8"
+    );
+
+    await mkdir(join(paths.parserStatePath, ".."), { recursive: true });
+    await writeFile(join(paths.parserStatePath, "..", "parser-state.lock"), "", "utf8");
+
+    await parseRawHooksOnce({ repoRoot });
+
+    expect(await readJsonLines(paths.eventLogPath).catch(() => [])).toEqual([]);
+
+    await rm(join(paths.parserStatePath, "..", "parser-state.lock"), { force: true });
+    await parseRawHooksOnce({ repoRoot });
+
+    const eventLines = await readJsonLines(paths.eventLogPath);
+    const parserState = JSON.parse(await readFile(paths.parserStatePath, "utf8")) as {
+      nextLine: number;
+      seenRawEventIds: string[];
+    };
+
+    expect(eventLines).toHaveLength(1);
+    expect(eventLines[0]).toMatchObject({
+      type: "tool.called",
+      session_id: "ses_locked_by_other_parser",
+      tool_name: "Read"
+    });
+    expect(parserState.nextLine).toBe(1);
   });
 
   it("skips malformed raw hook lines without dropping the whole file", async () => {

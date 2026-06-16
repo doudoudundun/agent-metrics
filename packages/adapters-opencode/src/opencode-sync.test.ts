@@ -631,4 +631,204 @@ describe("syncOpenCodeDatabase", () => {
       })
     );
   });
+
+  it("syncs zcode database rows into the shared opencode event stream", async () => {
+    const root = await mkdtemp(join(tmpdir(), "agent-metrics-zcode-"));
+    const eventLogPath = join(root, "events.jsonl");
+    const cursorPath = join(root, "opencode-cursor.json");
+    const ledgerPath = join(root, "opencode-ledger.json");
+    const zcodeDbPath = join(root, "zcode.sqlite");
+    const db = new Database(zcodeDbPath);
+
+    db.exec(`
+      CREATE TABLE session (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        workspace_id TEXT,
+        parent_id TEXT,
+        slug TEXT NOT NULL,
+        directory TEXT NOT NULL,
+        path TEXT,
+        title TEXT NOT NULL,
+        version TEXT NOT NULL,
+        share_url TEXT,
+        summary_additions INTEGER,
+        summary_deletions INTEGER,
+        summary_files INTEGER,
+        summary_diffs TEXT,
+        revert TEXT,
+        permission TEXT,
+        time_created INTEGER NOT NULL,
+        time_updated INTEGER NOT NULL,
+        time_compacting INTEGER,
+        time_archived INTEGER,
+        task_type TEXT NOT NULL DEFAULT 'interactive',
+        title_source TEXT NOT NULL DEFAULT 'first_input',
+        title_message_id TEXT,
+        time_title_updated INTEGER,
+        trace_id TEXT
+      );
+      CREATE TABLE message (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        time_created INTEGER NOT NULL,
+        time_updated INTEGER NOT NULL,
+        data TEXT NOT NULL
+      );
+      CREATE TABLE part (
+        id TEXT PRIMARY KEY,
+        message_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        time_created INTEGER NOT NULL,
+        time_updated INTEGER NOT NULL,
+        data TEXT NOT NULL
+      );
+    `);
+
+    db.prepare(`
+      INSERT INTO session (
+        id, project_id, workspace_id, parent_id, slug, directory, path, title, version,
+        share_url, summary_additions, summary_deletions, summary_files, summary_diffs,
+        revert, permission, time_created, time_updated, time_compacting, time_archived,
+        task_type, title_source, title_message_id, time_title_updated, trace_id
+      ) VALUES (?, ?, NULL, NULL, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, ?, NULL, NULL, 'interactive', 'first_input', NULL, ?, ?)
+    `).run(
+      "sess_zcode_1",
+      "proj_zcode_1",
+      "sess_zcode_1",
+      "C:/Users/qinyang.li/ZCodeProject",
+      "C:/Users/qinyang.li/ZCodeProject",
+      "ZCode Demo",
+      "0.14.5",
+      JSON.stringify({ mode: "yolo" }),
+      1777355820000,
+      1777355843000,
+      1777355820000,
+      "trace_zcode_1"
+    );
+
+    db.prepare(
+      "INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?)"
+    ).run(
+      "msg_zcode_user",
+      "sess_zcode_1",
+      1777355820355,
+      1777355820355,
+      JSON.stringify({
+        role: "user",
+        time: { created: 1777355820355 }
+      })
+    );
+    db.prepare(
+      "INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?)"
+    ).run(
+      "msg_zcode_assistant",
+      "sess_zcode_1",
+      1777355829153,
+      1777355842420,
+      JSON.stringify({
+        role: "assistant",
+        time: {
+          created: 1777355829153,
+          completed: 1777355842420
+        },
+        providerID: "builtin:zai-coding-plan",
+        modelID: "GLM-5-Turbo",
+        finish: "tool-calls",
+        path: {
+          root: "C:/Users/qinyang.li/ZCodeProject"
+        },
+        tokens: {
+          input: 27470,
+          output: 207,
+          reasoning: 0,
+          cache: {
+            read: 2048,
+            write: 0
+          }
+        }
+      })
+    );
+
+    db.prepare(
+      "INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?, ?)"
+    ).run(
+      "prt_zcode_user_text",
+      "msg_zcode_user",
+      "sess_zcode_1",
+      1777355820355,
+      1777355820355,
+      JSON.stringify({
+        type: "text",
+        text: "把 zcode 数据并入 opencode"
+      })
+    );
+    db.prepare(
+      "INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?, ?)"
+    ).run(
+      "prt_zcode_tool_1",
+      "msg_zcode_assistant",
+      "sess_zcode_1",
+      1777355841227,
+      1777355841866,
+      JSON.stringify({
+        type: "tool",
+        tool: "Bash",
+        state: {
+          status: "completed",
+          input: {
+            command: "git status"
+          },
+          time: {
+            start: 1777355841852,
+            end: 1777355841866
+          }
+        }
+      })
+    );
+    db.close();
+
+    process.env.AGENT_METRICS_OPENCODE_DB_PATH = join(root, "missing-opencode.db");
+    process.env.AGENT_METRICS_ZCODE_DB_PATH = zcodeDbPath;
+    delete process.env.AGENT_METRICS_ZCODE_MODELS_PATH;
+
+    await syncOpenCodeDatabase({
+      eventLogPath,
+      cursorPath,
+      ledgerPath
+    });
+
+    const events = (await readFile(eventLogPath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+
+    expect(events.map((event) => event.event_id)).toEqual([
+      "opencode:zcode:session:sess_zcode_1:started",
+      "opencode:zcode:message:msg_zcode_user:prompt",
+      "opencode:zcode:part:prt_zcode_tool_1:tool:started",
+      "opencode:zcode:part:prt_zcode_tool_1:tool:succeeded",
+      "opencode:zcode:message:msg_zcode_assistant:assistant",
+      "opencode:zcode:message:msg_zcode_assistant:usage"
+    ]);
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          event_id: "opencode:zcode:message:msg_zcode_assistant:assistant",
+          source_vendor: "opencode",
+          source_adapter: "zcode-db",
+          provider_id: "builtin:zai-coding-plan"
+        }),
+        expect.objectContaining({
+          event_id: "opencode:zcode:message:msg_zcode_assistant:usage",
+          source_vendor: "opencode",
+          source_adapter: "zcode-db",
+          usage_source: "opencode-message"
+        })
+      ])
+    );
+
+    delete process.env.AGENT_METRICS_OPENCODE_DB_PATH;
+    delete process.env.AGENT_METRICS_ZCODE_DB_PATH;
+  });
 });

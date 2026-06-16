@@ -20,6 +20,8 @@ describe("resolveDesktopRuntimePaths", () => {
       coreApiBaseUrl: "http://127.0.0.1:45183",
       dashboardEntryUrl: "http://127.0.0.1:4173/?surface=desktop-main",
       packagedDashboardEntryUrl: null,
+      dashboardDevEntrypoint: "/repo/node_modules/vite/bin/vite.js",
+      dashboardWorkingDirectory: "/repo/apps/dashboard",
       cliEntrypoint: "/repo/apps/cli/dist/index.js",
       cliWorkingDirectory: "/repo/apps/cli",
       coreEntrypoint: "/repo/apps/core/dist/server.js",
@@ -58,6 +60,8 @@ describe("resolveDesktopRuntimePaths", () => {
         "file:///C:/Users/test/AppData/Local/Programs/AgentMetrics/resources/runtime/dashboard/index.html?surface=desktop-main&apiBase=http%3A%2F%2F127.0.0.1%3A45183",
       packagedDashboardEntryUrl:
         "file:///C:/Users/test/AppData/Local/Programs/AgentMetrics/resources/runtime/dashboard/index.html",
+      dashboardDevEntrypoint: null,
+      dashboardWorkingDirectory: null,
       cliEntrypoint:
         "C:\\Users\\test\\AppData\\Local\\Programs\\AgentMetrics\\resources\\runtime\\cli\\dist\\index.js",
       cliWorkingDirectory:

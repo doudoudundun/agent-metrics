@@ -5,17 +5,13 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
 import type { AnyEvent } from "@agent-metrics/event-schema";
-import { appendJsonLine } from "@agent-metrics/shared-utils";
+import { appendJsonLine, loadEventLedgerWithFallback, persistEventLedger } from "@agent-metrics/shared-utils";
 
 type CursorState = {
   conversationUpdatedAt: number;
   composerUpdatedAt: number;
   promptUpdatedAt: number;
   generationUpdatedAt: number;
-};
-
-type EventLedger = {
-  eventIds: string[];
 };
 
 type ReadOnlyDatabase = {
@@ -199,12 +195,11 @@ export async function syncCursorArtifacts(input: {
   }
 
   const state = await loadState(input.cursorPath);
-  const ledger = await loadLedger(input.ledgerPath);
-  const seenEventIds = await loadEventIdsFromEventLog(input.eventLogPath, "cursor:");
-
-  for (const eventId of ledger.eventIds) {
-    seenEventIds.add(eventId);
-  }
+  const seenEventIds = await loadEventLedgerWithFallback({
+    ledgerPath: input.ledgerPath,
+    eventLogPath: input.eventLogPath,
+    prefix: "cursor:"
+  });
 
   const workspaceLookup = await loadWorkspaceLookup(storageJsonPath);
   const sessions = new Map<string, CursorSession>();
@@ -410,9 +405,7 @@ export async function syncCursorArtifacts(input: {
   }
 
   if (ledgerChanged) {
-    await writeJsonFileAtomic(input.ledgerPath, {
-      eventIds: [...seenEventIds].sort()
-    } satisfies EventLedger);
+    await persistEventLedger(input.ledgerPath, seenEventIds);
   }
 
   await writeJsonFileAtomic(input.cursorPath, {
@@ -1016,35 +1009,6 @@ async function loadState(cursorPath: string): Promise<CursorState> {
     promptUpdatedAt: normalizeNonNegativeInteger(record?.promptUpdatedAt) ?? 0,
     generationUpdatedAt: normalizeNonNegativeInteger(record?.generationUpdatedAt) ?? 0
   };
-}
-
-async function loadLedger(ledgerPath: string): Promise<EventLedger> {
-  const parsed = parseJson(await readOptionalText(ledgerPath));
-  const record = asRecord(parsed);
-
-  return {
-    eventIds: Array.isArray(record?.eventIds)
-      ? record.eventIds.filter((entry): entry is string => typeof entry === "string")
-      : []
-  };
-}
-
-async function loadEventIdsFromEventLog(eventLogPath: string, prefix: string): Promise<Set<string>> {
-  const seen = new Set<string>();
-  const contents = await readOptionalText(eventLogPath);
-  if (!contents) {
-    return seen;
-  }
-
-  for (const line of contents.split("\n").filter((entry) => entry.length > 0)) {
-    const parsed = parseJson(line);
-    const eventId = normalizeOptionalString(asRecord(parsed)?.event_id);
-    if (eventId?.startsWith(prefix)) {
-      seen.add(eventId);
-    }
-  }
-
-  return seen;
 }
 
 async function readOptionalText(filePath: string): Promise<string | null> {

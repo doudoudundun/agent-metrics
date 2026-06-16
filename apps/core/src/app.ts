@@ -27,6 +27,7 @@ type MetricsStatement<Result = unknown> = {
 type MetricsDatabase = {
   close(): void;
   exec(sql: string): unknown;
+  pragma(pragma: string): unknown;
   prepare<Result = unknown>(sql: string): MetricsStatement<Result>;
   transaction<TArgs extends unknown[], TResult>(
     fn: (...args: TArgs) => TResult
@@ -1133,6 +1134,17 @@ export function buildApp(input: BuildAppInput): MetricsApp {
   mkdirSync(dirname(input.dbPath), { recursive: true });
 
   const db = new Database(input.dbPath) as unknown as MetricsDatabase;
+
+  // WAL allows readers (API requests) and the writer (ingestion) to work
+  // concurrently instead of blocking on the default rollback journal. WAL mode
+  // itself persists in the database header; busy_timeout/synchronous apply per
+  // connection and are set on every open. busy_timeout makes concurrent writes
+  // wait instead of failing immediately with SQLITE_BUSY (important since
+  // better-sqlite3 is synchronous).
+  db.pragma("journal_mode = WAL");
+  db.pragma("synchronous = NORMAL");
+  db.pragma("busy_timeout = 5000");
+
   const agentPaths = input.repoRoot ? getAgentMetricsPaths(input.repoRoot) : null;
 
   db.exec(`
@@ -1704,7 +1716,29 @@ export async function ingestEventLog(input: {
     return;
   }
 
-  const parsedEvents = lines.map((line) => AnyEventSchema.parse(JSON.parse(line)));
+  const parsedEvents: AnyEvent[] = [];
+  for (const line of lines) {
+    let parsed: AnyEvent;
+    try {
+      parsed = AnyEventSchema.parse(JSON.parse(line));
+    } catch (error) {
+      // A single corrupt/partial line (e.g. a half-written JSON line left by a
+      // crashed process) must not abort the whole chunk: the remaining valid
+      // events would be lost and the cursor would stall on this batch forever.
+      // Skip the bad line, record it, and keep going.
+      input.app.log.warn(
+        {
+          offsetBytes: startOffset,
+          preview: line.length > 200 ? `${line.slice(0, 200)}…` : line,
+          err: error
+        },
+        "skipped malformed event log line"
+      );
+      continue;
+    }
+    parsedEvents.push(parsed);
+  }
+
   const persistEvents = db.transaction((events: AnyEvent[]) => {
     for (const parsed of events) {
       const storedSourceVendor = parsed.source_vendor;
