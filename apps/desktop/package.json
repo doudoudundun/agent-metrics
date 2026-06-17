@@ -11,7 +11,7 @@
     "build": "tsc -p tsconfig.json",
     "dev": "corepack pnpm build && electron dist/main.js",
     "prepare-runtime": "node ./scripts/stage-runtime.mjs",
-    "test": "vitest run src",
+    "test": "node ../../scripts/run-tests.mjs run src",
     "package:mac": "corepack pnpm prepare-runtime && electron-builder --mac dir --arm64",
     "package:mac:x64": "corepack pnpm prepare-runtime && electron-builder --mac dir --x64",
     "package:mac:arm64": "corepack pnpm prepare-runtime && electron-builder --mac dir --arm64",

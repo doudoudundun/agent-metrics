@@ -7,7 +7,7 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "vitest run src"
+    "test": "node ../../scripts/run-tests.mjs run src"
   },
   "dependencies": {
     "@agent-metrics/event-schema": "workspace:*",

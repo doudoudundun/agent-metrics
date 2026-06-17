@@ -6,7 +6,7 @@
   "scripts": {
     "build": "vite build",
     "dev": "vite",
-    "test": "vitest run src"
+    "test": "node ../../scripts/run-tests.mjs run src"
   },
   "dependencies": {
     "react": "^19.1.0",
