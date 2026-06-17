@@ -641,7 +641,7 @@ describe("extractCodexEventsFromRollout", () => {
         message_id: "usage_30321",
         model: "gpt-5.4",
         input_tokens: 15928,
-        output_tokens: 202,
+        output_tokens: 239,
         cache_read_input_tokens: 3456,
         cache_creation_input_tokens: 0,
         usage_source: "codex-rollout",

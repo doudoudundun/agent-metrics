@@ -761,7 +761,7 @@ describe("ingestEventLog", () => {
       sessionCount: 1,
       turnCount: 1,
       responseCount: 1,
-      totalTokens: 19623,
+      totalTokens: 16167,
       inputTokens: 12472,
       outputTokens: 239,
       cacheReadTokens: 3456,
@@ -776,7 +776,7 @@ describe("ingestEventLog", () => {
           sourceVendor: "codex",
           sessionCount: 1,
           turnCount: 1,
-          totalTokens: 19623,
+          totalTokens: 16167,
           toolCalls: 4
         }
       ],
@@ -784,13 +784,13 @@ describe("ingestEventLog", () => {
         {
           providerHost: "api.psydo.top",
           providerId: "ai",
-          totalTokens: 19623
+          totalTokens: 16167
         }
       ],
       tokensByModel: [
         {
           model: "gpt-5.4",
-          totalTokens: 19623
+          totalTokens: 16167
         }
       ]
     });
@@ -804,7 +804,7 @@ describe("ingestEventLog", () => {
           providerId: "ai",
           providerHost: "api.psydo.top",
           turnCount: 1,
-          totalTokens: 19623,
+          totalTokens: 16167,
           lastModel: "gpt-5.4"
         }
       ]
@@ -1089,6 +1089,7 @@ describe("core api", () => {
       totalToolCalls: 2,
       successfulExecutions: 1,
       failedExecutions: 1,
+      startedOnlyExecutions: 0,
       successRate: 0.5,
       editOperationCount: 2,
       turnCount: 0,
@@ -1215,7 +1216,7 @@ describe("core api", () => {
           sourceVendor: "codex",
           sessionCount: 1,
           turnCount: 0,
-          totalTokens: 150,
+          totalTokens: 140,
           toolCalls: 0
         }
       ],
@@ -1223,20 +1224,20 @@ describe("core api", () => {
         {
           providerHost: "api.psydo.top",
           providerId: "ai",
-          totalTokens: 150
+          totalTokens: 140
         }
       ]
     });
     expect(codexResponse.statusCode).toBe(200);
     expect(codexResponse.json()).toMatchObject({
       sessionCount: 1,
-      totalTokens: 150,
+      totalTokens: 140,
       sourceBreakdown: [
         {
           sourceVendor: "codex",
           sessionCount: 1,
           turnCount: 0,
-          totalTokens: 150,
+          totalTokens: 140,
           toolCalls: 0
         }
       ],
@@ -1244,7 +1245,7 @@ describe("core api", () => {
         {
           providerHost: "api.psydo.top",
           providerId: "ai",
-          totalTokens: 150
+          totalTokens: 140
         }
       ]
     });

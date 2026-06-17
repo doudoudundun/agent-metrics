@@ -433,7 +433,13 @@ export function extractCodexEventsFromRollout(input: {
 
     const inputTokens = normalizeInteger(lastUsage?.input_tokens) ?? 0;
     const cacheReadTokens = normalizeInteger(lastUsage?.cached_input_tokens) ?? 0;
-    const outputTokens = normalizeInteger(lastUsage?.output_tokens) ?? 0;
+    // Reasoning (chain-of-thought) tokens are model-generated output and must be
+    // counted alongside output_tokens, matching the opencode adapter and the
+    // accounting that Anthropic/OpenAI bill against. Excluding them understates
+    // real model output.
+    const outputTokens =
+      (normalizeInteger(lastUsage?.output_tokens) ?? 0) +
+      (normalizeInteger(lastUsage?.reasoning_output_tokens) ?? 0);
 
     if (inputTokens === 0 && cacheReadTokens === 0 && outputTokens === 0) {
       continue;

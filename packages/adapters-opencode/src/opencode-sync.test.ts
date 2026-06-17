@@ -2,10 +2,40 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import Database from "better-sqlite3";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { syncOpenCodeDatabase } from "./opencode-sync.js";
 
 describe("syncOpenCodeDatabase", () => {
+  // Isolate these tests from any real zcode/opencode databases installed on the
+  // host machine. syncOpenCodeDatabase reads the zcode DB path from the
+  // AGENT_METRICS_ZCODE_DB_PATH env var (falling back to ~/.zcode/cli/db/db.sqlite);
+  // on a developer machine that real database exists and would pollute the
+  // synthetic event log with thousands of unrelated events. Point it at a path
+  // that never exists. Tests that exercise the zcode source override this var.
+  const previousZcodeDbPath = process.env.AGENT_METRICS_ZCODE_DB_PATH;
+  const previousZcodeModelsPath = process.env.AGENT_METRICS_ZCODE_MODELS_PATH;
+
+  beforeEach(() => {
+    process.env.AGENT_METRICS_ZCODE_DB_PATH = join(
+      tmpdir(),
+      `nonexistent-zcode-${Math.random().toString(36).slice(2)}.sqlite`
+    );
+    delete process.env.AGENT_METRICS_ZCODE_MODELS_PATH;
+  });
+
+  afterEach(() => {
+    if (previousZcodeDbPath === undefined) {
+      delete process.env.AGENT_METRICS_ZCODE_DB_PATH;
+    } else {
+      process.env.AGENT_METRICS_ZCODE_DB_PATH = previousZcodeDbPath;
+    }
+    if (previousZcodeModelsPath === undefined) {
+      delete process.env.AGENT_METRICS_ZCODE_MODELS_PATH;
+    } else {
+      process.env.AGENT_METRICS_ZCODE_MODELS_PATH = previousZcodeModelsPath;
+    }
+  });
+
   it("syncs OpenCode rows into normalized events and dedupes reruns", async () => {
     const root = await mkdtemp(join(tmpdir(), "agent-metrics-opencode-"));
     const dbPath = join(root, "opencode.db");
