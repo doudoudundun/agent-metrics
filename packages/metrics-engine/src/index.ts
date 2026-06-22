@@ -23,11 +23,20 @@ type TokenUsageRow = {
   source_vendor?: string;
 };
 
+// Vendors whose adapters record input_tokens as the *gross* prompt size
+// (i.e. it already includes cache_read_input_tokens). For these, the
+// "input" we display must subtract cache reads so the four components
+// (displayed_input + output + cache_read + cache_creation) do not double-count.
+//
+// Claude code reports a true delta input (cache reads tracked separately and
+// not added back), so it must NOT be adjusted here.
+const VENDORS_WITH_GROSS_INPUT_TOKENS = new Set(["codex", "opencode"]);
+
 function resolveDisplayedInputTokens(row: TokenUsageRow): number {
   const inputTokens = row.input_tokens;
   const cacheReadTokens = row.cache_read_input_tokens;
 
-  if (row.source_vendor === "codex") {
+  if (row.source_vendor && VENDORS_WITH_GROSS_INPUT_TOKENS.has(row.source_vendor)) {
     return Math.max(0, inputTokens - cacheReadTokens);
   }
 

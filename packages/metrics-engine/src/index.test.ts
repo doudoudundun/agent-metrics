@@ -104,6 +104,54 @@ describe("buildOverviewMetrics", () => {
     expect(overview.totalTokens).toBe(16130);
   });
 
+  it("subtracts cache read tokens from opencode/zcode input tokens for display", () => {
+    // opencode/zcode adapters report input_tokens as the gross prompt size
+    // including cache_read_input_tokens, mirroring codex semantics.
+    const overview = buildOverviewMetrics({
+      sessions: [{ session_id: "ses_opencode" }],
+      toolEvents: [],
+      prompts: [],
+      responses: [],
+      tokenUsage: [
+        {
+          input_tokens: 20000,
+          output_tokens: 500,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 7500,
+          source_vendor: "opencode"
+        }
+      ],
+      codeEdits: []
+    });
+
+    expect(overview.inputTokens).toBe(12500);
+    expect(overview.totalTokens).toBe(20500);
+  });
+
+  it("does not subtract cache read tokens from claude-code input", () => {
+    // claude-code adapter reports a true delta input that excludes cache reads,
+    // so adjustment must not be applied.
+    const overview = buildOverviewMetrics({
+      sessions: [{ session_id: "ses_claude" }],
+      toolEvents: [],
+      prompts: [],
+      responses: [],
+      tokenUsage: [
+        {
+          input_tokens: 1000,
+          output_tokens: 500,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 4000,
+          source_vendor: "claude-code"
+        }
+      ],
+      codeEdits: []
+    });
+
+    expect(overview.inputTokens).toBe(1000);
+    expect(overview.totalTokens).toBe(5500);
+  });
+
   it("keeps started-only tool events out of the main tool-call total", () => {
     const overview = buildOverviewMetrics({
       sessions: [{ session_id: "ses_1" }],
