@@ -1045,7 +1045,7 @@ tbody tr[data-selected="true"] .session-select {
   border-color: rgba(209, 255, 77, 0.3);
 }
 
-/* --- Dock mode: half-hidden at screen edge --- */
+/* --- Dock mode: partially hidden at screen edge --- */
 .orb-surface[data-dock-edge] {
   overflow: hidden;
 }
@@ -1067,13 +1067,13 @@ tbody tr[data-selected="true"] .session-select {
 .orb-surface[data-dock-edge="left"]:not([data-revealed="true"]) .orb-surface__button,
 .orb-surface[data-dock-edge="left"]:not([data-revealed="true"]) .orb-surface__button:hover,
 .orb-surface[data-dock-edge="left"]:not([data-revealed="true"]) .orb-surface__ring {
-  transform: translate(calc(-50% - 42px), -50%);
+  transform: translate(calc(-50% - 24px), -50%);
 }
 
 .orb-surface[data-dock-edge="right"]:not([data-revealed="true"]) .orb-surface__button,
 .orb-surface[data-dock-edge="right"]:not([data-revealed="true"]) .orb-surface__button:hover,
 .orb-surface[data-dock-edge="right"]:not([data-revealed="true"]) .orb-surface__ring {
-  transform: translate(calc(-50% + 42px), -50%);
+  transform: translate(calc(-50% + 24px), -50%);
 }
 
 .orb-surface[data-dock-edge]:not([data-revealed="true"]) .orb-surface__ring {

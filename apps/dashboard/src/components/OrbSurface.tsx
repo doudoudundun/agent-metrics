@@ -26,7 +26,7 @@ export function OrbSurface({
   onDragEnd
 }: OrbSurfaceProps) {
   const hasDock = dockEdge === "left" || dockEdge === "right";
-  const [revealed, setRevealed] = useState(!hasDock);
+  const [revealed, setRevealed] = useState(true);
   const suppressClickRef = useRef(false);
   const dragStateRef = useRef<{
     active: boolean;

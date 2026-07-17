@@ -130,7 +130,7 @@ describe("OrbSurface", () => {
     const button = screen.getByRole("button", { name: "Open desktop peek card" });
 
     expect(surface).toHaveAttribute("data-dock-edge", "right");
-    expect(surface).toHaveAttribute("data-revealed", "false");
+    expect(surface).toHaveAttribute("data-revealed", "true");
 
     fireEvent.pointerEnter(button);
     expect(surface).toHaveAttribute("data-revealed", "true");
@@ -185,7 +185,7 @@ describe("OrbSurface", () => {
     const surface = screen.getByLabelText("Desktop orb surface");
 
     expect(surface).toHaveAttribute("data-dock-edge", "left");
-    expect(surface).toHaveAttribute("data-revealed", "false");
+    expect(surface).toHaveAttribute("data-revealed", "true");
   });
 
   it("desktop-orb surface forwards bridge actions and skips tools and sessions requests", () => {
