@@ -4,10 +4,9 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
-import { BUILD_TARGETS, DEPLOY_TARGETS } from "./stage-runtime-config.mjs";
+import { BUILD_TARGETS, DEPLOY_TARGETS, MANAGED_NODE_VERSION } from "./stage-runtime-config.mjs";
 import { sanitizeRuntimeLinks } from "./sanitize-runtime-links.mjs";
 
-const MANAGED_NODE_VERSION = "22.22.3";
 const CORE_RUNTIME_CHECK_SCRIPT =
   "const Database = require('better-sqlite3'); const db = new Database(':memory:'); db.prepare('SELECT 1').get(); db.close();";
 const currentDir = dirname(fileURLToPath(import.meta.url));
@@ -39,6 +38,17 @@ async function main() {
   }
 
   await cp(dashboardDist, join(stagingRoot, "dashboard"), { recursive: true });
+  await stageManagedNodeRuntime();
+}
+
+async function stageManagedNodeRuntime() {
+  const runtime = resolveManagedNodeRuntime();
+  const runtimeDestination = join(stagingRoot, ".runtime", buildManagedNodeFolderName());
+  const runtimeSource = process.platform === "win32" ? runtime.binDir : dirname(runtime.binDir);
+
+  await stat(runtime.nodeCommand);
+  await mkdir(dirname(runtimeDestination), { recursive: true });
+  await cp(runtimeSource, runtimeDestination, { recursive: true });
 }
 
 async function ensureBuildArtifacts() {

@@ -30,8 +30,8 @@ import {
   type DesktopDashboardSurface,
   resolveDesktopRuntimePaths
 } from "./runtime-paths.js";
+import { installBrokenPipeGuards } from "./runtime/safe-logging.js";
 import { loadDesktopSettings, saveDesktopSettings } from "./settings.js";
-import { createDesktopTray } from "./tray.js";
 import {
   clampBoundsToDisplay,
   sanitizeDesktopSettings,
@@ -82,6 +82,8 @@ type BrowserWindowConstructor = new (options: Record<string, unknown>) => Browse
 type OrbMenuItem =
   | { type: "separator" }
   | { label: string; click: () => void };
+
+installBrokenPipeGuards([globalThis.process.stdout, globalThis.process.stderr]);
 
 const require = createRequire(import.meta.url);
 const { app, BrowserWindow, ipcMain, Menu, screen } = require("electron") as {
@@ -1092,6 +1094,8 @@ async function bootstrap(): Promise<void> {
   if (settings.reopenFloatingWindowOnStartup) {
     toggleFloatingWindow();
   }
+
+  const { createDesktopTray } = await import("./tray.js");
 
   tray = createDesktopTray({
     showMainWindow,

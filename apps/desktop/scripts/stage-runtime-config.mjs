@@ -1,3 +1,5 @@
+export const MANAGED_NODE_VERSION = "22.22.3";
+
 export const BUILD_TARGETS = [
   "@agent-metrics/dashboard",
   "@agent-metrics/core",
