@@ -777,7 +777,8 @@ function selectSourceBreakdown(
         source_vendor AS sourceVendor,
         SUM(
           CASE
-            WHEN source_vendor = 'codex' THEN input_tokens + output_tokens + cache_creation_input_tokens
+            WHEN source_vendor IN ('codex', 'opencode')
+              THEN input_tokens + output_tokens + cache_creation_input_tokens
             ELSE input_tokens + output_tokens + cache_creation_input_tokens + cache_read_input_tokens
           END
         ) AS totalTokens
@@ -806,7 +807,8 @@ function selectProviderBreakdown(
         provider_id AS providerId,
         SUM(
           CASE
-            WHEN source_vendor = 'codex' THEN input_tokens + output_tokens + cache_creation_input_tokens
+            WHEN source_vendor IN ('codex', 'opencode')
+              THEN input_tokens + output_tokens + cache_creation_input_tokens
             ELSE input_tokens + output_tokens + cache_creation_input_tokens + cache_read_input_tokens
           END
         ) AS totalTokens
@@ -2003,7 +2005,10 @@ function resolveDisplayedInputTokens(input: {
   inputTokens: number;
   cacheReadTokens: number;
 }): number {
-  if (input.sourceVendor === "codex") {
+  // Vendors whose adapters record input_tokens as the *gross* prompt size
+  // (i.e. it already includes cache_read_input_tokens). Mirror the list in
+  // packages/metrics-engine/src/index.ts so all aggregation paths agree.
+  if (input.sourceVendor === "codex" || input.sourceVendor === "opencode") {
     return Math.max(0, input.inputTokens - input.cacheReadTokens);
   }
 
