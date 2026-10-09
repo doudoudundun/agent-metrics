@@ -1,0 +1,569 @@
+apps/core/src/sync-utils.ts
+  s_bc520ffaed5101::t_8a033a9e43c520 17
+packages/adapters-kimicode/src/index.ts
+  s_b1fa679fa0b40a::t_f4178a8b8ef7a3 1-2
+apps/core/src/canonical-queries.test.ts
+  s_bc520ffaed5101::t_c87f3c6ad1a37e 277-286
+  s_0de6eaa1595a79::t_43ebd023583a33 268-270
+apps/desktop/scripts/clean-win-distributables.mjs
+  s_f932de2eac0b92::t_a1bccc602834d3 1-40
+apps/desktop/src/runtime/runtime-supervisor.ts
+  s_2df4bf89a49d40::t_4c442e9c476f97 147-163
+  s_2df4bf89a49d40::t_d34cea5955e537 280-281,283
+apps/core/src/http-security.test.ts
+  s_2df4bf89a49d40::t_dee549afb48baa 58-89
+apps/core/src/cursor-account-usage.test.ts
+  s_0de6eaa1595a79::t_2e1d899012d88a 99,102-142,144-150,152,154-171,173-179,185-278
+  s_2df4bf89a49d40::t_86c5d27f1846f3 98,100-101,143,151,153,172,180-184
+  s_0de6eaa1595a79::t_9c48c060e35a25 4
+  s_2df4bf89a49d40::t_1865fe78bde6e9 6
+docs/superpowers/notes/evidence/smoke-win32-x64-2026-07-24.json
+  s_f932de2eac0b92::t_bdb5367d19eba4 1-20
+apps/dashboard/src/query-client.test.ts
+  s_cba1e7e35f7933::t_14ff885e06a192 1-76,102
+  s_2df4bf89a49d40::t_86e38a3f13a247 77-90,92-101
+apps/dashboard/src/api.ts
+  s_bc520ffaed5101::t_9e39bc82b20eb1 61-63,68,71,80,102
+  s_cba1e7e35f7933::t_508e5a27510168 2-24,32-43,45-52,54,59-60,64-66,69-70,72-73,79,82-92,94-101,104,106-115,120-121,123-125,132-137,144-145,147-149,156-161,166-176,178-182,185-217,222-244
+  s_bc520ffaed5101::t_f158fdc3a5d7af 53,55-58,67
+  s_2df4bf89a49d40::t_5d55ad703b0e69 74-78,81
+  s_bc520ffaed5101::t_9f1b42df0cbfe2 218-221
+  s_cba1e7e35f7933::t_a37fbdcf41b44d 177
+  s_2df4bf89a49d40::t_b23343c22eee28 247-252
+  s_2df4bf89a49d40::t_b9bd9f9795a73e 25
+apps/dashboard/src/DashboardPage.test.tsx
+  s_2df4bf89a49d40::t_9ec71f2d1f6a0d 632-685
+  s_cba1e7e35f7933::t_f6a083f8dd99b1 431-433,450
+  s_ca005d7fc119ea::t_07ccef617b7260 410
+  s_2df4bf89a49d40::t_449f0249928adc 79,126,229,249,294,305,379,441,485
+  s_cba1e7e35f7933::t_a37fbdcf41b44d 435
+  s_cba1e7e35f7933::t_199aba7e859fdc 455,481-484,486-493
+  s_2df4bf89a49d40::t_46233588fb6d24 494-495,502,505-509,511-513,515-516,518-544
+  s_2df4bf89a49d40::t_1a93144801164b 392-393
+  s_b1fa679fa0b40a::t_ac9bbc4576f6c9 407,409
+  s_0de6eaa1595a79::t_99d78eef3c9975 795-800,802-805,807-818
+  s_0de6eaa1595a79::t_a096d178afafbd 170-173
+  s_2df4bf89a49d40::t_dfe3ed8a583820 37
+  s_0de6eaa1595a79::t_c3bde9223e6b91 408
+  s_ca005d7fc119ea::t_65b77ab4562906 146,148-151
+  s_cba1e7e35f7933::t_c0b955f350f5fb 1-11,13-36,38-58,60-78,80-118,123-125,127,129-131,133-136,152-154,226-228,230-248,250-293,295-304,306-378,380-391,394-401,406,411-430,434,436-440,445-447,449,452-454,545-621,623-631,686-726,729-745,748-749,752-775,778-794,819-835
+  s_b1fa679fa0b40a::t_5d5deffe7e58e1 137,139,141-144
+  s_2df4bf89a49d40::t_0cb26942a227d9 622
+  s_2df4bf89a49d40::t_921ec557ac0d79 59
+  s_2df4bf89a49d40::t_ae07669d710e98 456-480
+  s_2df4bf89a49d40::t_e67d6e7aa91b06 12
+  s_2df4bf89a49d40::t_984087a127512d 132,140,147
+  s_b1fa679fa0b40a::t_26a4175bea3a18 404-405
+apps/core/src/source-isolation.guard.test.ts
+  s_ca005d7fc119ea::t_8920f5480f2709 60
+  s_ca005d7fc119ea::t_c70835e75ac5c9 8
+  s_ca005d7fc119ea::t_6bdb821f2b57c9 92-98
+  s_ca005d7fc119ea::t_19129377dbc082 159-162
+  s_b1fa679fa0b40a::t_b1601c9f0c0bb1 12-13
+  s_ca005d7fc119ea::t_1d1d1c5e17e087 15
+  s_b1fa679fa0b40a::t_4502b7606836bd 142-158
+  s_b1fa679fa0b40a::t_4f7c9a843d6dad 71-90
+  s_b1fa679fa0b40a::t_3653cde0c4cbbb 57-59
+  s_c532b7e01222f3::t_3b81973927894c 101-110
+packages/metrics-engine/src/index.ts
+  s_b1fa679fa0b40a::t_e19613d5ad1d51 1-3,49-83
+apps/core/package.json
+  s_b1fa679fa0b40a::t_6b974ea6154ff1 8,19-20,22
+  s_ca005d7fc119ea::t_3ae4866146a44b 18
+apps/dashboard/src/DashboardPage.tsx
+  s_2df4bf89a49d40::t_bdae95b20b328d 6,15-36,138-139,141,149-150,165-170,175-189,205-222,269-270,326,471-521,526-533
+  s_2df4bf89a49d40::t_05bb417cd13bd1 12
+  s_2df4bf89a49d40::t_15b804b29eea3c 367
+  s_2df4bf89a49d40::t_cf08ed30d945ee 522
+  s_2df4bf89a49d40::t_c7b4be533e0c2a 147,151-152
+  s_cba1e7e35f7933::t_7c67655aa5c382 191-198,227-229
+  s_0de6eaa1595a79::t_95e05cc31a0584 317,321-323
+  s_b1fa679fa0b40a::t_f402f19c883271 392-403,407
+  s_0de6eaa1595a79::t_8a8996ece9e9fd 41-42
+  s_2df4bf89a49d40::t_8ff147fcb5a2f1 39
+  s_b1fa679fa0b40a::t_50cba5b3ecd246 48-49
+  s_0de6eaa1595a79::t_575c404e82ac3f 43-46,51,57-99
+  s_0de6eaa1595a79::t_89cce3e7d40aa2 440
+  s_cba1e7e35f7933::t_a37fbdcf41b44d 248-260
+  s_bc520ffaed5101::t_dfb03ef24fed89 261-268,271-281,283-287
+  s_ca005d7fc119ea::t_561937be01e626 53-54
+  s_0de6eaa1595a79::t_b6a1081080f23d 102-132
+  s_cba1e7e35f7933::t_c0b955f350f5fb 1,8,38,143-145,154,173,231-246,282,288-295,363
+  s_b1fa679fa0b40a::t_8e326b02856492 140
+  s_b1fa679fa0b40a::t_55ba5b24aa00fb 404-406,408,411-419,424-430,438-439
+  s_0de6eaa1595a79::t_e6f63cce16ba36 300-316,318
+  s_b1fa679fa0b40a::t_7386dfbc731afa 52,56
+  s_0de6eaa1595a79::t_6f3fe05c114f38 391,409-410
+apps/core/src/tool-query-support.ts
+  s_bc520ffaed5101::t_61c90aa4c77af9 63-106
+  s_bc520ffaed5101::t_f4e4b2994b2f14 171-239
+apps/core/src/core-types.ts
+  s_2df4bf89a49d40::t_9d42d3ec400f39 29
+apps/dashboard/src/query-client.ts
+  s_cba1e7e35f7933::t_7c67655aa5c382 1-42,48-49,51,64-72,118-239
+  s_2df4bf89a49d40::t_91bbd12b2b4f4d 74,93-95,109-111
+  s_2df4bf89a49d40::t_af3a57778c2758 47,50,52-53,55-57,59-61,63,73,75-92,96-108,112-117
+  s_2df4bf89a49d40::t_5a24712e71a990 43-46,54,58,62
+apps/core/src/server.ts
+  s_2df4bf89a49d40::t_2d2cd65a238575 1,3,6-15,20,24-25
+apps/dashboard/src/query-hooks.ts
+  s_cba1e7e35f7933::t_7c67655aa5c382 1-28,51-52
+  s_2df4bf89a49d40::t_341af98b072513 29-39,41-46
+apps/core/src/source-light-refresh.test.ts
+  s_bc520ffaed5101::t_9264c82694571e 1,3-58,94
+  s_ede394849f95a8::t_e0156572ad3b34 59-93
+  s_ede394849f95a8::t_b2b14279671274 2
+apps/dashboard/src/query-hooks.test.ts
+  s_2df4bf89a49d40::t_286806e2c1e68a 1-8,12-32,34-37
+apps/dashboard/src/components/TimeScopeToolbar.tsx
+  s_2df4bf89a49d40::t_4d9c39c28b707a 1-4,6-8,23,26,28,84-85
+  s_2df4bf89a49d40::t_5a8c2662769463 5,27,29-35,38-47,49,51-83,86-92
+packages/adapters-kimicode/src/kimicode.test.ts
+  s_b1fa679fa0b40a::t_8af4803ae61eb9 1-115
+packages/event-schema/src/usage.ts
+  s_ca005d7fc119ea::t_df55bb2f0706e9 62
+  s_b1fa679fa0b40a::t_e3ad10c393c989 61
+packages/adapters-cursor/src/cursor-sync.ts
+  s_bc520ffaed5101::t_873970fe160d65 567-569,578-579,591-592,606
+  s_bc520ffaed5101::t_6f627c1aa98297 7
+packages/adapters-kimicode/src/kimicode-sync.ts
+  s_b1fa679fa0b40a::t_be187d990a0855 328-329
+  s_b1fa679fa0b40a::t_4ffa84c0e0945a 1-327,330-356
+packages/adapters-dsh/src/dsh-sync.ts
+  s_ca005d7fc119ea::t_3af8a535bbf442 228
+  s_ca005d7fc119ea::t_dcb23b9c4c925a 223
+  s_5820bb9b0173c1::t_8d46ccc50826d4 160,164-165,167
+  s_5820bb9b0173c1::t_2e55b252161313 141-146
+  s_5820bb9b0173c1::t_10c4f51e204793 153-159,161-163,166,168-172
+  s_5820bb9b0173c1::t_1244bd62c6925f 20
+  s_ca005d7fc119ea::t_667304dbd034d4 259-265,269-278,282,284
+  s_ca005d7fc119ea::t_b76acc8549019a 1-5,7-19,21-140,147-152,173-210,212-222,224-227,230-258,266-268,279-281,283,285-405
+  s_ca005d7fc119ea::t_1de8f771b3413e 211
+  s_ca005d7fc119ea::t_07c433fb81b118 6
+  s_ca005d7fc119ea::t_1026c4eae149d9 229
+docs/superpowers/plans/2026-09-01-working-tree-regression-fixes.md
+  s_2df4bf89a49d40::t_950295cb357ed4 1-390
+apps/desktop/scripts/bundle-main.mjs
+  s_2df4bf89a49d40::t_dbc7ecfe6a06dc 1-2,5-7,16-28,30
+  s_2df4bf89a49d40::t_5b4029755499a0 3-4,8-15,29
+packages/contracts/src/contracts.test.ts
+  s_b1fa679fa0b40a::t_ac53647f005ce4 71-72
+  s_ca005d7fc119ea::t_009137e180e254 73
+apps/core/src/v2-routes.test.ts
+  s_cba1e7e35f7933::t_9e15073aab37d4 1-255
+apps/dashboard/src/api-v2.test.ts
+  s_cba1e7e35f7933::t_199aba7e859fdc 1,3-35,72
+  s_2df4bf89a49d40::t_46b6b33001d589 2
+  s_2df4bf89a49d40::t_89cebfd21fac49 36-71
+packages/adapters-dsh/src/index.ts
+  s_ca005d7fc119ea::t_ad1834f3d71456 1-2
+apps/dashboard/src/components/SessionTimelinePanel.tsx
+  s_2df4bf89a49d40::t_1bf7e2b7f561d7 2,15,17,19-22,25,30,36,42,51,59,65,68,168-169,228-231
+packages/adapters-kimicode/package.json
+  s_b1fa679fa0b40a::t_d6f80f7eaac7a7 1-19
+apps/core/src/domain-schema.ts
+  s_cba1e7e35f7933::t_689de116080a1d 202-210
+apps/core/src/get-routes-side-effects.test.ts
+  s_ca005d7fc119ea::t_7a3f1eb320414d 43
+  s_ca005d7fc119ea::t_e4d5b8b0883a8f 68
+  s_b1fa679fa0b40a::t_6ed0b6e66b17c7 8
+  s_ca005d7fc119ea::t_31b21373bc1f77 10
+  s_b1fa679fa0b40a::t_e73149d01398ca 65-66
+  s_b1fa679fa0b40a::t_c1526cd4dd286d 104-105
+  s_ca005d7fc119ea::t_ccb5366ad7e470 107
+  s_b1fa679fa0b40a::t_326c10bc1df000 40
+  s_b1fa679fa0b40a::t_f90a019e2c2b56 41
+apps/core/src/app.ts
+  s_2df4bf89a49d40::t_691617b72ce917 84-86
+  s_bc520ffaed5101::t_9e8cbcffa2491e 37-38
+  s_ca005d7fc119ea::t_1aac02c3a0c215 392-400
+  s_b1fa679fa0b40a::t_a742d16e212a10 179-212
+  s_0de6eaa1595a79::t_449c0802e29944 33
+  s_ede394849f95a8::t_393db76e7758b4 35
+  s_2df4bf89a49d40::t_5b415a4c0af9ab 401-409
+  s_b1fa679fa0b40a::t_44f1149c4d290b 9-10
+  s_bc520ffaed5101::t_8203edc043de4c 339-342
+  s_cba1e7e35f7933::t_82126acff157da 289-290,307-308,317-321
+  s_ede394849f95a8::t_6ea4d9d6a08286 343,345-391,410-421,423-425
+  s_ca005d7fc119ea::t_1d396215df25ac 12
+  s_ca005d7fc119ea::t_443bf4f18c03b0 230-246
+  s_bc520ffaed5101::t_c864d8263feb9b 296,298-302,309-316,323-324,326-338,344,422,426-427
+packages/event-schema/src/normalization.ts
+  s_b1fa679fa0b40a::t_ab7f5632e71cd5 272
+  s_ca005d7fc119ea::t_14c24a82b05ae7 253-255
+  s_ca005d7fc119ea::t_8e2860c3e01aa9 273
+  s_b1fa679fa0b40a::t_01e8b0afac02e9 250-252
+apps/core/src/canonical-queries.ts
+  s_cba1e7e35f7933::t_9ebd1278506f97 318-320,331-332,336-346,364-367
+  s_0de6eaa1595a79::t_ba7bc89f4a9aef 14-15
+  s_bc520ffaed5101::t_b2347fd34f59e5 180,182
+  s_0de6eaa1595a79::t_e4bec2a4d1959c 1
+  s_cba1e7e35f7933::t_7939330b004a15 240-285,287-297
+  s_b1fa679fa0b40a::t_c5a3c1802412ea 4
+  s_cba1e7e35f7933::t_14ff885e06a192 457
+  s_b1fa679fa0b40a::t_373d842f3ffbf9 29
+  s_cba1e7e35f7933::t_3f33f7b55e9c4c 373,375,382-383,386,392,395-397,405,412,435,481,505,508,513-584,653-668
+  s_cba1e7e35f7933::t_017f3a527e0aa9 53-54,59-60,64-75,286,372,374,376-381,384-385,387-391,393-394,398-404,406-411,413-434,436-456,458-480,482-504,506-507,509-512
+  s_0de6eaa1595a79::t_32dbbc56576b08 144-147,151-153,157-164
+  s_cba1e7e35f7933::t_34adee7ac8d837 2-3,5-13,16-28,30-52,55-58,61-63,76-143,148-150,154-156,165-179,181,183-239,298-317,321-330,333-335,347-363,368-371,585-652,669-673
+apps/core/src/query-support.ts
+  s_ca005d7fc119ea::t_a2f650ace98a35 176-182
+  s_cba1e7e35f7933::t_7a867ac8d05ca9 1-175,183-233
+apps/desktop/scripts/stage-runtime-config.mjs
+  s_c532b7e01222f3::t_6b5e0d014ff519 3-4,6-8
+apps/dashboard/src/time-scope.ts
+  s_2df4bf89a49d40::t_086db46b4f0be8 1,4-5,9-16,39-44,79-83,89-96,100-143
+  s_2df4bf89a49d40::t_a59bd41d97064a 146-178
+apps/dashboard/src/desktop-mode.ts
+  s_2df4bf89a49d40::t_8e35a9b24960de 16-32
+  s_2df4bf89a49d40::t_ab00d872fe673a 99-109
+packages/adapters-dsh/tsconfig.json
+  s_ca005d7fc119ea::t_f4a2cefc9432ad 1-9
+apps/dashboard/src/components/RecentSessionsTable.tsx
+  s_2df4bf89a49d40::t_ab9e17c8711246 1-11,16-18,23-26,31,54-59,63
+apps/dashboard/src/components/SessionTimelinePanel.test.tsx
+  s_2df4bf89a49d40::t_16950f9175723f 4,7-119,122,134
+apps/core/src/time-scope.test.ts
+  s_2df4bf89a49d40::t_93c3ae8b317240 78-115
+apps/dashboard/src/components/PanelScopeControls.tsx
+  s_2df4bf89a49d40::t_c1c018e0349cf1 37,39-40
+  s_2df4bf89a49d40::t_8989085731997f 51-52,54
+  s_2df4bf89a49d40::t_0370c5a1ea04d7 59-60
+apps/core/src/core-routes.ts
+  s_2df4bf89a49d40::t_592c0e8f1308fa 373-376
+  s_2df4bf89a49d40::t_485e7e5d13d5b8 324-327
+  s_cba1e7e35f7933::t_8c50ad844df12b 282,290,312
+  s_2df4bf89a49d40::t_514d80a946712e 52
+  s_2df4bf89a49d40::t_a7080482fca055 361,366,369,372,377,380
+  s_2df4bf89a49d40::t_71353d02e7832d 362-365
+  s_2df4bf89a49d40::t_4086d0a03142d0 283-286
+  s_cba1e7e35f7933::t_17a09e187619c6 1-51,53-131,144-204,210-223,225-228,231-257,263-269,275-281,287-289,291-311,313-323,328-360,367-368,370-371,378-379,381-384
+  s_2df4bf89a49d40::t_ec4143bf550f5e 270-274
+  s_2df4bf89a49d40::t_d289513ceb27b4 132-143
+  s_2df4bf89a49d40::t_e242eda6a0dbe5 258-262
+  s_2df4bf89a49d40::t_d5faee85e17458 205-209
+apps/dashboard/src/time-scope.test.ts
+  s_2df4bf89a49d40::t_612636f5b65862 28-32
+  s_2df4bf89a49d40::t_449bb69f183394 6-7
+  s_2df4bf89a49d40::t_1aba6fb5e05fb3 25-27,33-34
+  s_2df4bf89a49d40::t_9d422c73e1cc23 44-56
+apps/desktop/package.json
+  s_2df4bf89a49d40::t_102c343c8999a5 62-64
+  s_f932de2eac0b92::t_18615212f5278c 21-23,43-56
+  s_2df4bf89a49d40::t_c34617231eaa5b 11
+  s_2df4bf89a49d40::t_90dff9a8bb5514 67-68
+packages/adapters-kimicode/tsconfig.json
+  s_b1fa679fa0b40a::t_04b98e1610115e 1-9
+packages/event-schema/src/sources.ts
+  s_ca005d7fc119ea::t_d168bee6d3d934 8,21,34
+  s_b1fa679fa0b40a::t_d1704dc558747c 3-7,9,12-20,33
+packages/adapters-dsh/package.json
+  s_ca005d7fc119ea::t_19b147881a4ef5 1-19
+docs/superpowers/notes/evidence/smoke-win32-x64-2026-07-30.json
+  s_c532b7e01222f3::t_7ca44450b2f5c6 6
+  s_c532b7e01222f3::t_101e30fc224c62 1-5,7-20
+packages/adapters-dsh/src/dsh.test.ts
+  s_ca005d7fc119ea::t_408e75e4d46146 1-165
+packages/adapters-dsh/src/dsh.ts
+  s_ca005d7fc119ea::t_f54355a21c26df 1-28,30-360
+  s_ca005d7fc119ea::t_45aa4b573a30b8 29
+apps/desktop/src/widget-layout.test.ts
+  s_2df4bf89a49d40::t_4989019329beb5 50-60
+  s_2df4bf89a49d40::t_39fef89b0ebd0f 62-70
+packages/adapters-codex/src/codex-sync.test.ts
+  s_c532b7e01222f3::t_184d1e7e6d4f59 453-510,521-550
+  s_cba1e7e35f7933::t_a2340c45bb62d7 1,269,320,333-336,346-402,414-451
+packages/shared-utils/src/agent-paths.ts
+  s_ca005d7fc119ea::t_707f0fa33e9b30 98-111
+  s_ca005d7fc119ea::t_2339810eecfe67 18-19
+  s_b1fa679fa0b40a::t_f4503c92eca408 14-17
+  s_b1fa679fa0b40a::t_fbd96b8f021c8c 70-97
+packages/adapters-dsh/src/dsh-sync.test.ts
+  s_ca005d7fc119ea::t_f299eaefc62ea0 1-95,150,193-213
+  s_5820bb9b0173c1::t_716d20926ea403 96-149,151-192
+apps/dashboard/src/components/RecentSessionsTable.test.tsx
+  s_2df4bf89a49d40::t_b837237f7472a3 49,57
+  s_2df4bf89a49d40::t_0a5148d4ef9d96 19,27
+  s_2df4bf89a49d40::t_71cfacb91c2fc6 40
+apps/core/src/domain-projection.ts
+  s_cba1e7e35f7933::t_451422b83ab68a 1-470
+apps/core/src/sync-coordinator.ts
+  s_cba1e7e35f7933::t_c785bdec737e36 1-277,313-668
+  s_bc520ffaed5101::t_cbe1b01f492ac6 278-312
+apps/core/src/cursor-official-refresh.ts
+  s_2df4bf89a49d40::t_82aaef41946152 3
+  s_bc520ffaed5101::t_6556589e3894cb 13
+packages/adapters-kimicode/src/kimicode-sync.test.ts
+  s_b1fa679fa0b40a::t_1e16cf7e820dd2 1-93,105-113
+  s_b1fa679fa0b40a::t_864e710fba6cfa 94-104
+apps/dashboard/src/styles.css
+  s_b1fa679fa0b40a::t_f7d9de73e7e981 1813-1815,1837-1850,1852-1859,1861-1865,1867-1871,1873
+  s_000c3547c7d06d::t_c366c2bc06868a 1544
+  s_000c3547c7d06d::t_09303b9d080369 1515-1518,1532-1534,1536-1543,1551-1559,1561-1567
+  s_000c3547c7d06d::t_abb69039e407c2 1546-1548,1550
+  s_000c3547c7d06d::t_8db920874e874e 1545
+  s_000c3547c7d06d::t_fe68fcbdfc1b77 1580-1582,1584-1587,1589-1594
+packages/adapters-opencode/src/opencode.ts
+  s_b1fa679fa0b40a::t_30d40894469468 68,80
+  s_ede394849f95a8::t_88efeb11aeda4a 314,321-330
+  s_b1fa679fa0b40a::t_73ebe95ec58f39 490-491
+  s_b1fa679fa0b40a::t_3f00faf4d83339 48
+  s_b1fa679fa0b40a::t_11b61afa06cce9 121,128,153,173,191,201,209-219,241,245,261,265,274,375
+apps/dashboard/src/legacy-api.ts
+  s_2df4bf89a49d40::t_a6928a29e56c10 23
+  s_b1fa679fa0b40a::t_dc64c8f7ddac18 476-480,482,485
+  s_ca005d7fc119ea::t_ad6e124d651b61 481
+  s_2df4bf89a49d40::t_b6f1fb74efaef0 488
+  s_2df4bf89a49d40::t_15983fe675a5f3 4
+apps/core/src/domain-migration-helpers.ts
+  s_b1fa679fa0b40a::t_3b5f6122388336 69
+  s_ca005d7fc119ea::t_2215e43b275a1c 70
+  s_b1fa679fa0b40a::t_46248e729c5aa1 44-45
+  s_ca005d7fc119ea::t_820d54553fd46d 46
+apps/core/src/domain-migrations.ts
+  s_b1fa679fa0b40a::t_cf7336e325e4d6 84
+  s_cba1e7e35f7933::t_689de116080a1d 15-32,70-83,85-94,187
+  s_b1fa679fa0b40a::t_f1f2c8b2507878 33-35
+  s_b1fa679fa0b40a::t_7ec39092a606f7 98-139
+packages/adapters-opencode/src/better-sqlite3.d.ts
+  s_ede394849f95a8::t_f474d415661a4a 20
+apps/core/src/query-support.test.ts
+  s_ca005d7fc119ea::t_e1e25f5c99a5c5 1-15
+apps/dashboard/src/sync-runs.test.ts
+  s_cba1e7e35f7933::t_508e5a27510168 1-71
+apps/core/src/time-scope.ts
+  s_2df4bf89a49d40::t_b29d0c7653ce18 1,6,12-18,31-35,63-97,99-102
+packages/test-utils/src/source-isolation.test.ts
+  s_b1fa679fa0b40a::t_df17743d9c4a81 47
+  s_ca005d7fc119ea::t_1c38035d2e04fb 46
+apps/desktop/src/preload-v2.cts
+  s_2df4bf89a49d40::t_f0a551e332c18e 54-55
+  s_2df4bf89a49d40::t_a156ae1e7ee45f 10-16
+apps/core/src/source-light-refresh.ts
+  s_b1fa679fa0b40a::t_7a6b00a6706818 44
+  s_bc520ffaed5101::t_d745c88dc1cd02 1-12,43,45-126
+  s_ede394849f95a8::t_2572534957c1a3 13-42
+apps/core/src/event-log-projector.ts
+  s_b1fa679fa0b40a::t_d2618f3892ce07 6
+  s_cba1e7e35f7933::t_c4c0e30cff756e 1-5,7-312,336-370,372-494,496-641,644-645,658-695
+  s_b1fa679fa0b40a::t_37079be56b1e7e 642-643,646-652,654-657
+  s_ca005d7fc119ea::t_ec75e4556d3eb3 653
+  s_cba1e7e35f7933::t_f68c280637572b 313-335,371,495
+packages/adapters-cursor/src/cursor-official-api.ts
+  s_7dbce36141b6be::t_1168612440a81f 262-265
+packages/metrics-engine/src/canonical-usage.test.ts
+  s_b1fa679fa0b40a::t_01b0725b003885 73
+  s_ca005d7fc119ea::t_c6bd6b0201b48e 74
+packages/adapters-opencode/src/opencode-sync.ts
+  s_ede394849f95a8::t_47509fd3256b9b 417-430,432
+  s_b1fa679fa0b40a::t_69f989c740dd7d 59
+  s_b1fa679fa0b40a::t_2144b77f132592 365-366,382-383
+  s_ede394849f95a8::t_3e6aacd7451216 507-509
+  s_b1fa679fa0b40a::t_bd926abc89e7cc 7
+  s_ede394849f95a8::t_ea09a2777a2987 433-444,451-462,475-485
+  s_ede394849f95a8::t_7fcfbb6dc2eecc 347,354,370
+  s_b1fa679fa0b40a::t_1d359e46fe4061 108-110,112-130,143,146-171,173-197,206-207,218
+  s_b1fa679fa0b40a::t_ea7036b8ec4972 350-351
+  s_ede394849f95a8::t_61639890126758 267-268
+apps/core/src/sync-coordinator.test.ts
+  s_cba1e7e35f7933::t_b36e556c9dd2d7 1-518
+packages/adapters-codex/src/codex.ts
+  s_cba1e7e35f7933::t_a2340c45bb62d7 2-3,27,66-67,118,155,172-174,185,199,217,228,242,304-309,311,318,341,380,394,459-461,502-506,523-524,593-629,634,649,668-682,698,700-701,712-723,730-752
+  s_c532b7e01222f3::t_9013eb57f30efc 26,31-33,63-65
+  s_c532b7e01222f3::t_99410e40063705 507-512,521-522
+apps/desktop/src/package-files.test.ts
+  s_2df4bf89a49d40::t_f6f23f2c64c0a6 1-18
+apps/core/src/event-log-projector.test.ts
+  s_cba1e7e35f7933::t_154d894eaeb96e 1-231
+packages/adapters-codex/src/codex-sync.ts
+  s_c532b7e01222f3::t_3d42170d95b6c5 240-248
+  s_bc520ffaed5101::t_dc3435e89d1688 153-158,166,193-226
+  s_c532b7e01222f3::t_e44cfe0b196f1d 300,307-310
+  s_c532b7e01222f3::t_4901933ddc05ce 361,365
+  s_c532b7e01222f3::t_6473dfa89880d8 406,425
+  s_c532b7e01222f3::t_4cf03baa96f25a 461
+  s_c532b7e01222f3::t_36b7b280378192 50-57,66-144,150,160-162,181-185
+apps/core/src/session-queries.ts
+  s_0de6eaa1595a79::t_053b0499f80e9f 10
+  s_2df4bf89a49d40::t_0dab6440389e04 403
+  s_0de6eaa1595a79::t_34e4e3684fdc18 326-327
+  s_0de6eaa1595a79::t_ab684095bf56cc 396
+  s_cba1e7e35f7933::t_739ebb086301dc 386-393,473,478
+  s_0de6eaa1595a79::t_0b6d7a82a45c11 262-263
+  s_2df4bf89a49d40::t_a4b8ae45b2cac4 385
+  s_0de6eaa1595a79::t_a5cb8b49182221 243-254,267-268
+  s_7dbce36141b6be::t_bc1604757acf48 474-475,493
+  s_0de6eaa1595a79::t_3f970554b25215 377-378
+  s_2df4bf89a49d40::t_8596364fb884f1 446-456
+  s_2df4bf89a49d40::t_d98347f4ea4070 457-470
+  s_7dbce36141b6be::t_095aeda70395a5 382-384,402,404
+  s_0de6eaa1595a79::t_19e9abfa6d427c 305-317,331-332
+packages/shared-utils/src/agent-paths.test.ts
+  s_ca005d7fc119ea::t_fcc802bced251f 21-22
+  s_b1fa679fa0b40a::t_66ed7b9335aa27 17-20
+  s_ca005d7fc119ea::t_3f536b43173322 57-60
+  s_ca005d7fc119ea::t_129b726a2e3783 101-104
+  s_b1fa679fa0b40a::t_44348c401b2594 93-100
+  s_b1fa679fa0b40a::t_3cb5b933958c11 49-56
+apps/dashboard/src/dashboard-status.ts
+  s_ca005d7fc119ea::t_cbda47dd81f066 57
+  s_ca005d7fc119ea::t_e30190c90b8228 52
+packages/adapters-codex/src/codex.test.ts
+  s_c532b7e01222f3::t_6a58bea227072b 795-843
+  s_cba1e7e35f7933::t_a2340c45bb62d7 2,53-54,62,146,199,258,262-396,713,768,775,792
+apps/dashboard/src/DashboardPage.guard.test.tsx
+  s_2df4bf89a49d40::t_ff6d432dc950ae 38,40
+  s_cba1e7e35f7933::t_f2ed304b015e1a 1-37,39,41-71,73,75-129,132-161,163-169
+  s_ca005d7fc119ea::t_ff41406e03c20c 72,74
+  s_2df4bf89a49d40::t_7727db170d44df 162
+apps/core/src/domain-migrations.test.ts
+  s_cba1e7e35f7933::t_689de116080a1d 1-146,148-164,168-336,339-438
+  s_cba1e7e35f7933::t_3add6a2feef8e3 147
+  s_ca005d7fc119ea::t_abbc0044e86917 337
+  s_b1fa679fa0b40a::t_ff088ee1fbace1 166-167
+  s_cba1e7e35f7933::t_f53b369266e15d 165
+  s_b1fa679fa0b40a::t_c412b5feb8f46d 338
+apps/core/src/aggregate-queries.ts
+  s_bc520ffaed5101::t_1efc79942dbee6 268-271
+  s_0de6eaa1595a79::t_261db9210e5d54 160
+  s_0de6eaa1595a79::t_5b1530a37dfd78 11
+  s_0de6eaa1595a79::t_cf9d40156e090b 169-177
+  s_0de6eaa1595a79::t_51ff84df4dab6f 109-115
+apps/dashboard/src/App.test.tsx
+  s_cba1e7e35f7933::t_f2ed304b015e1a 2,5-13,30-32,34-35,42-51,59-61,64,71,74,76,81-82,86,92-93,97-98,111,118,144,160,170,181,190,199-214,216-227,230
+apps/dashboard/src/sync-runs.ts
+  s_cba1e7e35f7933::t_508e5a27510168 1-86
+packages/test-utils/src/source-isolation.ts
+  s_b1fa679fa0b40a::t_f15a6c39bb3da2 65
+  s_ca005d7fc119ea::t_52c7ec1f9b32dd 66
+  s_ca005d7fc119ea::t_4e114ddf76cf5c 35-36
+  s_b1fa679fa0b40a::t_a11dedce6cc90b 33-34
+apps/core/src/http-security.ts
+  s_2df4bf89a49d40::t_6880c2e4ffc2c8 47-63
+apps/desktop/src/main-v2.ts
+  s_2df4bf89a49d40::t_581f574821fd6d 176-193
+  s_2df4bf89a49d40::t_b7684f7c81c571 486
+  s_2df4bf89a49d40::t_94fb29a3c958c0 34
+  s_2df4bf89a49d40::t_df35edc66e01f0 167-169
+  s_2df4bf89a49d40::t_9f76cc3be53908 879
+  s_2df4bf89a49d40::t_9cc99d4cedb0fe 696
+  s_2df4bf89a49d40::t_eb0331f17d2ec8 1036-1047
+  s_2df4bf89a49d40::t_e981294de5932f 121-130
+  s_2df4bf89a49d40::t_34f63909e9c0c9 105-109
+  s_2df4bf89a49d40::t_56f86cee6b2d5c 412-415
+  s_2df4bf89a49d40::t_446736e95f3a3b 749-799
+  s_2df4bf89a49d40::t_fd6eb987e183dd 8
+packages/adapters-kimicode/src/kimicode.ts
+  s_b1fa679fa0b40a::t_50052378dc72f2 1
+  s_b1fa679fa0b40a::t_b95b602e75e059 2-387
+apps/core/src/cursor-account-usage.ts
+  s_0de6eaa1595a79::t_d9abdf79c1ab0d 283-398
+  s_0de6eaa1595a79::t_7c5cbce056b670 169
+  s_0de6eaa1595a79::t_043aa198c62a7e 1-6
+  s_2df4bf89a49d40::t_f54cfcd78e685f 399-407
+  s_0de6eaa1595a79::t_fca87d7beab767 410-439
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.8",
+  "base_commit_sha": "9f9f8ca5af5582b27291f8f69bf67f329d9e9233",
+  "prompts": {},
+  "sessions": {
+    "s_000c3547c7d06d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f88e5-6497-7b81-8b25-a285d072471a",
+        "model": "gpt-5.6-terra"
+      },
+      "human_author": "Anonymous <anonymous@users.noreply.github.com>"
+    },
+    "s_0de6eaa1595a79": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "e092784a-96e3-4964-9a84-109c4ea4ab9d",
+        "model": "grok-4.7"
+      },
+      "human_author": "Anonymous <anonymous@users.noreply.github.com>"
+    },
+    "s_2df4bf89a49d40": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "bb669f8d-c1e7-4d08-86b9-35c30226a68c",
+        "model": "grok-4.6"
+      },
+      "human_author": "Anonymous <anonymous@users.noreply.github.com>"
+    },
+    "s_5820bb9b0173c1": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "11c99dde-f98a-4bd6-b898-a4c6382b9c59",
+        "model": "grok-4.6"
+      },
+      "human_author": "Anonymous <anonymous@users.noreply.github.com>"
+    },
+    "s_7dbce36141b6be": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "f85f6202-2da5-4ca3-93c6-d03025c98eeb",
+        "model": "grok-4.5"
+      },
+      "human_author": "Anonymous <anonymous@users.noreply.github.com>"
+    },
+    "s_b1fa679fa0b40a": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "3aedd339-79be-490c-8e32-25e6b5bdcb08",
+        "model": "grok-4.6"
+      },
+      "human_author": "Anonymous <anonymous@users.noreply.github.com>"
+    },
+    "s_bc520ffaed5101": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "f77b4448-99fc-409c-8069-4056f372d67f",
+        "model": "grok-4.5"
+      },
+      "human_author": "Anonymous <anonymous@users.noreply.github.com>"
+    },
+    "s_c532b7e01222f3": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "79e27d5c-4ac1-44c9-b5ae-cd682814050b",
+        "model": "grok-4.5"
+      },
+      "human_author": "Anonymous <anonymous@users.noreply.github.com>"
+    },
+    "s_ca005d7fc119ea": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "c2026103-6a25-4e1c-b5c8-4087dd00b139",
+        "model": "grok-4.6"
+      },
+      "human_author": "Anonymous <anonymous@users.noreply.github.com>"
+    },
+    "s_cba1e7e35f7933": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f84b2-7489-7270-98a2-cad3fcebfcb6",
+        "model": "gpt-5.6-terra"
+      },
+      "human_author": "Anonymous <anonymous@users.noreply.github.com>"
+    },
+    "s_ede394849f95a8": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "21ef4148-1a30-4001-b0a2-942bd24d1027",
+        "model": "grok-4.6"
+      },
+      "human_author": "Anonymous <anonymous@users.noreply.github.com>"
+    },
+    "s_f932de2eac0b92": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "bc554594-0711-4a0f-91b9-80fcaaa3ba57",
+        "model": "grok-4.5"
+      },
+      "human_author": "Anonymous <anonymous@users.noreply.github.com>"
+    }
+  }
+}
