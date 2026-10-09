@@ -162,4 +162,104 @@ describe("normalizeDshLogRecord", () => {
       })
     );
   });
+
+  it("emits code.edit.applied for a successful edit tool result", () => {
+    const state = createDshParseState();
+    const sessionId = "session-1";
+    const workspacePath = "D:/projects/dev/demo";
+
+    normalizeDshLogRecord(
+      {
+        type: "tool/call",
+        seq: 2,
+        time: 1_786_587_704_534,
+        data: {
+          callId: "call_edit",
+          name: "edit",
+          arguments: JSON.stringify({
+            file_path: "D:/projects/dev/demo/a.kt",
+            old_string: "one\ntwo",
+            new_string: "one\nTWO\nthree"
+          })
+        }
+      },
+      sessionId,
+      workspacePath,
+      state
+    );
+    const events = normalizeDshLogRecord(
+      {
+        type: "tool/result",
+        seq: 3,
+        time: 1_786_587_704_600,
+        data: {
+          message: {
+            id: "msg_tool_1",
+            role: "user",
+            content: [{ type: "tool-result", toolCallId: "call_edit", content: [{ type: "text", text: "ok" }] }],
+            source: { kind: "tool", callId: "call_edit" }
+          }
+        }
+      },
+      sessionId,
+      workspacePath,
+      state
+    );
+
+    expect(events).toHaveLength(2);
+    expect(events[1]).toEqual(
+      expect.objectContaining({
+        type: "code.edit.applied",
+        tool_name: "edit",
+        files_changed: ["D:/projects/dev/demo/a.kt"],
+        file_count: 1,
+        insertions: 2,
+        deletions: 1,
+        edit_operation_count: 1
+      })
+    );
+  });
+
+  it("does not emit code.edit.applied when the edit tool fails", () => {
+    const state = createDshParseState();
+    const sessionId = "session-1";
+    const workspacePath = "D:/projects/dev/demo";
+
+    normalizeDshLogRecord(
+      {
+        type: "tool/call",
+        seq: 2,
+        time: 1_786_587_704_534,
+        data: {
+          callId: "call_fail",
+          name: "edit",
+          arguments: JSON.stringify({ file_path: "a.kt", old_string: "x", new_string: "y" })
+        }
+      },
+      sessionId,
+      workspacePath,
+      state
+    );
+    const events = normalizeDshLogRecord(
+      {
+        type: "tool/result",
+        seq: 3,
+        time: 1_786_587_704_600,
+        data: {
+          message: {
+            id: "msg_tool_1",
+            role: "user",
+            content: [{ type: "tool-result", toolCallId: "call_fail", isError: true, content: [] }],
+            source: { kind: "tool", callId: "call_fail" }
+          }
+        }
+      },
+      sessionId,
+      workspacePath,
+      state
+    );
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toEqual(expect.objectContaining({ type: "tool.failed" }));
+  });
 });

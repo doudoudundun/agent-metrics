@@ -1289,11 +1289,11 @@ describe("core api", () => {
           turnCount: 0,
           totalTokens: 0,
           toolCalls: 2,
-          costUsd: 0
+          costUsd: null
         }
       ],
       providerBreakdown: [],
-      totalCostUsd: 0,
+      totalCostUsd: null,
       mode: "calendar",
       range: "week",
       timezone: "Asia/Shanghai",
@@ -2309,7 +2309,7 @@ describe("core api", () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({
-      totalCostUsd: 0,
+      totalCostUsd: null,
       tokensByModel: [
         {
           model: "sonnet-test",

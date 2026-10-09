@@ -208,6 +208,36 @@ export function createSessionQueryIndexes(db: SqliteDatabaseLike): void {
   `);
 }
 
+export function createAggregateQueryIndexes(db: SqliteDatabaseLike): void {
+  // Time comes first because All sources has no source predicate. Preserve the
+  // source-first indexes for queries restricted to a single vendor.
+  for (const table of ["sessions", "tool_events", "prompt_events", "assistant_responses", "token_usage_events", "code_edits"]) {
+    if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(table)) continue;
+    const time = table === "sessions" ? "started_at" : "created_at";
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_${table}_${time} ON ${table} (${time}, source_vendor)`);
+  }
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_usage_events_occurred_at ON usage_events (occurred_at);
+    CREATE INDEX IF NOT EXISTS idx_normalized_events_type_timestamp
+      ON normalized_events (event_type, timestamp);
+  `);
+  ensureToolAggregateQueryIndex(db);
+}
+
+export function ensureToolAggregateQueryIndex(db: SqliteDatabaseLike): void {
+  const columns = new Set(db.prepare<{ name: string | null }>(
+    "PRAGMA index_info('idx_tool_calls_activity_at')"
+  ).all().map((row) => row.name));
+  if (["source_instance_id", "session_id", "status", "tool_name", "duration_ms"].every((column) => columns.has(column))) {
+    return;
+  }
+  db.exec(`
+    DROP INDEX IF EXISTS idx_tool_calls_activity_at;
+    CREATE INDEX idx_tool_calls_activity_at
+      ON tool_calls (COALESCE(started_at, finished_at), source_instance_id, session_id, status, tool_name, duration_ms);
+  `);
+}
+
 export function createSyncRunSchema(db: SqliteDatabaseLike): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS sync_runs (

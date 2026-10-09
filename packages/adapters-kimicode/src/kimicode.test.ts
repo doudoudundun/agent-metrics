@@ -112,4 +112,124 @@ describe("normalizeKimicodeWireRecord", () => {
       })
     );
   });
+
+  it("emits code.edit.applied with diff stats for a successful Edit", () => {
+    const state = createKimicodeWireParseState();
+    const context = {
+      sessionId: "session_1",
+      workspacePath: "D:/projects/dev/demo",
+      agentId: "main"
+    };
+
+    normalizeKimicodeWireRecord(
+      {
+        type: "tool.call",
+        toolCallId: "call_edit",
+        name: "Edit",
+        args: { path: "a.ts", old_string: "one\ntwo\nthree", new_string: "one\nTWO\nthree\nfour" },
+        time: 1_786_587_424_500
+      },
+      context,
+      state
+    );
+    const events = normalizeKimicodeWireRecord(
+      {
+        type: "tool.result",
+        toolCallId: "call_edit",
+        result: { content: "ok", isError: false },
+        time: 1_786_587_424_600
+      },
+      context,
+      state
+    );
+
+    expect(events).toHaveLength(2);
+    expect(events[1]).toEqual(
+      expect.objectContaining({
+        type: "code.edit.applied",
+        tool_name: "Edit",
+        files_changed: ["a.ts"],
+        file_count: 1,
+        insertions: 2,
+        deletions: 1,
+        edit_operation_count: 1
+      })
+    );
+  });
+
+  it("does not emit code.edit.applied when the tool fails", () => {
+    const state = createKimicodeWireParseState();
+    const context = {
+      sessionId: "session_1",
+      workspacePath: "D:/projects/dev/demo",
+      agentId: "main"
+    };
+
+    normalizeKimicodeWireRecord(
+      {
+        type: "tool.call",
+        toolCallId: "call_fail",
+        name: "Edit",
+        args: { path: "a.ts", old_string: "x", new_string: "y" },
+        time: 1_786_587_424_500
+      },
+      context,
+      state
+    );
+    const events = normalizeKimicodeWireRecord(
+      {
+        type: "tool.result",
+        toolCallId: "call_fail",
+        result: { content: "old_string not found", isError: true },
+        time: 1_786_587_424_600
+      },
+      context,
+      state
+    );
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toEqual(expect.objectContaining({ type: "tool.failed" }));
+  });
+
+  it("counts only insertions for a successful Write", () => {
+    const state = createKimicodeWireParseState();
+    const context = {
+      sessionId: "session_1",
+      workspacePath: "D:/projects/dev/demo",
+      agentId: "main"
+    };
+
+    normalizeKimicodeWireRecord(
+      {
+        type: "tool.call",
+        toolCallId: "call_write",
+        name: "Write",
+        args: { path: "b.ts", content: "alpha\nbeta\n" },
+        time: 1_786_587_424_500
+      },
+      context,
+      state
+    );
+    const events = normalizeKimicodeWireRecord(
+      {
+        type: "tool.result",
+        toolCallId: "call_write",
+        result: { content: "ok", isError: false },
+        time: 1_786_587_424_600
+      },
+      context,
+      state
+    );
+
+    expect(events[1]).toEqual(
+      expect.objectContaining({
+        type: "code.edit.applied",
+        tool_name: "Write",
+        files_changed: ["b.ts"],
+        insertions: 2,
+        deletions: 0,
+        edit_operation_count: 1
+      })
+    );
+  });
 });

@@ -17,6 +17,7 @@ type QueryEntry<T> = {
   state: QueryState<T>;
   promise: Promise<T> | null;
   controller: AbortController | null;
+  cancelRequest: (() => void) | null;
   generation: number;
   listeners: Set<QueryListener<T>>;
 };
@@ -46,11 +47,13 @@ export class QueryClient {
     } | null = null;
     const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     const timeout = setTimeout(() => {
+      if (entry.generation !== generation) return;
       timedOut = true;
       entry.generation += 1;
       controller.abort();
       entry.promise = null;
       entry.controller = null;
+      entry.cancelRequest = null;
       const timeoutError = new Error("Request timed out.");
       entry.state = {
         status: entry.state.data === null ? "error" : "stale",
@@ -63,16 +66,23 @@ export class QueryClient {
     }, timeoutMs);
     entry.generation = generation;
     entry.controller = controller;
+    entry.cancelRequest = () => {
+      clearTimeout(timeout);
+      settle?.reject(new Error("Request cancelled."));
+    };
     entry.state = {
       ...entry.state,
-      status: entry.state.data === null ? "loading" : "stale",
+      status: entry.state.data === null ? "loading" : entry.state.status,
       error: null
     };
     this.notify(entry);
 
     const promise = new Promise<T>((resolve, reject) => {
       settle = { resolve, reject };
-      loader(controller.signal)
+      Promise.resolve().then(() => {
+        if (controller.signal.aborted) throw new Error("Request cancelled.");
+        return loader(controller.signal);
+      })
         .then((data) => {
           if (entry.generation === generation) {
             entry.state = {
@@ -86,6 +96,7 @@ export class QueryClient {
             // deduping onto this settled promise.
             entry.promise = null;
             entry.controller = null;
+            entry.cancelRequest = null;
             this.notify(entry);
             resolve(data);
             return;
@@ -105,6 +116,7 @@ export class QueryClient {
             };
             entry.promise = null;
             entry.controller = null;
+            entry.cancelRequest = null;
             this.notify(entry);
           }
           if (!timedOut) {
@@ -148,6 +160,8 @@ export class QueryClient {
     // or present an offline error to the user.
     entry.generation += 1;
     entry.controller.abort();
+    entry.cancelRequest?.();
+    entry.cancelRequest = null;
     entry.controller = null;
     entry.promise = null;
     entry.state = {
@@ -175,6 +189,8 @@ export class QueryClient {
     for (const entry of this.entries.values()) {
       entry.generation += 1;
       entry.controller?.abort();
+      entry.cancelRequest?.();
+      entry.cancelRequest = null;
       entry.controller = null;
       entry.promise = null;
       entry.listeners.clear();
@@ -192,6 +208,7 @@ export class QueryClient {
       state: { status: "idle", data: null, error: null, updatedAt: null },
       promise: null,
       controller: null,
+      cancelRequest: null,
       generation: 0,
       listeners: new Set()
     };

@@ -33,7 +33,8 @@ const snapshot = {
     cacheHitRate: 0.5,
     toolSuccessRate: 2 / 3,
     editOperationCount: 1,
-    affectedFileCount: 2
+    affectedFileCount: 2,
+    totalCostUsd: 0.42
   }
 };
 

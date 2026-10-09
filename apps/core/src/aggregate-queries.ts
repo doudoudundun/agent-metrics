@@ -5,22 +5,15 @@ import {
   resolveTotalTokens
 } from "@agent-metrics/metrics-engine";
 import type { SourceVendor } from "@agent-metrics/event-schema";
+import type { ToolExecutionCounts } from "@agent-metrics/metrics-engine";
 import type { ResolvedTimeScope } from "./time-scope.js";
 import type { MetricsDatabase, SourceVendorFilter } from "./core-types.js";
 import { buildTimeWindow, parseFilesChanged } from "./query-support.js";
 import { dropCursorGenerationShadowedByOfficial } from "./cursor-account-usage.js";
-import { selectOverviewToolEvents, selectToolRankingRows } from "./tool-query-support.js";
+import { selectOverviewToolCounts, selectToolRankingRows } from "./tool-query-support.js";
 
 type SessionOverviewRow = {
   session_id: string;
-};
-
-type ToolEventOverviewRow = {
-  event_id: string;
-  session_id: string;
-  tool_name: string;
-  status: string;
-  duration_ms: number | null;
 };
 
 type CodeEditOverviewRow = {
@@ -39,7 +32,7 @@ type AssistantResponseOverviewRow = {
   message_id: string;
 };
 
-type TokenUsageOverviewRow = {
+export type TokenUsageOverviewRow = {
   model: string | null;
   input_tokens: number;
   output_tokens: number;
@@ -47,6 +40,9 @@ type TokenUsageOverviewRow = {
   cache_read_input_tokens: number;
   source_vendor: SourceVendor;
   usage_source: string | null;
+  created_at: string;
+  provider_id: string | null;
+  provider_host: string | null;
 };
 
 type TokensByModelRow = {
@@ -83,7 +79,8 @@ export function selectOverviewRows(
   sourceVendor: SourceVendorFilter = "all"
 ): {
   sessions: SessionOverviewRow[];
-  toolEvents: ToolEventOverviewRow[];
+  toolEvents: [];
+  toolCounts: ToolExecutionCounts;
   prompts: PromptOverviewRow[];
   responses: AssistantResponseOverviewRow[];
   tokenUsage: TokenUsageOverviewRow[];
@@ -97,7 +94,7 @@ export function selectOverviewRows(
   const sessions = db
     .prepare<SessionOverviewRow>(`SELECT session_id FROM sessions${sessionWindow.whereSql}`)
     .all(...sessionWindow.params);
-  const toolEvents = selectOverviewToolEvents(db, scope, sourceVendor);
+  const toolCounts = selectOverviewToolCounts(db, scope, sourceVendor);
   const prompts = db
     .prepare<PromptOverviewRow>(`SELECT prompt_id FROM prompt_events${promptWindow.whereSql}`)
     .all(...promptWindow.params);
@@ -108,8 +105,8 @@ export function selectOverviewRows(
     .all(...responseWindow.params);
   const tokenUsage = dropCursorGenerationShadowedByOfficial(
     db
-      .prepare<TokenUsageOverviewRow & { created_at: string }>(
-        `SELECT model, input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens, source_vendor, usage_source, created_at FROM token_usage_events${tokenUsageWindow.whereSql}`
+      .prepare<TokenUsageOverviewRow>(
+        `SELECT model, input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens, source_vendor, usage_source, created_at, provider_id, provider_host FROM token_usage_events${tokenUsageWindow.whereSql}`
       )
       .all(...tokenUsageWindow.params)
   );
@@ -134,7 +131,8 @@ export function selectOverviewRows(
 
   return {
     sessions,
-    toolEvents,
+    toolEvents: [],
+    toolCounts,
     prompts,
     responses,
     tokenUsage,
@@ -145,10 +143,11 @@ export function selectOverviewRows(
 export function selectTokensByModel(
   db: MetricsDatabase,
   scope?: ResolvedTimeScope,
-  sourceVendor: SourceVendorFilter = "all"
+  sourceVendor: SourceVendorFilter = "all",
+  tokenUsageRows?: readonly TokenUsageOverviewRow[]
 ): TokensByModelRow[] {
   const window = buildTimeWindow("created_at", scope, sourceVendor);
-  const rows = db
+  const rows = tokenUsageRows ?? dropCursorGenerationShadowedByOfficial(db
     .prepare<{
       model: string | null;
       input_tokens: number;
@@ -171,10 +170,10 @@ export function selectTokensByModel(
       FROM token_usage_events
       ${window.whereSql}`
     )
-    .all(...window.params);
+    .all(...window.params));
 
   const grouped = new Map<string, TokensByModelRow>();
-  for (const row of dropCursorGenerationShadowedByOfficial(rows)) {
+  for (const row of rows) {
     if (!isAdditiveUsage(row)) {
       continue;
     }

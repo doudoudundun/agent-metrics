@@ -13,6 +13,8 @@ import { backfillLegacyData } from "./domain-backfill.js";
 import { reconcileLegacyMigration } from "./domain-reconciliation.js";
 import {
   createCanonicalSchema,
+  createAggregateQueryIndexes,
+  ensureToolAggregateQueryIndex,
   createSessionQueryIndexes,
   createSyncRunSchema
 } from "./domain-schema.js";
@@ -32,7 +34,11 @@ const SESSION_QUERY_INDEX_VERSION = 2;
 const SESSION_QUERY_INDEX_NAME = "002-add-session-query-indexes";
 const ZCODE_VENDOR_SPLIT_VERSION = 3;
 const ZCODE_VENDOR_SPLIT_NAME = "003-split-zcode-vendor";
-const LATEST_VERSION = ZCODE_VENDOR_SPLIT_VERSION;
+const AGGREGATE_QUERY_VERSION = 4;
+const AGGREGATE_QUERY_NAME = "004-optimize-aggregate-queries";
+const TOOL_AGGREGATE_INDEX_VERSION = 5;
+const TOOL_AGGREGATE_INDEX_NAME = "005-cover-tool-aggregate-queries";
+const LATEST_VERSION = TOOL_AGGREGATE_INDEX_VERSION;
 
 const LEGACY_TABLES = [
   "sessions",
@@ -82,6 +88,31 @@ export function runDomainMigrations(db: SqliteDatabaseLike, now: MigrationNow = 
 
   runSessionQueryIndexMigration(db, appliedAt);
   runZcodeVendorSplitMigration(db, appliedAt);
+  if (!hasMigration(db, AGGREGATE_QUERY_NAME)) {
+    db.transaction(() => {
+      createAggregateQueryIndexes(db);
+      db.exec("ALTER TABLE projection_watermarks ADD COLUMN event_count INTEGER NOT NULL DEFAULT 0");
+      db.prepare(`INSERT INTO projection_watermarks (projection_name, event_count, updated_at)
+        SELECT 'global-event-count', COUNT(*), ? FROM normalized_events`).run(appliedAt);
+      db.exec(`
+        CREATE TRIGGER normalized_events_count_insert AFTER INSERT ON normalized_events BEGIN
+          UPDATE projection_watermarks SET event_count = event_count + 1
+          WHERE projection_name = 'global-event-count';
+        END;
+        CREATE TRIGGER normalized_events_count_delete AFTER DELETE ON normalized_events BEGIN
+          UPDATE projection_watermarks SET event_count = event_count - 1
+          WHERE projection_name = 'global-event-count';
+        END;
+      `);
+      insertMigration(db, AGGREGATE_QUERY_VERSION, AGGREGATE_QUERY_NAME, appliedAt);
+    })();
+  }
+  if (!hasMigration(db, TOOL_AGGREGATE_INDEX_NAME)) {
+    db.transaction(() => {
+      ensureToolAggregateQueryIndex(db);
+      insertMigration(db, TOOL_AGGREGATE_INDEX_VERSION, TOOL_AGGREGATE_INDEX_NAME, appliedAt);
+    })();
+  }
 }
 
 function runSessionQueryIndexMigration(db: SqliteDatabaseLike, appliedAt: string): void {

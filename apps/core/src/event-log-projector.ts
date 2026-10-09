@@ -59,7 +59,7 @@ export type EventLogSynchronizer = () => Promise<void>;
 
 export function readProjectionWatermark(db: EventProjectorDatabase): number {
   const row = db.prepare<{ count: number }>(
-    "SELECT COUNT(*) AS count FROM normalized_events"
+    "SELECT event_count AS count FROM projection_watermarks WHERE projection_name = 'global-event-count'"
   ).get();
   return typeof row?.count === "number" && Number.isSafeInteger(row.count) && row.count >= 0
     ? row.count

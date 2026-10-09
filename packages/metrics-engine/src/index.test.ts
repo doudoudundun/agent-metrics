@@ -2,6 +2,23 @@ import { describe, expect, it } from "vitest";
 import { buildOverviewMetrics } from "./index.js";
 
 describe("buildOverviewMetrics", () => {
+  it("keeps logical tool counters identical when database aggregates replace individual calls", () => {
+    const input = {
+      sessions: [], prompts: [], responses: [], tokenUsage: [], codeEdits: [],
+      toolEvents: [
+        { status: "succeeded", duration_ms: 10 },
+        { status: "succeeded", duration_ms: 20 },
+        { status: "failed", duration_ms: 30 },
+        { status: "started", duration_ms: null },
+        { status: "started", duration_ms: null }
+      ]
+    };
+    expect(buildOverviewMetrics({
+      ...input, toolEvents: [],
+      toolCounts: { successfulExecutions: 2, failedExecutions: 1, startedOnlyExecutions: 2 }
+    })).toEqual(buildOverviewMetrics(input));
+  });
+
   it("calculates overview counters and success rate", () => {
     const overview = buildOverviewMetrics({
       sessions: [{ session_id: "ses_1" }],

@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
 import { toNormalizedEventV2 } from "@agent-metrics/event-schema";
 import type { AnyEvent, NormalizedEventV2 } from "@agent-metrics/event-schema";
-import { appendJsonLine, loadEventLedgerWithFallback, persistEventLedger } from "@agent-metrics/shared-utils";
+import { appendJsonLine, diffTextStats, loadEventLedgerWithFallback, persistEventLedger } from "@agent-metrics/shared-utils";
 
 type CursorState = {
   conversationUpdatedAt: number;
@@ -79,6 +79,8 @@ type CursorHashRequest = {
   startedAt: number;
   completedAt: number;
   filesChanged: string[];
+  insertions: number;
+  deletions: number;
 };
 
 type CursorHashRequestRow = {
@@ -296,7 +298,9 @@ export async function syncCursorArtifacts(input: {
             model: normalizeOptionalString(row.model),
             startedAt,
             completedAt,
-            filesChanged
+            filesChanged,
+            insertions: 0,
+            deletions: 0
           });
         }
       }
@@ -390,6 +394,18 @@ export async function syncCursorArtifacts(input: {
         );
         for (const [sessionId, fallback] of extractedFallbacks) {
           composerUsageFallbacks.set(sessionId, fallback);
+        }
+
+        const editStats = extractRequestEditStats(
+          globalDb,
+          [...new Set(hashRequests.map((request) => request.sessionId))]
+        );
+        for (const request of hashRequests) {
+          const stat = editStats.get(request.requestId);
+          if (stat !== undefined) {
+            request.insertions = stat.insertions;
+            request.deletions = stat.deletions;
+          }
         }
       }
     } finally {
@@ -606,8 +622,8 @@ function buildCursorEvents(input: {
         tool_name: "Composer Request",
         files_changed: request.filesChanged,
         file_count: request.filesChanged.length,
-        insertions: 0,
-        deletions: 0,
+        insertions: request.insertions,
+        deletions: request.deletions,
         edit_operation_count: 1
       });
     }
@@ -1134,6 +1150,156 @@ function extractComposerUsageFallbacks(
   }
 
   return fallbacks;
+}
+
+type CursorBubbleSnapshot = {
+  type: number | null;
+  requestId: string | null;
+  createdAt: number;
+  toolName: string | null;
+  toolStatus: string | null;
+  toolResult: Record<string, unknown> | null;
+};
+
+function extractRequestEditStats(
+  globalDb: ReadOnlyDatabase,
+  conversationIds: string[]
+): Map<string, { insertions: number; deletions: number }> {
+  const stats = new Map<string, { insertions: number; deletions: number }>();
+  if (conversationIds.length === 0) {
+    return stats;
+  }
+
+  const bubbleStmt = globalDb.prepare<{ value: unknown }>(
+    `SELECT value FROM cursorDiskKV WHERE key LIKE ?`
+  );
+  const contentStmt = globalDb.prepare<{ value: unknown }>(
+    `SELECT value FROM cursorDiskKV WHERE key = ?`
+  );
+
+  for (const conversationId of conversationIds) {
+    const bubbles: CursorBubbleSnapshot[] = [];
+    for (const row of bubbleStmt.all(`bubbleId:${conversationId}:%`)) {
+      const record = asRecord(parseJson(row.value as string | Uint8Array | null | undefined));
+      if (record === null) {
+        continue;
+      }
+      const createdAtText = normalizeOptionalString(record.createdAt);
+      if (createdAtText === null) {
+        continue;
+      }
+      const tool = asRecord(record.toolFormerData);
+      bubbles.push({
+        type: typeof record.type === "number" ? record.type : null,
+        requestId: normalizeOptionalString(record.requestId),
+        createdAt: parseIsoTimestamp(createdAtText),
+        toolName: normalizeOptionalString(tool?.name),
+        toolStatus: normalizeOptionalString(tool?.status),
+        toolResult: asRecord(parseJson(tool?.result as string | undefined))
+      });
+    }
+
+    const anchors = bubbles
+      .filter((bubble) => bubble.type === 1 && bubble.requestId !== null)
+      .sort((left, right) => left.createdAt - right.createdAt);
+    if (anchors.length === 0) {
+      continue;
+    }
+
+    for (const bubble of bubbles) {
+      if (bubble.toolName === null || bubble.toolStatus !== "completed") {
+        continue;
+      }
+
+      const counts = countBubbleEditLines(bubble, contentStmt);
+      if (counts === null) {
+        continue;
+      }
+
+      const requestId = resolveBubbleRequestId(bubble, anchors);
+      if (requestId === null) {
+        continue;
+      }
+
+      const current = stats.get(requestId) ?? { insertions: 0, deletions: 0 };
+      current.insertions += counts.insertions;
+      current.deletions += counts.deletions;
+      stats.set(requestId, current);
+    }
+  }
+
+  return stats;
+}
+
+function resolveBubbleRequestId(
+  bubble: CursorBubbleSnapshot,
+  anchors: CursorBubbleSnapshot[]
+): string | null {
+  if (bubble.requestId !== null && anchors.some((anchor) => anchor.requestId === bubble.requestId)) {
+    return bubble.requestId;
+  }
+
+  let before: CursorBubbleSnapshot | null = null;
+  let after: CursorBubbleSnapshot | null = null;
+  for (const anchor of anchors) {
+    if (anchor.createdAt <= bubble.createdAt) {
+      before = anchor;
+    } else if (after === null) {
+      after = anchor;
+    }
+  }
+
+  return before?.requestId ?? after?.requestId ?? null;
+}
+
+function countBubbleEditLines(
+  bubble: CursorBubbleSnapshot,
+  contentStmt: { get(...params: unknown[]): { value: unknown } | undefined }
+): { insertions: number; deletions: number } | null {
+  if (bubble.toolName === "edit_file_v2") {
+    const beforeId = normalizeOptionalString(bubble.toolResult?.beforeContentId);
+    const afterId = normalizeOptionalString(bubble.toolResult?.afterContentId);
+    if (beforeId === null || afterId === null) {
+      return null;
+    }
+    const before = contentStmt.get(beforeId)?.value;
+    const after = contentStmt.get(afterId)?.value;
+    if (typeof before !== "string" || typeof after !== "string") {
+      return null;
+    }
+    return diffTextStats(before, after);
+  }
+
+  if (
+    bubble.toolName === "search_replace" ||
+    bubble.toolName === "apply_patch" ||
+    bubble.toolName === "write" ||
+    bubble.toolName === "MultiEdit"
+  ) {
+    const chunks = asRecord(bubble.toolResult?.diff)?.chunks;
+    if (!Array.isArray(chunks)) {
+      return null;
+    }
+    let insertions = 0;
+    let deletions = 0;
+    let counted = false;
+    for (const chunk of chunks) {
+      const entry = asRecord(chunk);
+      if (entry === null) {
+        continue;
+      }
+      const added = normalizeNonNegativeInteger(entry.linesAdded);
+      const removed = normalizeNonNegativeInteger(entry.linesRemoved);
+      if (added !== null || removed !== null) {
+        insertions += added ?? 0;
+        deletions += removed ?? 0;
+        counted = true;
+      }
+    }
+    return counted ? { insertions, deletions } : null;
+  }
+
+  return null;
 }
 
 function applyComposerUsageFallbacks(

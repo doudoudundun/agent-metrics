@@ -228,7 +228,8 @@ describe("overview / tools / trend / widget", () => {
         cacheHitRate: 0.2,
         toolSuccessRate: 0.9,
         editOperationCount: 1,
-        affectedFileCount: 2
+        affectedFileCount: 2,
+        totalCostUsd: 1.25
       }
     });
     expect(result.success).toBe(true);

@@ -421,6 +421,40 @@ export function extractCodexEventsFromRollout(input: {
         }
         continue;
       }
+
+      if (sessionId !== null && payloadType === "item_completed") {
+        const item = asRecord(payload.item);
+        if (item === null || normalizeOptionalString(item.type) !== "FileChange") {
+          continue;
+        }
+
+        if (normalizeOptionalString(item.status) !== "completed") {
+          continue;
+        }
+
+        const changes = asRecord(item.changes) ?? {};
+        const filesChanged = Object.keys(changes);
+        if (filesChanged.length > 0) {
+          const changeId = normalizeOptionalString(item.id) ?? eventKey;
+          const totals = summarizePatchChanges(changes);
+          events.push({
+            event_id: `codex:session:${sessionId}:filechange:${changeId}:edit`,
+            session_id: sessionId,
+            timestamp,
+            source_vendor: CODEX_SOURCE_VENDOR,
+            source_adapter: CODEX_ROLLOUT_ADAPTER,
+            workspace_path: sessionMeta?.workspacePath ?? ".",
+            type: "code.edit.applied",
+            tool_name: "apply_patch",
+            files_changed: filesChanged,
+            file_count: filesChanged.length,
+            insertions: totals.insertions,
+            deletions: totals.deletions,
+            edit_operation_count: 1
+          });
+        }
+        continue;
+      }
     }
 
     if (

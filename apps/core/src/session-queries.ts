@@ -10,6 +10,7 @@ import type { MetricsDatabase, SourceVendorFilter } from "./core-types.js";
 import { dropCursorGenerationShadowedByOfficial } from "./cursor-account-usage.js";
 import { buildTimeWindow } from "./query-support.js";
 import { selectSourceToolCallCounts } from "./tool-query-support.js";
+import type { TokenUsageOverviewRow } from "./aggregate-queries.js";
 
 type SessionListRow = {
   sessionId: string;
@@ -30,7 +31,7 @@ type SourceBreakdownRow = {
   turnCount: number;
   totalTokens: number;
   toolCalls: number;
-  costUsd: number;
+  costUsd: number | null;
 };
 
 type ProviderBreakdownRow = {
@@ -188,7 +189,8 @@ export function selectSessions(
 export function selectSourceBreakdown(
   db: MetricsDatabase,
   scope?: ResolvedTimeScope,
-  sourceVendor: SourceVendorFilter = "all"
+  sourceVendor: SourceVendorFilter = "all",
+  tokenUsageRows?: readonly TokenUsageOverviewRow[]
 ): SourceBreakdownRow[] {
   const breakdown = new Map<SourceVendor, SourceBreakdownRow>();
 
@@ -204,7 +206,9 @@ export function selectSourceBreakdown(
       turnCount: 0,
       totalTokens: 0,
       toolCalls: 0,
-      costUsd: 0
+      // Null until a priced model row contributes, so sources whose models all
+      // lack list prices render "—" instead of a misleading $0.00.
+      costUsd: null
     };
     breakdown.set(rowSourceVendor, created);
     return created;
@@ -240,10 +244,10 @@ export function selectSourceBreakdown(
     ensureRow(row.sourceVendor).toolCalls = row.toolCalls;
   }
 
-  for (const row of dropCursorGenerationShadowedByOfficial(
+  for (const row of tokenUsageRows ?? dropCursorGenerationShadowedByOfficial(
     db
       .prepare<{
-        sourceVendor: SourceVendor;
+        source_vendor: SourceVendor;
         model: string | null;
         input_tokens: number;
         output_tokens: number;
@@ -253,7 +257,7 @@ export function selectSourceBreakdown(
         created_at: string;
       }>(`
       SELECT
-        source_vendor AS sourceVendor,
+        source_vendor,
         model,
         input_tokens,
         output_tokens,
@@ -270,14 +274,14 @@ export function selectSourceBreakdown(
       continue;
     }
     const usage = {
-      source_vendor: row.sourceVendor,
+      source_vendor: row.source_vendor,
       usage_source: row.usage_source,
       input_tokens: row.input_tokens,
       output_tokens: row.output_tokens,
       cache_creation_input_tokens: row.cache_creation_input_tokens,
       cache_read_input_tokens: row.cache_read_input_tokens
     };
-    const target = ensureRow(row.sourceVendor);
+    const target = ensureRow(row.source_vendor);
     target.totalTokens += resolveTotalTokens(usage);
     const costUsd = estimateCostUsd({
       model: row.model,
@@ -287,7 +291,7 @@ export function selectSourceBreakdown(
       cacheCreationTokens: usage.cache_creation_input_tokens
     });
     if (costUsd !== null) {
-      target.costUsd += costUsd;
+      target.costUsd = (target.costUsd ?? 0) + costUsd;
     }
   }
 
@@ -297,16 +301,17 @@ export function selectSourceBreakdown(
 export function selectProviderBreakdown(
   db: MetricsDatabase,
   scope?: ResolvedTimeScope,
-  sourceVendor: SourceVendorFilter = "all"
+  sourceVendor: SourceVendorFilter = "all",
+  tokenUsageRows?: readonly TokenUsageOverviewRow[]
 ): ProviderBreakdownRow[] {
   const window = buildTimeWindow("created_at", scope, sourceVendor);
   const grouped = new Map<string, ProviderBreakdownRow>();
 
-  for (const row of dropCursorGenerationShadowedByOfficial(
+  for (const row of tokenUsageRows ?? dropCursorGenerationShadowedByOfficial(
     db
       .prepare<{
-        providerHost: string | null;
-        providerId: string | null;
+        provider_host: string | null;
+        provider_id: string | null;
         input_tokens: number;
         output_tokens: number;
         cache_creation_input_tokens: number;
@@ -316,8 +321,8 @@ export function selectProviderBreakdown(
         created_at: string;
       }>(`
       SELECT
-        provider_host AS providerHost,
-        provider_id AS providerId,
+        provider_host,
+        provider_id,
         input_tokens,
         output_tokens,
         cache_creation_input_tokens,
@@ -334,10 +339,10 @@ export function selectProviderBreakdown(
       continue;
     }
 
-    const key = `${row.providerHost ?? ""}\0${row.providerId ?? ""}`;
+    const key = `${row.provider_host ?? ""}\0${row.provider_id ?? ""}`;
     const current = grouped.get(key) ?? {
-      providerHost: row.providerHost,
-      providerId: row.providerId,
+      providerHost: row.provider_host,
+      providerId: row.provider_id,
       totalTokens: 0
     };
     current.totalTokens += resolveTotalTokens(row);

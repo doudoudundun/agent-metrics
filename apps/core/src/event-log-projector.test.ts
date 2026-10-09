@@ -50,6 +50,15 @@ describe("event log projector watermarks", () => {
     );
 
     expect(readProjectionWatermark(db)).toBe(1);
+    const sqlite = db as unknown as InstanceType<typeof Database>;
+    expect(() => sqlite.transaction(() => {
+      sqlite.prepare("DELETE FROM normalized_events WHERE event_id = 'event-1'").run();
+      expect(readProjectionWatermark(db)).toBe(0);
+      throw new Error("rollback");
+    })()).toThrow("rollback");
+    expect(readProjectionWatermark(db)).toBe(1);
+    sqlite.prepare("DELETE FROM normalized_events WHERE event_id = 'event-1'").run();
+    expect(readProjectionWatermark(db)).toBe(0);
     db.close();
   });
 

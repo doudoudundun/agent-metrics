@@ -454,6 +454,169 @@ describe("normalizeOpenCodeToolPartRow", () => {
     }
   });
 
+  it("emits code.edit.applied with filediff counts for a completed edit", () => {
+    const partRow: OpenCodePartRow = {
+      id: "prt_edit_1",
+      message_id: "msg_assistant_1",
+      session_id: "ses_open_1",
+      time_created: 1777355841227,
+      time_updated: 1777355841866,
+      data: JSON.stringify({
+        type: "tool",
+        tool: "edit",
+        state: {
+          status: "completed",
+          input: {
+            filePath: "D:/projects/dev/demo/a.ts",
+            oldString: "one\ntwo",
+            newString: "one\nTWO\nthree"
+          },
+          metadata: {
+            filediff: { file: "D:/projects/dev/demo/a.ts", additions: 2, deletions: 1 }
+          },
+          time: {
+            start: 1777355841852,
+            end: 1777355841866
+          }
+        }
+      })
+    };
+
+    const events = normalizeOpenCodeToolPartRow({
+      row: partRow,
+      sessionDirectory: "D:/projects/dev/demo"
+    });
+
+    expect(events).toHaveLength(3);
+    expect(events[2]).toEqual(
+      expect.objectContaining({
+        type: "code.edit.applied",
+        tool_name: "edit",
+        files_changed: ["D:/projects/dev/demo/a.ts"],
+        file_count: 1,
+        insertions: 2,
+        deletions: 1,
+        edit_operation_count: 1
+      })
+    );
+    for (const event of events) {
+      expect(NormalizedEventV2Schema.safeParse(event).success).toBe(true);
+    }
+  });
+
+  it("falls back to diffing old/new strings when no diff metadata exists", () => {
+    const partRow: OpenCodePartRow = {
+      id: "prt_edit_2",
+      message_id: "msg_assistant_1",
+      session_id: "ses_open_1",
+      time_created: 1777355841227,
+      time_updated: 1777355841866,
+      data: JSON.stringify({
+        type: "tool",
+        tool: "Edit",
+        state: {
+          status: "completed",
+          input: {
+            file_path: "D:/projects/dev/demo/b.ts",
+            old_string: "alpha\nbeta",
+            new_string: "alpha\nBETA\ngamma"
+          },
+          time: {
+            start: 1777355841852,
+            end: 1777355841866
+          }
+        }
+      })
+    };
+
+    const events = normalizeOpenCodeToolPartRow({
+      row: partRow,
+      sessionDirectory: "D:/projects/dev/demo"
+    });
+
+    const edit = events.find((event) => event.type === "code.edit.applied");
+    expect(edit).toEqual(
+      expect.objectContaining({
+        files_changed: ["D:/projects/dev/demo/b.ts"],
+        insertions: 2,
+        deletions: 1
+      })
+    );
+  });
+
+  it("counts only insertions for a completed write", () => {
+    const partRow: OpenCodePartRow = {
+      id: "prt_write_1",
+      message_id: "msg_assistant_1",
+      session_id: "ses_open_1",
+      time_created: 1777355841227,
+      time_updated: 1777355841866,
+      data: JSON.stringify({
+        type: "tool",
+        tool: "Write",
+        state: {
+          status: "completed",
+          input: {
+            file_path: "D:/projects/dev/demo/c.ts",
+            content: "alpha\nbeta\n"
+          },
+          time: {
+            start: 1777355841852,
+            end: 1777355841866
+          }
+        }
+      })
+    };
+
+    const events = normalizeOpenCodeToolPartRow({
+      row: partRow,
+      sessionDirectory: "D:/projects/dev/demo"
+    });
+
+    const edit = events.find((event) => event.type === "code.edit.applied");
+    expect(edit).toEqual(
+      expect.objectContaining({
+        tool_name: "Write",
+        insertions: 2,
+        deletions: 0,
+        edit_operation_count: 1
+      })
+    );
+  });
+
+  it("does not emit code.edit.applied for a failed edit", () => {
+    const partRow: OpenCodePartRow = {
+      id: "prt_edit_fail",
+      message_id: "msg_assistant_1",
+      session_id: "ses_open_1",
+      time_created: 1777355841227,
+      time_updated: 1777355841866,
+      data: JSON.stringify({
+        type: "tool",
+        tool: "edit",
+        state: {
+          status: "error",
+          input: {
+            filePath: "D:/projects/dev/demo/a.ts",
+            oldString: "x",
+            newString: "y"
+          },
+          time: {
+            start: 1777355841852,
+            end: 1777355841866
+          }
+        }
+      })
+    };
+
+    const events = normalizeOpenCodeToolPartRow({
+      row: partRow,
+      sessionDirectory: "D:/projects/dev/demo"
+    });
+
+    expect(events.some((event) => event.type === "code.edit.applied")).toBe(false);
+  });
+
   it("maps step-finish parts into token usage events with provider metadata", () => {
     const messageRow: OpenCodeMessageRow = {
       id: "msg_assistant_usage_part",
@@ -630,6 +793,60 @@ describe("normalizeOpenCodeToolPartRow", () => {
         source_vendor: "zcode",
         source_adapter: "zcode-db",
         usage_source: "opencode-message"
+      })
+    ]);
+  });
+
+  it("reads ZCode lower-camel modelId/providerId when modelID/providerID are absent", () => {
+    const messageRow: OpenCodeMessageRow = {
+      id: "msg_zcode_camel",
+      session_id: "ses_zcode_camel",
+      time_created: 1777355829153,
+      time_updated: 1777355842420,
+      data: JSON.stringify({
+        role: "assistant",
+        time: {
+          created: 1777355829153,
+          completed: 1777355842420
+        },
+        modelId: "GLM-5.3-Flash",
+        providerId: "account:bigmodel-individual-coding-plan",
+        finish: "stop",
+        path: {
+          root: "C:/Users/qinyang.li/ZCodeProject"
+        },
+        tokens: {
+          input: 100,
+          output: 20,
+          reasoning: 0,
+          cache: {
+            read: 5,
+            write: 0
+          }
+        }
+      })
+    };
+
+    const events = normalizeOpenCodeMessageRow({
+      row: messageRow,
+      sessionDirectory: "C:/Users/qinyang.li/ZCodeProject",
+      partRows: [],
+      eventContext: {
+        eventNamespace: "zcode",
+        sourceAdapter: "zcode-db",
+        sourceVendor: "zcode"
+      }
+    });
+
+    expect(events).toEqual([
+      expect.objectContaining({
+        type: "assistant.responded",
+        model: "GLM-5.3-Flash",
+        provider_id: "account:bigmodel-individual-coding-plan"
+      }),
+      expect.objectContaining({
+        type: "token.usage.recorded",
+        model: "GLM-5.3-Flash"
       })
     ]);
   });

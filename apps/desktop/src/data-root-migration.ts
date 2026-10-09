@@ -1,5 +1,5 @@
 import { cp, mkdir, readFile, stat, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const JSONL_FILES = [
@@ -228,7 +228,14 @@ function readFlags(args: string[], name: string): string[] {
   return values;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).toString()) {
+// After esbuild bundles this module into main-v2.js, import.meta.url equals the
+// bundle URL and would match any direct launch of the app. Restrict CLI mode to
+// running this file itself.
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).toString() &&
+  basename(process.argv[1]).startsWith("data-root-migration")
+) {
   runCli().catch((error: unknown) => {
     console.error(error);
     process.exit(1);

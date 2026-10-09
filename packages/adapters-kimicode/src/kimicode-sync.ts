@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, open, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import {
   appendJsonLine,
   loadEventLedgerWithFallback,
@@ -257,51 +258,69 @@ async function syncWireFile(input: {
   workspacePath: string;
   agentId: string;
 }): Promise<WireCursor> {
-  let fileContents: Buffer;
+  let handle;
   try {
-    fileContents = await readFile(input.wirePath);
-  } catch {
+    handle = await open(input.wirePath, "r");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     return input.cursor;
   }
 
-  const cursor =
-    input.cursor.offset > fileContents.length ? { offset: 0, remainder: "" } : input.cursor;
-  const pendingText = `${cursor.remainder}${fileContents.subarray(cursor.offset).toString("utf8")}`;
-  const splitLines = pendingText.split(/\r?\n/u);
-  const hasCompleteTrailingNewline = pendingText.endsWith("\n") || pendingText.endsWith("\r");
-  const remainder =
-    hasCompleteTrailingNewline || splitLines.length === 0 ? "" : (splitLines.pop() ?? "");
-  const completeLines = splitLines.filter((line) => line.length > 0);
-  const parseState = createKimicodeWireParseState();
+  try {
+    const { size } = await handle.stat();
+    if (size === input.cursor.offset) return input.cursor;
+    const cursor =
+      input.cursor.offset > size ? { offset: 0, remainder: "" } : input.cursor;
+    let offset = cursor.offset;
+    let remainder = cursor.remainder;
+    let decodedBytes = 0;
+    const decoder = new StringDecoder("utf8");
+    const buffer = Buffer.alloc(Math.min(256 * 1024, size - offset));
+    const parseState = createKimicodeWireParseState();
 
-  for (const line of completeLines) {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(line) as unknown;
-    } catch {
-      continue;
-    }
+    // Read only appended bytes, yielding to HTTP between bounded chunks. Old
+    // wire histories can be large even when the current tick adds no records.
+    while (offset < size) {
+      const { bytesRead } = await handle.read(buffer, 0, Math.min(buffer.length, size - offset), offset);
+      if (bytesRead === 0) break;
+      offset += bytesRead;
+      const decoded = decoder.write(buffer.subarray(0, bytesRead));
+      decodedBytes += Buffer.byteLength(decoded, "utf8");
+      const completeLines = `${remainder}${decoded}`.split(/\r?\n/u);
+      remainder = completeLines.pop() ?? "";
+      for (const line of completeLines) {
+        if (line.length === 0) continue;
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(line) as unknown;
+        } catch {
+          continue;
+        }
 
-    const events = normalizeKimicodeWireRecord(parsed, {
-      sessionId: input.sessionId,
-      workspacePath: input.workspacePath,
-      agentId: input.agentId
-    }, parseState);
+        const events = normalizeKimicodeWireRecord(parsed, {
+          sessionId: input.sessionId,
+          workspacePath: input.workspacePath,
+          agentId: input.agentId
+        }, parseState);
 
-    for (const event of events) {
-      const ledgerKey = event.source_record_id ?? event.event_id;
-      if (input.seenEventIds.has(ledgerKey)) {
-        continue;
+        for (const event of events) {
+          const ledgerKey = event.source_record_id ?? event.event_id;
+          if (input.seenEventIds.has(ledgerKey)) {
+            continue;
+          }
+          await appendJsonLine(input.eventLogPath, event);
+          input.seenEventIds.add(ledgerKey);
+        }
       }
-      await appendJsonLine(input.eventLogPath, event);
-      input.seenEventIds.add(ledgerKey);
     }
-  }
 
-  return {
-    offset: fileContents.length,
-    remainder
-  };
+    // An append can stop partway through a UTF-8 character. Leave those bytes
+    // behind the cursor so the next tick can decode the complete character.
+    const pendingBytes = Math.max(0, offset - cursor.offset - decodedBytes);
+    return { offset: offset - pendingBytes, remainder };
+  } finally {
+    await handle.close();
+  }
 }
 
 async function loadCursorState(cursorPath: string): Promise<KimicodeCursorState> {

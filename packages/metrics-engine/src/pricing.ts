@@ -1,11 +1,13 @@
 /**
  * Official list prices in USD per 1M tokens (standard on-demand tier), captured
  * 2026-10-09 from: openai.com, platform.claude.com, docs.z.ai,
- * api-docs.deepseek.com, platform.minimax.io, mimo.mi.com.
+ * api-docs.deepseek.com, platform.minimax.io, mimo.mi.com, platform.kimi.ai,
+ * x.ai API docs.
  *
  * DeepSeek rows use peak-hour pricing (off-peak is half price), GLM rows the
- * <32K input tier, MiniMax-M3 the <=512K tier at its 50% discount, and Claude
- * cache writes the 5-minute tier. Estimates for reference only, not billing data.
+ * <32K input tier, MiniMax-M3 the <=512K tier at its 50% discount, Claude
+ * cache writes the 5-minute tier, and Kimi K3 cache writes the 5-minute TTL
+ * tier. Estimates for reference only, not billing data.
  */
 
 export type ModelPricing = {
@@ -25,12 +27,21 @@ export const MODEL_PRICING_USD: Record<string, ModelPricing> = {
   "gpt-6-luna": { inputPer1M: 0.1, outputPer1M: 0.5, cacheReadPer1M: 0.01, cacheWritePer1M: 0.125 },
   // Promotional price through at least 2026-11-21.
   "gpt-5.6-sol": { inputPer1M: 4, outputPer1M: 20, cacheReadPer1M: 0.4, cacheWritePer1M: 5 },
+  // <=272K context tier (2x above); terra rates confirmed by gradually.ai.
+  "gpt-5.6-terra": { inputPer1M: 2, outputPer1M: 12, cacheReadPer1M: 0.2, cacheWritePer1M: 2.5 },
+  "gpt-5.6-luna": { inputPer1M: 0.2, outputPer1M: 1.2, cacheReadPer1M: 0.02, cacheWritePer1M: 0.25 },
+  "gpt-6-sol": { inputPer1M: 2, outputPer1M: 10, cacheReadPer1M: 0.2, cacheWritePer1M: 2.5 },
   "gpt-5.3-codex": { inputPer1M: 1.75, outputPer1M: 14, cacheReadPer1M: 0.175, cacheWritePer1M: 0 },
   "claude-sonnet-4-6": { inputPer1M: 3, outputPer1M: 15, cacheReadPer1M: 0.3, cacheWritePer1M: 3.75 },
+  // Sonnet 5.5 launched at unchanged Sonnet 5 pricing (Anthropic).
+  "claude-sonnet-5": { inputPer1M: 2, outputPer1M: 10, cacheReadPer1M: 0.2, cacheWritePer1M: 2.5 },
   "claude-sonnet-5-5": { inputPer1M: 2, outputPer1M: 10, cacheReadPer1M: 0.1, cacheWritePer1M: 2.5 },
+  // Cursor effort-suffixed variant of sonnet-5-5.
+  "claude-sonnet-5-5-high": { inputPer1M: 2, outputPer1M: 10, cacheReadPer1M: 0.1, cacheWritePer1M: 2.5 },
   "claude-opus-5-5": { inputPer1M: 4, outputPer1M: 20, cacheReadPer1M: 0.2, cacheWritePer1M: 5 },
   // <=100K prompt tier; over 100K is priced higher.
   "claude-haiku-5-5": { inputPer1M: 0.1, outputPer1M: 0.5, cacheReadPer1M: 0.01, cacheWritePer1M: 0.125 },
+  "claude-haiku-4-5-20251001": { inputPer1M: 1, outputPer1M: 5, cacheReadPer1M: 0.1, cacheWritePer1M: 1.25 },
   "glm-5.3": { inputPer1M: 1.4, outputPer1M: 4.4, cacheReadPer1M: 0.26, cacheWritePer1M: 0 },
   "glm-5.3-flash": { inputPer1M: 0.15, outputPer1M: 0.5, cacheReadPer1M: 0.03, cacheWritePer1M: 0 },
   "glm-5.3-flashx": { inputPer1M: 0.37, outputPer1M: 1.25, cacheReadPer1M: 0.075, cacheWritePer1M: 0 },
@@ -44,13 +55,64 @@ export const MODEL_PRICING_USD: Record<string, ModelPricing> = {
     cacheReadPer1M: 0.006,
     cacheWritePer1M: 0
   },
+  // Official API serves it as `deepseek-flash`; same rate card as v4-flash.
+  "deepseek-v4.1-flash": {
+    inputPer1M: 0.3,
+    outputPer1M: 1.2,
+    cacheReadPer1M: 0.006,
+    cacheWritePer1M: 0
+  },
+  // Current official model id for v4.1-flash, and the 0731 dated snapshot of v4-flash.
+  "deepseek-flash": {
+    inputPer1M: 0.3,
+    outputPer1M: 1.2,
+    cacheReadPer1M: 0.006,
+    cacheWritePer1M: 0
+  },
+  "deepseek-v4-flash-0731": {
+    inputPer1M: 0.3,
+    outputPer1M: 1.2,
+    cacheReadPer1M: 0.006,
+    cacheWritePer1M: 0
+  },
   "deepseek-v4-pro": {
     inputPer1M: 1.32,
     outputPer1M: 3.96,
     cacheReadPer1M: 0.044,
     cacheWritePer1M: 0
   },
+  // platform.kimi.ai: input $3, cached input $0.30, cache write 5min $3 (1h $6), output $15.
+  "kimi-k3": { inputPer1M: 3, outputPer1M: 15, cacheReadPer1M: 0.3, cacheWritePer1M: 3 },
+  "k3-256k": { inputPer1M: 3, outputPer1M: 15, cacheReadPer1M: 0.3, cacheWritePer1M: 3 },
+  "k3": { inputPer1M: 3, outputPer1M: 15, cacheReadPer1M: 0.3, cacheWritePer1M: 3 },
+  // Multiple trackers refreshed 2026-10 report $0.95/$4.00 (AICoder's official-linked
+  // crawl says $1.20/$4.80 — official table is JS-rendered and unverifiable here).
+  "kimi-k2.7-code": { inputPer1M: 0.95, outputPer1M: 4, cacheReadPer1M: 0.19, cacheWritePer1M: 0 },
+  // Highspeed tier is 2x the standard rate per llmabacus (official-synced) and aihubmix.
+  "kimi-k2.7-code-highspeed": { inputPer1M: 1.9, outputPer1M: 8, cacheReadPer1M: 0.38, cacheWritePer1M: 0 },
+  // $1/$4, cache read $0.25 (Tencent Cloud's Moonshot listing matches B.AI).
+  "kimi-k2.8-preview": { inputPer1M: 1, outputPer1M: 4, cacheReadPer1M: 0.25, cacheWritePer1M: 0 },
+  // Kimi Code subscription alias — sold per seat with a quota pool, never per
+  // token (official: "Kimi API 按量计费…请注意与 Kimi Code 等产品区分"). Since
+  // 2026-09-11 the alias serves K2.8 Preview with the model id unchanged, so the
+  // K2.8 Preview rate is the reference estimate.
+  "kimi-for-coding": { inputPer1M: 1, outputPer1M: 4, cacheReadPer1M: 0.25, cacheWritePer1M: 0 },
+  "kimi-for-coding-highspeed": { inputPer1M: 1.9, outputPer1M: 8, cacheReadPer1M: 0.38, cacheWritePer1M: 0 },
+  // xAI list price; Cursor-subscription traffic is shown at this reference rate.
+  "grok-4.7": { inputPer1M: 2, outputPer1M: 6, cacheReadPer1M: 0.5, cacheWritePer1M: 0 },
+  "grok-4.7-high": { inputPer1M: 2, outputPer1M: 6, cacheReadPer1M: 0.5, cacheWritePer1M: 0 },
+  // Cursor "-fast" routing variant; reference rate pending a separate list price.
+  "grok-4.7-high-fast": { inputPer1M: 2, outputPer1M: 6, cacheReadPer1M: 0.5, cacheWritePer1M: 0 },
+  // 4.5 and 4.6 share the same $2/$6 card (xAI kept pricing flat across both).
+  "grok-4.6": { inputPer1M: 2, outputPer1M: 6, cacheReadPer1M: 0.5, cacheWritePer1M: 0 },
+  "grok-4.5": { inputPer1M: 2, outputPer1M: 6, cacheReadPer1M: 0.5, cacheWritePer1M: 0 },
   "minimax-m3": { inputPer1M: 0.3, outputPer1M: 1.2, cacheReadPer1M: 0.06, cacheWritePer1M: 0 },
+  // mimo.mi.com overseas rate card (verified 2026-10-09); cache writes are
+  // free for a limited time per the official docs.
+  "mimo-v2.6-flash": { inputPer1M: 0.14, outputPer1M: 0.28, cacheReadPer1M: 0.0028, cacheWritePer1M: 0 },
+  "mimo-v2.6-pro": { inputPer1M: 0.435, outputPer1M: 0.87, cacheReadPer1M: 0.0036, cacheWritePer1M: 0 },
+  "mimo-v2.6-pro-ultraspeed": { inputPer1M: 4.35, outputPer1M: 8.7, cacheReadPer1M: 0.036, cacheWritePer1M: 0 },
+  // v2.5 rows retire 2026-10-21; v2.6 kept the same rates.
   "mimo-v2.5": { inputPer1M: 0.14, outputPer1M: 0.28, cacheReadPer1M: 0.0028, cacheWritePer1M: 0 },
   "mimo-v2.5-pro": {
     inputPer1M: 0.435,
@@ -66,7 +128,8 @@ export const MODEL_PRICING_USD: Record<string, ModelPricing> = {
   "hy3-preview-free": { inputPer1M: 0, outputPer1M: 0, cacheReadPer1M: 0, cacheWritePer1M: 0 },
   "mimo-v2-pro-free": { inputPer1M: 0, outputPer1M: 0, cacheReadPer1M: 0, cacheWritePer1M: 0 }
   // "hy3-preview" (no -free suffix) is intentionally absent: no published list
-  // price, so lookups return null.
+  // price, so lookups return null. "mimo-auto" is a router alias billed at
+  // whichever model it lands on, so it has no list price of its own either.
 };
 
 /**
@@ -74,6 +137,10 @@ export const MODEL_PRICING_USD: Record<string, ModelPricing> = {
  * displayed input (gross-semantic sources have cache-read subtracted) because
  * cache reads are priced separately. Returns null when the model has no
  * published price.
+ *
+ * Sources report provider-prefixed ids (OpenRouter-style "vendor/model", e.g.
+ * "kimi-code/k3-256k"); fall back to the bare id after the last slash when the
+ * full string has no entry.
  */
 export function estimateCostUsd(usage: {
   model: string | null;
@@ -87,7 +154,8 @@ export function estimateCostUsd(usage: {
     return null;
   }
 
-  const pricing = MODEL_PRICING_USD[key];
+  const bareKey = key.includes("/") ? key.slice(key.lastIndexOf("/") + 1) : key;
+  const pricing = MODEL_PRICING_USD[key] ?? MODEL_PRICING_USD[bareKey];
   if (!pricing) {
     return null;
   }

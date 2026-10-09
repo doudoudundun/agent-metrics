@@ -147,6 +147,79 @@ describe("extractCodexEventsFromRollout", () => {
     }
   });
 
+  it("maps item_completed FileChange items into edit events", () => {
+    const events = extractCodexEventsFromRollout({
+      filePath: "C:/Users/test/.codex/sessions/2026/09/30/rollout-filechange.jsonl",
+      contents: [
+        JSON.stringify({
+          timestamp: "2026-09-30T10:00:00.000Z",
+          type: "session_meta",
+          payload: {
+            id: "ses_filechange",
+            timestamp: "2026-09-30T10:00:00.000Z",
+            cwd: "D:/projects/dev",
+            model_provider: "ai"
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-09-30T10:00:10.000Z",
+          type: "event_msg",
+          payload: {
+            type: "item_completed",
+            item: {
+              type: "FileChange",
+              id: "exec-93d7c6d3",
+              status: "completed",
+              changes: {
+                "D:/projects/dev/src/app.ts": {
+                  type: "update",
+                  unified_diff: "@@ -1,2 +1,3 @@\n import x\n+const y = 1;\n-old\n+new\n"
+                }
+              },
+              stdout: "Success. Updated the following files:\nM src/app.ts\n",
+              stderr: ""
+            }
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-09-30T10:00:11.000Z",
+          type: "event_msg",
+          payload: {
+            type: "item_completed",
+            item: {
+              type: "FileChange",
+              id: "exec-failed",
+              status: "failed",
+              changes: {
+                "D:/projects/dev/src/other.ts": {
+                  type: "update",
+                  unified_diff: "@@ -1 +1 @@\n-a\n+b\n"
+                }
+              }
+            }
+          }
+        })
+      ].join("\n")
+    });
+
+    const edits = events.filter((event) => event.type === "code.edit.applied");
+    expect(edits).toHaveLength(1);
+    expect(edits[0]).toEqual(
+      expect.objectContaining({
+        tool_name: "apply_patch",
+        files_changed: ["D:/projects/dev/src/app.ts"],
+        file_count: 1,
+        insertions: 2,
+        deletions: 1,
+        edit_operation_count: 1
+      })
+    );
+
+    for (const event of events) {
+      expect(NormalizedEventV2Schema.safeParse(event).success).toBe(true);
+    }
+  });
+
   it("maps exec_command_end into normalized shell tool events", () => {
     const events = extractCodexEventsFromRollout({
       filePath: "C:/Users/test/.codex/sessions/2026/05/28/rollout-shell.jsonl",

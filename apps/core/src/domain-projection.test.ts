@@ -102,6 +102,42 @@ describe("canonical V2 projection", () => {
     db.close();
   });
 
+  it("heals a null usage model_id on replay without overwriting a known model", () => {
+    const db = createDb();
+    runDomainMigrations(db);
+
+    const usageEvent = (model: string | null): NormalizedEventV2 =>
+      event({
+        event_id: "event-usage-heal",
+        source_record_id: "usage-record",
+        timestamp: "2026-07-17T10:00:03.000Z",
+        type: "token.usage.recorded",
+        message_id: "message-1",
+        model,
+        input_tokens: 120,
+        input_token_semantics: "gross",
+        usage_measurement: "increment",
+        output_tokens: 10,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 20,
+        server_tool_use: "{}",
+        usage_source: "claude-transcript",
+        provider_id: "unknown"
+      });
+
+    projectNormalizedEvents(db, [usageEvent(null)]);
+    expect(db.prepare("SELECT model_id FROM usage_events").get()).toEqual({ model_id: null });
+
+    projectNormalizedEvents(db, [usageEvent("glm-5.3")]);
+    expect(db.prepare("SELECT model_id FROM usage_events").get()).toEqual({ model_id: "glm-5.3" });
+
+    projectNormalizedEvents(db, [usageEvent("glm-5.3-flash")]);
+    expect(db.prepare("SELECT model_id FROM usage_events").get()).toEqual({ model_id: "glm-5.3" });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM usage_events").get()).toEqual({ count: 1 });
+
+    db.close();
+  });
+
   it("prefers the terminal event duration_ms over the startedAt/finishedAt delta", () => {
     const db = createDb();
     runDomainMigrations(db);

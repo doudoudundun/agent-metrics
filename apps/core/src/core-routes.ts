@@ -209,25 +209,31 @@ export function registerCoreRoutes({ app, db, input, syncCoordinator }: RouteInp
     }
     const sourceVendor = resolveSourceVendor(request.query);
     const overviewRows = selectOverviewRows(db, scope, sourceVendor);
-    const tokensByModel = selectTokensByModel(db, scope, sourceVendor);
+    const tokensByModel = selectTokensByModel(db, scope, sourceVendor, overviewRows.tokenUsage);
 
     const response = withScopeMetadata(
       {
         ...buildOverviewMetrics({
           sessions: overviewRows.sessions,
           toolEvents: overviewRows.toolEvents,
+          toolCounts: overviewRows.toolCounts,
           prompts: overviewRows.prompts,
           responses: overviewRows.responses,
           tokenUsage: overviewRows.tokenUsage,
           codeEdits: overviewRows.codeEdits
         }),
         tokensByModel,
-        sourceBreakdown: selectSourceBreakdown(db, scope, sourceVendor),
-        providerBreakdown: selectProviderBreakdown(db, scope, sourceVendor).map((row) => ({
+        sourceBreakdown: selectSourceBreakdown(db, scope, sourceVendor, overviewRows.tokenUsage),
+        providerBreakdown: selectProviderBreakdown(db, scope, sourceVendor, overviewRows.tokenUsage).map((row) => ({
           ...row,
           providerId: row.providerId ?? "unknown"
         })),
-        totalCostUsd: tokensByModel.reduce((sum, row) => sum + (row.costUsd ?? 0), 0)
+        // Null when no model row has a list price at all, so the dashboard can
+        // show "—" rather than a misleading $0.00.
+        totalCostUsd: tokensByModel.reduce<number | null>(
+          (sum, row) => (row.costUsd === null ? sum : (sum ?? 0) + row.costUsd),
+          null
+        )
       },
       scope
     );

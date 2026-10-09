@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
+import { createReadStream } from "node:fs";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import { createInterface } from "node:readline";
 
 type EventLedger = {
   eventIds: string[];
@@ -55,39 +57,14 @@ export async function rebuildEventLedgerFromLog(
 ): Promise<Set<string>> {
   const eventIds = new Set<string>();
 
-  let contents: string;
   try {
-    contents = await readFile(eventLogPath, "utf8");
-  } catch {
-    return eventIds;
-  }
-
-  for (const line of contents.split("\n").filter((entry) => entry.length > 0)) {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(line) as unknown;
-    } catch {
-      continue;
+    for await (const key of readLedgerKeys(eventLogPath)) {
+      if (key.startsWith(prefix)) {
+        eventIds.add(key);
+      }
     }
-
-    if (!parsed || typeof parsed !== "object") {
-      continue;
-    }
-
-    const record = parsed as {
-      event_id?: unknown;
-      source_record_id?: unknown;
-    };
-    const ledgerKey =
-      typeof record.source_record_id === "string" && record.source_record_id.length > 0
-        ? record.source_record_id
-        : typeof record.event_id === "string"
-          ? record.event_id
-          : null;
-
-    if (ledgerKey !== null && ledgerKey.startsWith(prefix)) {
-      eventIds.add(ledgerKey);
-    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
 
   return eventIds;
@@ -190,47 +167,51 @@ async function collectLedgerKeysFromEventLogForSessions(input: {
 }): Promise<Set<string>> {
   const eventIds = new Set<string>();
 
-  let contents: string;
-  try {
-    contents = await readFile(input.eventLogPath, "utf8");
-  } catch {
-    return eventIds;
-  }
-
-  for (const line of contents.split("\n").filter((entry) => entry.length > 0)) {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(line) as unknown;
-    } catch {
-      continue;
-    }
-
-    if (!parsed || typeof parsed !== "object") {
-      continue;
-    }
-
-    const record = parsed as {
-      event_id?: unknown;
-      source_record_id?: unknown;
-    };
-    const ledgerKey =
-      typeof record.source_record_id === "string" && record.source_record_id.length > 0
-        ? record.source_record_id
-        : typeof record.event_id === "string"
-          ? record.event_id
-          : null;
-
-    if (ledgerKey === null || !ledgerKey.startsWith(input.prefix)) {
-      continue;
-    }
-
-    const sessionId = input.sessionIdFromKey(ledgerKey);
+  // Complete the read before changing the caller's ledger. An unreadable log
+  // provides no evidence that existing keys are ghosts.
+  for await (const key of readLedgerKeys(input.eventLogPath)) {
+    if (!key.startsWith(input.prefix)) continue;
+    const sessionId = input.sessionIdFromKey(key);
     if (sessionId !== null && input.sessionIds.has(sessionId)) {
-      eventIds.add(ledgerKey);
+      eventIds.add(key);
     }
   }
-
   return eventIds;
+}
+
+async function* readLedgerKeys(filePath: string): AsyncGenerator<string> {
+  const stream = createReadStream(filePath, { encoding: "utf8" });
+  const lines = createInterface({ input: stream, crlfDelay: Infinity });
+  try {
+    for await (const line of lines) {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(line) as unknown;
+      } catch {
+        continue;
+      }
+
+      if (!parsed || typeof parsed !== "object") {
+        continue;
+      }
+
+      const record = parsed as {
+        event_id?: unknown;
+        source_record_id?: unknown;
+      };
+      const ledgerKey =
+        typeof record.source_record_id === "string" && record.source_record_id.length > 0
+          ? record.source_record_id
+          : typeof record.event_id === "string"
+            ? record.event_id
+            : null;
+
+      if (ledgerKey !== null) yield ledgerKey;
+    }
+  } finally {
+    lines.close();
+    stream.destroy();
+  }
 }
 
 async function writeJsonFileAtomic(filePath: string, value: unknown): Promise<void> {

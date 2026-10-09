@@ -10,6 +10,19 @@ import {
 import type { SqliteDatabaseLike } from "./domain-types.js";
 
 describe("cursor account usage storage", () => {
+  it.each(["snake", "camel"])("shadows generation by Shanghai calendar day for %s query rows", (shape) => {
+    const records = [
+      { source: "cursor-official", created: "2026-07-17T00:10:00+08:00", tokens: 50 },
+      { source: "cursor-generation", created: "2026-07-16T16:01:00.000Z", tokens: 3 },
+      { source: "cursor-generation", created: "2026-07-16T15:59:00.000Z", tokens: 9 },
+      { source: "claude-transcript", created: "2026-07-16T16:01:00.000Z", tokens: 12 }
+    ];
+    const rows = records.map(({ source, created, tokens }) => shape === "snake"
+      ? { usage_source: source, created_at: created, tokens }
+      : { usageSource: source, createdAt: created, tokens });
+    expect(dropCursorGenerationShadowedByOfficial(rows).map((row) => row.tokens)).toEqual([50, 9, 12]);
+  });
+
   it("persists and reads the latest official snapshot", () => {
     const db = new Database(":memory:") as unknown as SqliteDatabaseLike;
 

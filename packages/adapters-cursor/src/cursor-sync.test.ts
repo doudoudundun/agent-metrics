@@ -455,6 +455,144 @@ describe("syncCursorArtifacts", () => {
     );
   });
 
+  it("fills request-level edit counts from bubble toolFormerData snapshots", async () => {
+    const root = await mkdtemp(join(tmpdir(), "agent-metrics-cursor-diff-"));
+    const trackingDbPath = join(root, "ai-code-tracking.db");
+    const workspaceStorageRoot = join(root, "workspaceStorage");
+    const globalStorageRoot = join(root, "globalStorage");
+    const workspaceId = "ws_diff";
+    const workspaceStorageDbPath = join(workspaceStorageRoot, workspaceId, "state.vscdb");
+    const globalStorageDbPath = join(globalStorageRoot, "state.vscdb");
+    const storageJsonPath = join(root, "storage.json");
+    const eventLogPath = join(root, "events.jsonl");
+    const cursorPath = join(root, "cursor-ide-state.json");
+    const ledgerPath = join(root, "cursor-ide-ledger.json");
+    const startedAt = 1777482580633;
+    const completedAt = 1777482582633;
+
+    const trackingDb = new Database(trackingDbPath);
+    trackingDb.exec(`
+      CREATE TABLE conversation_summaries (
+        conversationId TEXT PRIMARY KEY,
+        title TEXT,
+        tldr TEXT,
+        overview TEXT,
+        summaryBullets TEXT,
+        model TEXT,
+        mode TEXT,
+        updatedAt INTEGER NOT NULL
+      );
+      CREATE TABLE ai_code_hashes (
+        hash TEXT PRIMARY KEY,
+        source TEXT NOT NULL,
+        fileExtension TEXT,
+        fileName TEXT,
+        requestId TEXT,
+        conversationId TEXT,
+        timestamp INTEGER,
+        model TEXT,
+        createdAt INTEGER NOT NULL
+      );
+    `);
+    trackingDb
+      .prepare(
+        `INSERT INTO ai_code_hashes (
+          hash, source, fileExtension, fileName, requestId, conversationId, timestamp, model, createdAt
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        "hash_1",
+        "composer",
+        "ts",
+        "/D:/projects/dev/demo/a.ts",
+        "req_diff_1",
+        "conv_diff_1",
+        startedAt,
+        "composer-2.5",
+        startedAt
+      );
+    trackingDb.close();
+
+    await mkdir(join(workspaceStorageRoot, workspaceId), { recursive: true });
+    const workspaceDb = new Database(workspaceStorageDbPath);
+    workspaceDb.exec(`CREATE TABLE ItemTable (key TEXT PRIMARY KEY, value TEXT);`);
+    workspaceDb.close();
+
+    await mkdir(globalStorageRoot, { recursive: true });
+    const globalDb = new Database(globalStorageDbPath);
+    globalDb.exec(`
+      CREATE TABLE ItemTable (key TEXT PRIMARY KEY, value TEXT);
+      CREATE TABLE cursorDiskKV (key TEXT PRIMARY KEY, value TEXT);
+    `);
+    const insertKv = globalDb.prepare("INSERT INTO cursorDiskKV (key, value) VALUES (?, ?)");
+    insertKv.run(
+      "bubbleId:conv_diff_1:user_1",
+      JSON.stringify({ type: 1, requestId: "req_diff_1", createdAt: "2026-03-28T10:00:00.000Z" })
+    );
+    insertKv.run(
+      "bubbleId:conv_diff_1:asst_1",
+      JSON.stringify({
+        type: 2,
+        requestId: "",
+        createdAt: "2026-03-28T10:01:00.000Z",
+        toolFormerData: {
+          name: "edit_file_v2",
+          status: "completed",
+          params: JSON.stringify({ relativeWorkspacePath: "a.ts" }),
+          result: JSON.stringify({
+            beforeContentId: "composer.content.before1",
+            afterContentId: "composer.content.after1"
+          })
+        }
+      })
+    );
+    insertKv.run(
+      "bubbleId:conv_diff_1:asst_err",
+      JSON.stringify({
+        type: 2,
+        requestId: "",
+        createdAt: "2026-03-28T10:02:00.000Z",
+        toolFormerData: { name: "edit_file_v2", status: "error" }
+      })
+    );
+    insertKv.run("composer.content.before1", "one\ntwo\n");
+    insertKv.run("composer.content.after1", "one\nTWO\nthree\n");
+    globalDb.close();
+
+    await writeFile(
+      storageJsonPath,
+      JSON.stringify({ backupWorkspaces: { folders: [], workspaces: [], emptyWindows: [] } }, null, 2),
+      "utf8"
+    );
+
+    await syncCursorArtifacts({
+      trackingDbPath,
+      workspaceStorageRoot,
+      storageJsonPath,
+      globalStorageDbPath,
+      eventLogPath,
+      cursorPath,
+      ledgerPath
+    });
+
+    const events = (await readFile(eventLogPath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source_record_id: "cursor:edit:conv_diff_1:req_diff_1",
+          type: "code.edit.applied",
+          tool_name: "Composer Request",
+          insertions: 2,
+          deletions: 1
+        })
+      ])
+    );
+  });
+
   it("hydrates migrated Cursor sessions from global composer headers", async () => {
     const root = await mkdtemp(join(tmpdir(), "agent-metrics-cursor-global-"));
     const trackingDbPath = join(root, "missing-tracking.db");

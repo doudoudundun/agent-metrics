@@ -46,6 +46,11 @@ export type OverviewMetrics = {
   deletions: number;
 };
 
+export type ToolExecutionCounts = Pick<
+  OverviewMetrics,
+  "successfulExecutions" | "failedExecutions" | "startedOnlyExecutions"
+>;
+
 // ---------------------------------------------------------------------------
 // Canonical token accounting (spec section 9.6)
 // ---------------------------------------------------------------------------
@@ -246,14 +251,16 @@ export function isAdditiveUsage(row: { usage_measurement?: string | null; usage_
 export function buildOverviewMetrics(input: {
   sessions: SessionRow[];
   toolEvents: ToolRow[];
+  /** Pre-aggregated logical calls, avoiding materializing the full tool history. */
+  toolCounts?: ToolExecutionCounts;
   prompts: PromptRow[];
   responses: ResponseRow[];
   tokenUsage: TokenUsageRow[];
   codeEdits: CodeEditRow[];
 }): OverviewMetrics {
-  const successfulExecutions = input.toolEvents.filter((row) => row.status === "succeeded").length;
-  const failedExecutions = input.toolEvents.filter((row) => row.status === "failed").length;
-  const startedOnlyExecutions = input.toolEvents.filter((row) => row.status === "started").length;
+  const successfulExecutions = input.toolCounts?.successfulExecutions ?? input.toolEvents.filter((row) => row.status === "succeeded").length;
+  const failedExecutions = input.toolCounts?.failedExecutions ?? input.toolEvents.filter((row) => row.status === "failed").length;
+  const startedOnlyExecutions = input.toolCounts?.startedOnlyExecutions ?? input.toolEvents.filter((row) => row.status === "started").length;
   const totalToolCalls = successfulExecutions + failedExecutions;
   const editOperationCount = input.codeEdits.reduce((sum, row) => sum + row.edit_operation_count, 0);
   const turnCount = input.prompts.length;

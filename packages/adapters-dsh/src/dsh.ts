@@ -1,5 +1,6 @@
 import { normalizeNativeId, normalizeWorkspacePath, toNormalizedEventV2 } from "@agent-metrics/event-schema";
 import type { AnyEvent, NormalizedEventV2, SourceAdapter, SourceVendor } from "@agent-metrics/event-schema";
+import { diffTextStats } from "@agent-metrics/shared-utils";
 
 const DSH_SOURCE_VENDOR: SourceVendor = "dsh";
 const DSH_SOURCE_ADAPTER: SourceAdapter = "dsh-jsonl";
@@ -14,7 +15,7 @@ export type DshSessionHeader = {
 export type DshParseState = {
   lastModel: string | null;
   lastProviderId: string | null;
-  toolStarts: Map<string, { name: string; startedAt: number }>;
+  toolStarts: Map<string, { name: string; startedAt: number; args: Record<string, unknown> | null }>;
 };
 
 export function createDshParseState(): DshParseState {
@@ -135,7 +136,7 @@ function normalizeToolCall(
     return [];
   }
 
-  state.toolStarts.set(toolCallId, { name: toolName, startedAt: time });
+  state.toolStarts.set(toolCallId, { name: toolName, startedAt: time, args: parseToolArguments(data.arguments) });
   return [
     {
       event_id: buildEventId(`${sessionId}:tool:${toolCallId}:started`),
@@ -181,35 +182,107 @@ function normalizeToolResult(
   const toolName = started?.name ?? "unknown";
   const durationMs = Math.max(0, time - (started?.startedAt ?? time));
   const failed = firstBlock?.isError === true || asRecord(data.error) !== null;
-  return [
-    failed
-      ? {
-          event_id: buildEventId(`${sessionId}:tool:${toolCallId}:failed`),
-          session_id: sessionId,
-          timestamp: toIsoTimestamp(time),
-          source_vendor: DSH_SOURCE_VENDOR,
-          source_adapter: DSH_SOURCE_ADAPTER,
-          workspace_path: workspacePath,
-          type: "tool.failed",
-          tool_call_id: normalizeNativeId(toolCallId) ?? `native:${toolCallId}`,
-          tool_name: toolName,
-          status: "failed",
-          duration_ms: durationMs
-        }
-      : {
-          event_id: buildEventId(`${sessionId}:tool:${toolCallId}:succeeded`),
-          session_id: sessionId,
-          timestamp: toIsoTimestamp(time),
-          source_vendor: DSH_SOURCE_VENDOR,
-          source_adapter: DSH_SOURCE_ADAPTER,
-          workspace_path: workspacePath,
-          type: "tool.succeeded",
-          tool_call_id: normalizeNativeId(toolCallId) ?? `native:${toolCallId}`,
-          tool_name: toolName,
-          status: "succeeded",
-          duration_ms: durationMs
-        }
+  if (failed) {
+    return [
+      {
+        event_id: buildEventId(`${sessionId}:tool:${toolCallId}:failed`),
+        session_id: sessionId,
+        timestamp: toIsoTimestamp(time),
+        source_vendor: DSH_SOURCE_VENDOR,
+        source_adapter: DSH_SOURCE_ADAPTER,
+        workspace_path: workspacePath,
+        type: "tool.failed",
+        tool_call_id: normalizeNativeId(toolCallId) ?? `native:${toolCallId}`,
+        tool_name: toolName,
+        status: "failed",
+        duration_ms: durationMs
+      }
+    ];
+  }
+
+  const events: AnyEvent[] = [
+    {
+      event_id: buildEventId(`${sessionId}:tool:${toolCallId}:succeeded`),
+      session_id: sessionId,
+      timestamp: toIsoTimestamp(time),
+      source_vendor: DSH_SOURCE_VENDOR,
+      source_adapter: DSH_SOURCE_ADAPTER,
+      workspace_path: workspacePath,
+      type: "tool.succeeded",
+      tool_call_id: normalizeNativeId(toolCallId) ?? `native:${toolCallId}`,
+      tool_name: toolName,
+      status: "succeeded",
+      duration_ms: durationMs
+    }
   ];
+
+  const edit = buildDshCodeEdit(toolName, started?.args ?? null);
+  if (edit !== null) {
+    events.push({
+      event_id: buildEventId(`${sessionId}:tool:${toolCallId}:edit`),
+      session_id: sessionId,
+      timestamp: toIsoTimestamp(time),
+      source_vendor: DSH_SOURCE_VENDOR,
+      source_adapter: DSH_SOURCE_ADAPTER,
+      workspace_path: workspacePath,
+      type: "code.edit.applied",
+      ...edit
+    });
+  }
+
+  return events;
+}
+
+function parseToolArguments(value: unknown): Record<string, unknown> | null {
+  if (typeof value === "string") {
+    try {
+      return asRecord(JSON.parse(value));
+    } catch {
+      return null;
+    }
+  }
+  return asRecord(value);
+}
+
+function buildDshCodeEdit(
+  toolName: string,
+  args: Record<string, unknown> | null
+): { tool_name: string; files_changed: string[]; file_count: number; insertions: number; deletions: number; edit_operation_count: number } | null {
+  if (args === null) {
+    return null;
+  }
+
+  const normalizedTool = toolName.toLowerCase();
+  const path = readString(args.file_path) ?? readString(args.path) ?? readString(args.filePath);
+  if (path === null) {
+    return null;
+  }
+
+  if (normalizedTool === "edit") {
+    const diff = diffTextStats(readString(args.old_string) ?? "", readString(args.new_string) ?? "");
+    return {
+      tool_name: toolName,
+      files_changed: [path],
+      file_count: 1,
+      insertions: diff.insertions,
+      deletions: diff.deletions,
+      edit_operation_count: 1
+    };
+  }
+
+  if (normalizedTool === "write") {
+    const diff = diffTextStats("", readString(args.content) ?? "");
+    return {
+      tool_name: toolName,
+      files_changed: [path],
+      file_count: 1,
+      insertions: diff.insertions,
+      deletions: diff.deletions,
+      edit_operation_count: 1
+    };
+  }
+
+  return null;
 }
 
 function normalizeAssistantMessage(

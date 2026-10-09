@@ -87,6 +87,43 @@ function seedLegacyTables(db: InstanceType<typeof Database>): void {
 }
 
 describe("domain query plans", () => {
+  it("upgrades an already-applied v4 activity index without changing event counts", () => {
+    const db = new Database(":memory:");
+    runDomainMigrations(db);
+    seedDomainTables(db);
+    db.exec(`
+      DELETE FROM schema_migrations WHERE version = 5;
+      DROP INDEX idx_tool_calls_activity_at;
+      CREATE INDEX idx_tool_calls_activity_at ON tool_calls (COALESCE(started_at, finished_at));
+    `);
+    runDomainMigrations(db);
+    expect(db.prepare<{ name: string }>("PRAGMA index_info('idx_tool_calls_activity_at')").all().map((row) => row.name)).toEqual(
+      expect.arrayContaining(["source_instance_id", "session_id", "status", "tool_name", "duration_ms"])
+    );
+    expect(db.prepare("SELECT COUNT(*) AS count FROM tool_calls").get()).toEqual({ count: 200 });
+    expect(db.prepare("SELECT event_count FROM projection_watermarks WHERE projection_name = 'global-event-count'").get()).toEqual({ event_count: 200 });
+    db.close();
+  });
+
+  it("uses time indexes for all-source dashboard and widget windows", () => {
+    const db = new Database(":memory:");
+    initializeLegacySchema(db);
+    runDomainMigrations(db);
+    seedDomainTables(db);
+    seedLegacyTables(db);
+    const start = "2026-07-17T00:30:00.000Z";
+    const end = "2026-07-17T00:35:00.000Z";
+    for (const [sql, indexName] of [
+      ["SELECT model, input_tokens FROM token_usage_events WHERE created_at >= ? AND created_at <= ?", "idx_token_usage_events_created_at"],
+      ["SELECT displayed_input_tokens FROM usage_events WHERE occurred_at >= ? AND occurred_at < ? AND usage_measurement = 'increment'", "idx_usage_events_occurred_at"],
+      ["SELECT tool_name FROM tool_calls WHERE COALESCE(started_at, finished_at) >= ? AND COALESCE(started_at, finished_at) <= ?", "idx_tool_calls_activity_at"],
+      ["SELECT payload_json FROM normalized_events WHERE event_type = 'code.edit.recorded' AND timestamp >= ? AND timestamp < ?", "idx_normalized_events_type_timestamp"]
+    ]) {
+      expect(planUsesNamedIndex(explainDetails(db, sql, start, end), indexName)).toBe(true);
+    }
+    db.close();
+  });
+
   it("uses named domain indexes for bounded session and timeline queries", () => {
     const db = new Database(":memory:");
     runDomainMigrations(db);

@@ -1,5 +1,6 @@
 import { normalizeNativeId, toNormalizedEventV2 } from "@agent-metrics/event-schema";
 import type { AnyEvent, NormalizedEventV2, SourceAdapter, SourceVendor } from "@agent-metrics/event-schema";
+import { diffTextStats } from "@agent-metrics/shared-utils";
 
 const OPENCODE_SOURCE_VENDOR: SourceVendor = "opencode";
 const OPENCODE_SOURCE_ADAPTER: SourceAdapter = "opencode-db";
@@ -130,12 +131,19 @@ export function normalizeOpenCodeMessageRow(input: {
 
   const providerId =
     normalizeOptionalString(parsed.providerID) ??
+    // ZCode writes lower-camel `providerId` (see modelId note below).
+    normalizeOptionalString(parsed.providerId) ??
     normalizeOptionalString(readNestedValue(parsed, "model", "providerID")) ??
+    normalizeOptionalString(readNestedValue(parsed, "model", "providerId")) ??
     null;
   const providerMetadata = providerId !== null ? input.providerRegistry?.[providerId] : undefined;
   const model =
     normalizeOptionalString(parsed.modelID) ??
+    // ZCode forks the OpenCode schema with lower-camel `modelId`; ~765 legacy
+    // assistant rows carry only this casing, so without it they land as null.
+    normalizeOptionalString(parsed.modelId) ??
     normalizeOptionalString(readNestedValue(parsed, "model", "modelID")) ??
+    normalizeOptionalString(readNestedValue(parsed, "model", "modelId")) ??
     normalizeOptionalString(input.sessionModel) ??
     null;
   const stopReason =
@@ -281,9 +289,117 @@ export function normalizeOpenCodePartRow(input: {
             duration_ms: durationMs
           }
     );
+
+    if (status === "completed") {
+      const edit = buildOpenCodeCodeEdit(toolName, state);
+      if (edit !== null) {
+        events.push({
+          event_id: buildEventId(eventContext, `part:${input.row.id}:tool:edit`),
+          session_id: input.row.session_id,
+          timestamp: toIsoTimestamp(endAt),
+          source_vendor: eventContext.sourceVendor,
+          source_adapter: eventContext.sourceAdapter,
+          workspace_path: workspacePath,
+          type: "code.edit.applied",
+          ...edit
+        });
+      }
+    }
   }
 
   return toV2Events(events);
+}
+
+function buildOpenCodeCodeEdit(
+  toolName: string,
+  state: Record<string, unknown> | null
+): { tool_name: string; files_changed: string[]; file_count: number; insertions: number; deletions: number; edit_operation_count: number } | null {
+  const normalizedTool = toolName.toLowerCase();
+  if (normalizedTool !== "edit" && normalizedTool !== "write" && normalizedTool !== "multiedit") {
+    return null;
+  }
+
+  const toolInput = asRecord(state?.input);
+  if (toolInput === null) {
+    return null;
+  }
+
+  const metadata = asRecord(state?.metadata);
+  const path =
+    normalizeOptionalString(toolInput.file_path) ??
+    normalizeOptionalString(toolInput.filePath) ??
+    normalizeOptionalString(metadata?.filepath);
+  if (path === undefined) {
+    return null;
+  }
+
+  const known = readKnownDiffCounts(metadata);
+  let insertions: number;
+  let deletions: number;
+  let operationCount = 1;
+
+  if (normalizedTool === "write") {
+    const fallback = diffTextStats("", normalizeOptionalString(toolInput.content) ?? "");
+    insertions = known?.insertions ?? fallback.insertions;
+    deletions = known?.deletions ?? fallback.deletions;
+  } else if (normalizedTool === "multiedit" && Array.isArray(toolInput.edits) && toolInput.edits.length > 0) {
+    operationCount = toolInput.edits.length;
+    if (known !== null) {
+      insertions = known.insertions;
+      deletions = known.deletions;
+    } else {
+      insertions = 0;
+      deletions = 0;
+      for (const entry of toolInput.edits) {
+        const editInput = asRecord(entry);
+        if (editInput === null) {
+          continue;
+        }
+        const diff = diffTextStats(
+          normalizeOptionalString(editInput.old_string) ?? normalizeOptionalString(editInput.oldString) ?? "",
+          normalizeOptionalString(editInput.new_string) ?? normalizeOptionalString(editInput.newString) ?? ""
+        );
+        insertions += diff.insertions;
+        deletions += diff.deletions;
+      }
+    }
+  } else {
+    const fallback = diffTextStats(
+      normalizeOptionalString(toolInput.old_string) ?? normalizeOptionalString(toolInput.oldString) ?? "",
+      normalizeOptionalString(toolInput.new_string) ?? normalizeOptionalString(toolInput.newString) ?? ""
+    );
+    insertions = known?.insertions ?? fallback.insertions;
+    deletions = known?.deletions ?? fallback.deletions;
+  }
+
+  return {
+    tool_name: toolName,
+    files_changed: [path],
+    file_count: 1,
+    insertions,
+    deletions,
+    edit_operation_count: operationCount
+  };
+}
+
+function readKnownDiffCounts(metadata: Record<string, unknown> | null): { insertions: number; deletions: number } | null {
+  const filediff = asRecord(metadata?.filediff);
+  const filediffAdditions = normalizeInteger(filediff?.additions);
+  const filediffDeletions = normalizeInteger(filediff?.deletions);
+  if (filediffAdditions !== null && filediffDeletions !== null) {
+    return { insertions: filediffAdditions, deletions: filediffDeletions };
+  }
+
+  const display = asRecord(metadata?.display);
+  if (normalizeOptionalString(display?.kind) === "file_diff") {
+    const displayAdditions = normalizeInteger(display?.additions);
+    const displayDeletions = normalizeInteger(display?.deletions);
+    if (displayAdditions !== null && displayDeletions !== null) {
+      return { insertions: displayAdditions, deletions: displayDeletions };
+    }
+  }
+
+  return null;
 }
 
 export function normalizeOpenCodeToolPartRow(input: {
@@ -351,13 +467,18 @@ function normalizeOpenCodeStepFinishPart(input: {
   const providerId =
     (messageRecord !== null
       ? normalizeOptionalString(messageRecord.providerID) ??
-        normalizeOptionalString(readNestedValue(messageRecord, "model", "providerID"))
+        normalizeOptionalString(messageRecord.providerId) ??
+        normalizeOptionalString(readNestedValue(messageRecord, "model", "providerID")) ??
+        normalizeOptionalString(readNestedValue(messageRecord, "model", "providerId"))
       : undefined) ?? null;
   const providerMetadata = providerId !== null ? input.providerRegistry?.[providerId] : undefined;
   const model =
     (messageRecord !== null
       ? normalizeOptionalString(messageRecord.modelID) ??
-        normalizeOptionalString(readNestedValue(messageRecord, "model", "modelID"))
+        // ZCode lower-camel variant; see normalizeOpenCodeMessageRow.
+        normalizeOptionalString(messageRecord.modelId) ??
+        normalizeOptionalString(readNestedValue(messageRecord, "model", "modelID")) ??
+        normalizeOptionalString(readNestedValue(messageRecord, "model", "modelId"))
       : undefined) ??
     normalizeOptionalString(input.sessionModel) ??
     null;

@@ -164,7 +164,9 @@ describe("runDomainMigrations", () => {
       { version: 0, name: "000-adopt-legacy-baseline", applied_at: "2026-07-17T12:00:00.000Z" },
       { version: 1, name: "001-create-phase2-domain", applied_at: "2026-07-17T12:00:00.000Z" },
       { version: 2, name: "002-add-session-query-indexes", applied_at: "2026-07-17T12:00:00.000Z" },
-      { version: 3, name: "003-split-zcode-vendor", applied_at: "2026-07-17T12:00:00.000Z" }
+      { version: 3, name: "003-split-zcode-vendor", applied_at: "2026-07-17T12:00:00.000Z" },
+      { version: 4, name: "004-optimize-aggregate-queries", applied_at: "2026-07-17T12:00:00.000Z" },
+      { version: 5, name: "005-cover-tool-aggregate-queries", applied_at: "2026-07-17T12:00:00.000Z" }
     ]);
 
     db.close();
@@ -181,6 +183,7 @@ describe("runDomainMigrations", () => {
     expect(db.prepare("SELECT COUNT(*) AS count FROM schema_migrations WHERE name = 'codex-raw-input-tokens-v1'").get()).toEqual({ count: 1 });
     expect(db.prepare("SELECT COUNT(*) AS count FROM domain_sessions").get()).toEqual({ count: 1 });
     expect(db.prepare("SELECT COUNT(*) AS count FROM normalized_events").get()).toEqual({ count: 6 });
+    expect(db.prepare("SELECT event_count FROM projection_watermarks WHERE projection_name = 'global-event-count'").get()).toEqual({ event_count: 6 });
     expect(db.prepare("SELECT raw_input_tokens, displayed_input_tokens FROM usage_events").get()).toEqual({
       raw_input_tokens: 120,
       displayed_input_tokens: 120

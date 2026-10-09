@@ -24,7 +24,7 @@ export const SourceBreakdownRowSchema = z.object({
   turnCount: NonNegativeInt,
   totalTokens: NonNegativeInt,
   toolCalls: NonNegativeInt,
-  costUsd: z.number().nonnegative()
+  costUsd: z.number().nonnegative().nullable()
 });
 
 export const ProviderBreakdownRowSchema = z.object({
@@ -49,7 +49,7 @@ export const OverviewResponseSchema = AggregateMetaSchema.merge(TokenComponentsS
   tokensByModel: z.array(TokensByModelRowSchema),
   sourceBreakdown: z.array(SourceBreakdownRowSchema),
   providerBreakdown: z.array(ProviderBreakdownRowSchema),
-  totalCostUsd: z.number().nonnegative()
+  totalCostUsd: z.number().nonnegative().nullable()
 });
 
 export const ToolRowSchema = z.object({
@@ -91,7 +91,8 @@ export const WidgetSnapshotResponseSchema = z.object({
     cacheHitRate: FiniteRate,
     toolSuccessRate: FiniteRate,
     editOperationCount: NonNegativeInt,
-    affectedFileCount: NonNegativeInt
+    affectedFileCount: NonNegativeInt,
+    totalCostUsd: z.number().nonnegative().nullable()
   })
 });
 

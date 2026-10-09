@@ -4,6 +4,12 @@ import type { CursorModelAggregation } from "@agent-metrics/contracts";
 import type { SqliteDatabaseLike } from "./domain-types.js";
 
 const CURSOR_OFFICIAL_TIME_ZONE = "Asia/Shanghai";
+const SHANGHAI_DAY_FORMATTER = new Intl.DateTimeFormat("en-CA", {
+  timeZone: CURSOR_OFFICIAL_TIME_ZONE,
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit"
+});
 
 export type CursorAccountUsageRow = {
   sourceInstanceId: string;
@@ -430,10 +436,5 @@ function shanghaiDayKey(iso: string): string {
   if (Number.isNaN(parsed.getTime())) {
     return "";
   }
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: CURSOR_OFFICIAL_TIME_ZONE,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit"
-  }).format(parsed);
+  return SHANGHAI_DAY_FORMATTER.format(parsed);
 }

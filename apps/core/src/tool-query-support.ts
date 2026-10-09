@@ -1,19 +1,17 @@
 import type { SourceVendor } from "@agent-metrics/event-schema";
+import type { ToolExecutionCounts } from "@agent-metrics/metrics-engine";
 import type { ResolvedTimeScope } from "./time-scope.js";
 import type { MetricsDatabase, SourceVendorFilter } from "./core-types.js";
-import { buildTimeWindow, readScalar } from "./query-support.js";
+import { buildTimeWindow } from "./query-support.js";
 
 type TimeWindow = {
   whereSql: string;
   params: string[];
 };
 
-type OverviewToolRow = {
-  event_id: string;
-  session_id: string;
-  tool_name: string;
+type ToolStatusCountRow = {
   status: string;
-  duration_ms: number | null;
+  count: number;
 };
 
 type RawToolRankingRow = {
@@ -41,31 +39,38 @@ const TOOL_CALLS_JOIN = `
 const TOOL_ACTIVITY_AT = "COALESCE(tool_calls.started_at, tool_calls.finished_at)";
 
 export function hasDomainToolCalls(db: MetricsDatabase): boolean {
-  return readScalar(db, "SELECT COUNT(*) AS count FROM tool_calls") > 0;
+  return Boolean(db.prepare("SELECT 1 FROM tool_calls LIMIT 1").get());
 }
 
-export function selectOverviewToolEvents(
+export function selectOverviewToolCounts(
   db: MetricsDatabase,
   scope?: ResolvedTimeScope,
   sourceVendor: SourceVendorFilter = "all"
-): OverviewToolRow[] {
+): ToolExecutionCounts {
+  let rows: ToolStatusCountRow[];
   if (hasDomainToolCalls(db)) {
     const window = buildToolCallsWindow(scope, sourceVendor);
-    return db
-      .prepare<OverviewToolRow>(`
-        SELECT
-          tool_calls.tool_call_id AS event_id,
-          tool_calls.session_id,
-          tool_calls.tool_name,
-          tool_calls.status,
-          tool_calls.duration_ms
+    rows = db
+      .prepare<ToolStatusCountRow>(`
+        SELECT tool_calls.status, COUNT(*) AS count
         ${TOOL_CALLS_JOIN}
         ${window.whereSql}
+        GROUP BY tool_calls.status
       `)
       .all(...window.params);
+  } else {
+    rows = selectLegacyOverviewToolCounts(db, scope, sourceVendor);
   }
 
-  return selectLegacyOverviewToolEvents(db, scope, sourceVendor);
+  const counts: ToolExecutionCounts = {
+    successfulExecutions: 0, failedExecutions: 0, startedOnlyExecutions: 0
+  };
+  for (const row of rows) {
+    if (row.status === "succeeded") counts.successfulExecutions += row.count;
+    else if (row.status === "failed") counts.failedExecutions += row.count;
+    else if (row.status === "started") counts.startedOnlyExecutions += row.count;
+  }
+  return counts;
 }
 
 export function selectToolRankingRows(
@@ -80,13 +85,14 @@ export function selectToolRankingRows(
         SELECT
           domain_sessions.source_vendor AS sourceVendor,
           tool_calls.tool_name AS toolName,
-          tool_calls.session_id AS sessionId,
-          tool_calls.tool_call_id AS eventId,
-          1 AS count,
-          CASE WHEN tool_calls.status = 'failed' THEN 1 ELSE 0 END AS failures,
-          COALESCE(tool_calls.duration_ms, 0) AS totalDurationMs
+          '' AS sessionId,
+          '' AS eventId,
+          COUNT(*) AS count,
+          SUM(CASE WHEN tool_calls.status = 'failed' THEN 1 ELSE 0 END) AS failures,
+          SUM(COALESCE(tool_calls.duration_ms, 0)) AS totalDurationMs
         ${TOOL_CALLS_JOIN}
         ${window.whereSql}
+        GROUP BY domain_sessions.source_vendor, tool_calls.tool_name
       `)
       .all(...window.params);
   }
@@ -147,15 +153,15 @@ function legacyToolCallKeyExpression(): string {
 }
 
 
-function selectLegacyOverviewToolEvents(
+function selectLegacyOverviewToolCounts(
   db: MetricsDatabase,
   scope?: ResolvedTimeScope,
   sourceVendor: SourceVendorFilter = "all"
-): OverviewToolRow[] {
+): ToolStatusCountRow[] {
   const window = buildTimeWindow("created_at", scope, sourceVendor);
   const toolCallKey = legacyToolCallKeyExpression();
   return db
-    .prepare<OverviewToolRow>(`
+    .prepare<ToolStatusCountRow>(`
       WITH deduped_tool_events AS (
         SELECT
           ${toolCallKey} AS normalized_event_id,
@@ -171,13 +177,9 @@ function selectLegacyOverviewToolEvents(
         ${window.whereSql}
         GROUP BY normalized_event_id, session_id, tool_name
       )
-      SELECT
-        normalized_event_id AS event_id,
-        session_id,
-        tool_name,
-        status,
-        duration_ms
+      SELECT status, COUNT(*) AS count
       FROM deduped_tool_events
+      GROUP BY status
     `)
     .all(...window.params);
 }

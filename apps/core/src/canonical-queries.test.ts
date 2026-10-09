@@ -271,7 +271,7 @@ describe("canonical widget queries", () => {
        FROM usage_events
        WHERE occurred_at >= ? AND occurred_at < ?
          AND usage_measurement = 'increment'`,
-      "idx_usage_events_source_occurred_at",
+      "idx_usage_events_occurred_at",
       [windowStart, windowEnd]
     );
     // Matches the production widget snapshot query, which filters on started_at
@@ -293,7 +293,7 @@ describe("canonical widget queries", () => {
        FROM normalized_events
        WHERE event_type = 'code.edit.applied'
          AND timestamp >= ? AND timestamp < ?`,
-      "idx_normalized_events_source_timestamp",
+      "idx_normalized_events_type_timestamp",
       [windowStart, windowEnd]
     );
 

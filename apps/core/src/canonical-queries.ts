@@ -1,4 +1,5 @@
 import { dropCursorGenerationShadowedByOfficial } from "./cursor-account-usage.js";
+import { estimateCostUsd } from "@agent-metrics/metrics-engine";
 import type { SessionDetailResponse, SessionRow, WidgetSnapshotResponse } from "@agent-metrics/contracts";
 import { SessionDetailResponseSchema, WidgetSnapshotResponseSchema } from "@agent-metrics/contracts";
 import type { SourceAdapter, SourceVendor } from "@agent-metrics/event-schema";
@@ -7,6 +8,7 @@ import type { SourceVendorFilter } from "./core-types.js";
 import { resolveTimeScope, type ResolvedTimeScope } from "./time-scope.js";
 
 type UsageRow = {
+  modelId: string | null;
   displayedInputTokens: number;
   outputTokens: number;
   cacheReadTokens: number;
@@ -145,6 +147,7 @@ export function selectWidgetSnapshot(
     db
       .prepare<UsageRow>(
         `SELECT
+         model_id AS modelId,
          displayed_input_tokens AS displayedInputTokens,
          output_tokens AS outputTokens,
          cache_read_input_tokens AS cacheReadTokens,
@@ -171,6 +174,19 @@ export function selectWidgetSnapshot(
     }),
     { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 }
   );
+  const totalCostUsd = usageRows.reduce<number | null>((total, row) => {
+    const cost = estimateCostUsd({
+      model: row.modelId ?? null,
+      inputTokens: safeCount(row.displayedInputTokens),
+      outputTokens: safeCount(row.outputTokens),
+      cacheReadTokens: safeCount(row.cacheReadTokens),
+      cacheCreationTokens: safeCount(row.cacheCreationTokens)
+    });
+    if (cost === null) {
+      return total;
+    }
+    return (total ?? 0) + cost;
+  }, null);
   // Spec section 10.5 indexes tool_calls on (source_instance_id, session_id, started_at).
   // Terminal-only calls have started_at = null and fall outside any rolling window anchored
   // on started_at, so they are excluded by the indexable predicate below. COALESCE would
@@ -232,7 +248,8 @@ export function selectWidgetSnapshot(
       cacheHitRate: cacheableInput > 0 ? usage.cacheReadTokens / cacheableInput : 0,
       toolSuccessRate: terminalToolCalls > 0 ? successfulToolCalls / terminalToolCalls : 0,
       editOperationCount: editStats.editOperationCount,
-      affectedFileCount: editStats.affectedFileCount
+      affectedFileCount: editStats.affectedFileCount,
+      totalCostUsd
     }
   });
 }

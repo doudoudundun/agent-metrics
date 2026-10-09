@@ -155,6 +155,9 @@ function projectOne(
   ).run(parsed.event_id, parsed.adapter_instance_id, parsed.source_adapter, fingerprint, observedAt);
 
   if (conflict) {
+    if (parsed.type === "token.usage.recorded") {
+      healUsageModelId(db, parsed);
+    }
     recordProjectionDiagnostic({
       db,
       diagnosticCode: "IDENTITY_CONFLICT",
@@ -355,6 +358,18 @@ function recomputeToolCall(
     duration,
     null
   );
+}
+
+function healUsageModelId(
+  db: SqliteDatabaseLike,
+  event: Extract<NormalizedEventV2, { type: "token.usage.recorded" }>
+): void {
+  if (typeof event.model !== "string" || event.model.length === 0) {
+    return;
+  }
+  db.prepare(
+    "UPDATE usage_events SET model_id = ? WHERE event_id = ? AND model_id IS NULL"
+  ).run(event.model, event.event_id);
 }
 
 function projectUsage(

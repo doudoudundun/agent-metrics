@@ -128,7 +128,7 @@ describe("DashboardPage", () => {
     fireEvent.click(screen.getByRole("button", { name: /Codex/ }));
 
     expect(await screen.findByText("150")).toBeInTheDocument();
-    expect(fetchOverview).toHaveBeenLastCalledWith(
+    expect(fetchOverview).toHaveBeenCalledWith(
       { mode: "calendar", range: "day" },
       "codex",
       expect.any(AbortSignal)
@@ -136,18 +136,18 @@ describe("DashboardPage", () => {
 
     fireEvent.mouseEnter(screen.getByRole("button", { name: "Others" }).parentElement as HTMLElement);
     fireEvent.click(screen.getByRole("button", { name: /Claude Code/ }));
-    expect(fetchOverview).toHaveBeenLastCalledWith(
+    await waitFor(() => expect(fetchOverview).toHaveBeenCalledWith(
       { mode: "calendar", range: "day" },
       "claude-code",
       expect.any(AbortSignal)
-    );
+    ));
 
     fireEvent.click(screen.getByRole("button", { name: /DSH/ }));
-    expect(fetchOverview).toHaveBeenLastCalledWith(
+    await waitFor(() => expect(fetchOverview).toHaveBeenCalledWith(
       { mode: "calendar", range: "day" },
       "dsh",
       expect.any(AbortSignal)
-    );
+    ));
 
     view.unmount();
   });
@@ -211,7 +211,7 @@ describe("DashboardPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /Codex/ }));
     await waitFor(() =>
-      expect(fetchOverview).toHaveBeenLastCalledWith(
+      expect(fetchOverview).toHaveBeenCalledWith(
         { mode: "calendar", range: "day" },
         "codex",
         expect.any(AbortSignal)
@@ -439,16 +439,15 @@ describe("DashboardPage", () => {
 
     const view = render(<DashboardPage />);
     await screen.findByRole("region", { name: "Overview metrics for Today" });
-    // Two overview queries: the filtered one driving the panels, plus an
-    // unfiltered one so the source chips keep ranking against every source.
-    expect(fetchOverview).toHaveBeenCalledTimes(2);
+    // All sources shares the overview response with the source chips.
+    expect(fetchOverview).toHaveBeenCalledTimes(1);
 
     fireEvent.click(screen.getByRole("button", { name: "Sync sources" }));
     await waitFor(() => expect(fetchSyncRun).toHaveBeenCalledWith("run_seed", expect.any(AbortSignal)));
-    expect(fetchOverview).toHaveBeenCalledTimes(2);
+    expect(fetchOverview).toHaveBeenCalledTimes(1);
 
     resolveRun(buildSyncRun("run_seed", "succeeded"));
-    await waitFor(() => expect(fetchOverview).toHaveBeenCalledTimes(4));
+    await waitFor(() => expect(fetchOverview).toHaveBeenCalledTimes(2));
 
     view.unmount();
   });

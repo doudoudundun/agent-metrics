@@ -1,5 +1,6 @@
 import { normalizeNativeId, normalizeWorkspacePath, toNormalizedEventV2 } from "@agent-metrics/event-schema";
 import type { AnyEvent, NormalizedEventV2, SourceAdapter, SourceVendor } from "@agent-metrics/event-schema";
+import { diffTextStats } from "@agent-metrics/shared-utils";
 
 const KIMICODE_SOURCE_VENDOR: SourceVendor = "kimicode";
 const KIMICODE_SOURCE_ADAPTER: SourceAdapter = "kimicode-wire";
@@ -23,7 +24,7 @@ export type KimicodeWireParseState = {
   lastModel: string | null;
   lastProviderId: string | null;
   lastMessageId: string | null;
-  toolStarts: Map<string, { name: string; startedAt: number }>;
+  toolStarts: Map<string, { name: string; startedAt: number; args: Record<string, unknown> | null }>;
 };
 
 export function createKimicodeWireParseState(): KimicodeWireParseState {
@@ -180,7 +181,7 @@ function normalizeToolCall(
     return [];
   }
 
-  state.toolStarts.set(toolCallId, { name: toolName, startedAt: time });
+  state.toolStarts.set(toolCallId, { name: toolName, startedAt: time, args: asRecord(record.args) });
   return [
     {
       event_id: buildEventId(`${context.sessionId}:agent:${context.agentId}:tool:${toolCallId}:started`),
@@ -214,35 +215,117 @@ function normalizeToolResult(
   const durationMs = Math.max(0, time - (started?.startedAt ?? time));
   const result = asRecord(record.result);
   const failed = result?.isError === true;
-  return [
-    failed
-      ? {
-          event_id: buildEventId(`${context.sessionId}:agent:${context.agentId}:tool:${toolCallId}:failed`),
-          session_id: context.sessionId,
-          timestamp: toIsoTimestamp(time),
-          source_vendor: KIMICODE_SOURCE_VENDOR,
-          source_adapter: KIMICODE_SOURCE_ADAPTER,
-          workspace_path: context.workspacePath,
-          type: "tool.failed",
-          tool_call_id: normalizeNativeId(toolCallId) ?? `native:${toolCallId}`,
-          tool_name: toolName,
-          status: "failed",
-          duration_ms: durationMs
-        }
-      : {
-          event_id: buildEventId(`${context.sessionId}:agent:${context.agentId}:tool:${toolCallId}:succeeded`),
-          session_id: context.sessionId,
-          timestamp: toIsoTimestamp(time),
-          source_vendor: KIMICODE_SOURCE_VENDOR,
-          source_adapter: KIMICODE_SOURCE_ADAPTER,
-          workspace_path: context.workspacePath,
-          type: "tool.succeeded",
-          tool_call_id: normalizeNativeId(toolCallId) ?? `native:${toolCallId}`,
-          tool_name: toolName,
-          status: "succeeded",
-          duration_ms: durationMs
-        }
+  if (failed) {
+    return [
+      {
+        event_id: buildEventId(`${context.sessionId}:agent:${context.agentId}:tool:${toolCallId}:failed`),
+        session_id: context.sessionId,
+        timestamp: toIsoTimestamp(time),
+        source_vendor: KIMICODE_SOURCE_VENDOR,
+        source_adapter: KIMICODE_SOURCE_ADAPTER,
+        workspace_path: context.workspacePath,
+        type: "tool.failed",
+        tool_call_id: normalizeNativeId(toolCallId) ?? `native:${toolCallId}`,
+        tool_name: toolName,
+        status: "failed",
+        duration_ms: durationMs
+      }
+    ];
+  }
+
+  const events: AnyEvent[] = [
+    {
+      event_id: buildEventId(`${context.sessionId}:agent:${context.agentId}:tool:${toolCallId}:succeeded`),
+      session_id: context.sessionId,
+      timestamp: toIsoTimestamp(time),
+      source_vendor: KIMICODE_SOURCE_VENDOR,
+      source_adapter: KIMICODE_SOURCE_ADAPTER,
+      workspace_path: context.workspacePath,
+      type: "tool.succeeded",
+      tool_call_id: normalizeNativeId(toolCallId) ?? `native:${toolCallId}`,
+      tool_name: toolName,
+      status: "succeeded",
+      duration_ms: durationMs
+    }
   ];
+
+  const edit = buildCodeEdit(toolName, started?.args ?? null);
+  if (edit !== null) {
+    events.push({
+      event_id: buildEventId(`${context.sessionId}:agent:${context.agentId}:tool:${toolCallId}:edit`),
+      session_id: context.sessionId,
+      timestamp: toIsoTimestamp(time),
+      source_vendor: KIMICODE_SOURCE_VENDOR,
+      source_adapter: KIMICODE_SOURCE_ADAPTER,
+      workspace_path: context.workspacePath,
+      type: "code.edit.applied",
+      ...edit
+    });
+  }
+
+  return events;
+}
+
+function buildCodeEdit(
+  toolName: string,
+  args: Record<string, unknown> | null
+): { tool_name: string; files_changed: string[]; file_count: number; insertions: number; deletions: number; edit_operation_count: number } | null {
+  if (args === null) {
+    return null;
+  }
+
+  const path = readString(args.path);
+  if (path === null) {
+    return null;
+  }
+
+  if (toolName === "Edit") {
+    const diff = diffTextStats(readString(args.old_string) ?? "", readString(args.new_string) ?? "");
+    return {
+      tool_name: toolName,
+      files_changed: [path],
+      file_count: 1,
+      insertions: diff.insertions,
+      deletions: diff.deletions,
+      edit_operation_count: 1
+    };
+  }
+
+  if (toolName === "Write") {
+    const diff = diffTextStats("", readString(args.content) ?? "");
+    return {
+      tool_name: toolName,
+      files_changed: [path],
+      file_count: 1,
+      insertions: diff.insertions,
+      deletions: diff.deletions,
+      edit_operation_count: 1
+    };
+  }
+
+  if (toolName === "MultiEdit" && Array.isArray(args.edits) && args.edits.length > 0) {
+    let insertions = 0;
+    let deletions = 0;
+    for (const entry of args.edits) {
+      const editArgs = asRecord(entry);
+      if (editArgs === null) {
+        continue;
+      }
+      const diff = diffTextStats(readString(editArgs.old_string) ?? "", readString(editArgs.new_string) ?? "");
+      insertions += diff.insertions;
+      deletions += diff.deletions;
+    }
+    return {
+      tool_name: toolName,
+      files_changed: [path],
+      file_count: 1,
+      insertions,
+      deletions,
+      edit_operation_count: args.edits.length
+    };
+  }
+
+  return null;
 }
 
 function normalizeStepEnd(

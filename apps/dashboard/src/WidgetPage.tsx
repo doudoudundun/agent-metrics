@@ -161,6 +161,9 @@ export function WidgetPage() {
         <strong className="widget-page__primary-value">
           {snapshot ? formatCompactCount(snapshot.metrics.totalTokens) : "—"}
         </strong>
+        <span className="widget-page__cost-value">
+          {snapshot ? formatCost(snapshot.metrics.totalCostUsd) : ""}
+        </span>
         <span
           className={`widget-page__status widget-page__status--${status}`}
           role="status"
@@ -219,6 +222,10 @@ export function WidgetPage() {
           <div className="widget-page__primary">
             <span>Total tokens</span>
             <strong>{formatCount(snapshot.metrics.totalTokens)}</strong>
+          </div>
+          <div className="widget-page__cost">
+            <span>Est. cost</span>
+            <strong>{formatCost(snapshot.metrics.totalCostUsd)}</strong>
           </div>
           <div className="widget-page__metrics">
             <Metric label="Tools" value={formatCount(snapshot.metrics.logicalToolCalls)} />
@@ -344,6 +351,30 @@ function formatCompactCount(value: number): string {
     notation: "compact",
     maximumFractionDigits: 1
   }).format(value);
+}
+
+const COST_FORMAT = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2
+});
+
+const SMALL_COST_FORMAT = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  minimumFractionDigits: 4,
+  maximumFractionDigits: 4
+});
+
+function formatCost(value: number | null): string {
+  if (value === null) {
+    return "—";
+  }
+  if (value !== 0 && Math.abs(value) < 0.01) {
+    return SMALL_COST_FORMAT.format(value);
+  }
+  return COST_FORMAT.format(value);
 }
 
 function formatRate(value: number): string {

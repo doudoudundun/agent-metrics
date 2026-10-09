@@ -58,6 +58,22 @@ describe("ledger utilities", () => {
   });
 
   describe("rebuildEventLedgerFromLog", () => {
+    it("reads UTF-8 records across stream chunks and the final line without a newline", async () => {
+      const eventLogPath = join(root, "large-lines.jsonl");
+      await writeFile(eventLogPath, [
+        JSON.stringify({ event_id: "prefix:first", content: "中".repeat(70_000) }),
+        JSON.stringify({ source_record_id: "prefix:最后", event_id: "v2:last" })
+      ].join("\n"));
+
+      expect(await rebuildEventLedgerFromLog(eventLogPath, "prefix:")).toEqual(
+        new Set(["prefix:first", "prefix:最后"])
+      );
+    });
+
+    it("propagates read errors instead of treating an unreadable log as empty", async () => {
+      await expect(rebuildEventLedgerFromLog(root, "prefix:")).rejects.toMatchObject({ code: "EISDIR" });
+    });
+
     it("returns empty Set when event log is missing", async () => {
       const result = await rebuildEventLedgerFromLog(join(root, "missing.jsonl"), "prefix:");
       expect(result).toEqual(new Set());
@@ -220,6 +236,19 @@ describe("ledger utilities", () => {
   });
 
   describe("reconcileLedgerSessionsWithEventLog", () => {
+    it.each(["missing", "directory"])("keeps ledger keys unchanged when the log is %s", async (kind) => {
+      const key = "codex:session:session-1:usage:1";
+      const seenEventIds = new Set([key]);
+      await expect(reconcileLedgerSessionsWithEventLog({
+        eventLogPath: kind === "missing" ? join(root, "missing.jsonl") : root,
+        prefix: "codex:",
+        seenEventIds,
+        sessionIds: new Set(["session-1"]),
+        sessionIdFromKey: () => "session-1"
+      })).rejects.toThrow();
+      expect(seenEventIds).toEqual(new Set([key]));
+    });
+
     it("drops ghost keys for sessions and keeps keys that exist in the log", async () => {
       const eventLogPath = join(root, "events.jsonl");
       const sessionId = "019f7d68-67d0-74d2-bbfc-67adbe750b4e";

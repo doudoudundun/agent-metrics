@@ -16,6 +16,7 @@ type OverviewResponse = {
   affectedFileCount: number;
   insertions: number;
   deletions: number;
+  totalCostUsd: number | null;
 };
 
 type KpiGridProps = {
@@ -24,6 +25,29 @@ type KpiGridProps = {
 };
 
 const NUMBER_FORMAT = new Intl.NumberFormat("en-US");
+const COST_FORMAT = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2
+});
+const SMALL_COST_FORMAT = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  minimumFractionDigits: 4,
+  maximumFractionDigits: 4
+});
+
+function formatCost(costUsd: number | null): string {
+  if (costUsd === null) {
+    return "—";
+  }
+  if (costUsd > 0 && costUsd < 0.01) {
+    return SMALL_COST_FORMAT.format(costUsd);
+  }
+
+  return COST_FORMAT.format(costUsd);
+}
 
 function resolveDisplayedToolCalls(overview: OverviewResponse): number {
   const closedToolCalls = overview.successfulExecutions + overview.failedExecutions;
@@ -76,10 +100,10 @@ export function KpiGrid({ overview, scopeLabel }: KpiGridProps) {
       meta: `${NUMBER_FORMAT.format(overview.inputTokens)} in / ${NUMBER_FORMAT.format(overview.outputTokens)} out / ${NUMBER_FORMAT.format(cacheTokens)} cache`
     },
     {
-      label: "Turns",
-      value: NUMBER_FORMAT.format(overview.turnCount),
+      label: "Est. Cost",
+      value: formatCost(overview.totalCostUsd),
       tone: "calm",
-      meta: `${NUMBER_FORMAT.format(overview.responseCount)} responses`
+      meta: `${NUMBER_FORMAT.format(overview.turnCount)} turns / ${NUMBER_FORMAT.format(overview.responseCount)} responses`
     },
     {
       label: "Tool Calls",

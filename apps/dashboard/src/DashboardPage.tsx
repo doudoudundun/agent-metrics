@@ -110,7 +110,10 @@ function breakdownIsSelectedSourceOnly(
   );
 }
 
-function formatCost(costUsd: number): string {
+function formatCost(costUsd: number | null): string {
+  if (costUsd === null) {
+    return "—";
+  }
   if (costUsd > 0 && costUsd < 0.01) {
     return SMALL_COST_FORMAT.format(costUsd);
   }
@@ -200,7 +203,8 @@ export function DashboardPage() {
   const sourceUsageQuery = useQuery<OverviewResponse>(
     queryClient,
     `source-usage:${scopeKey}`,
-    sourceUsageLoader
+    sourceUsageLoader,
+    { enabled: sourceVendor !== "all" }
   );
   const toolsQuery = useQuery<{ rows: ToolRow[] }>(queryClient, `tools:${rankingKey}`, toolsLoader);
   const tokenTrendQuery = useQuery<{ rows: TokenTrendPoint[] }>(
@@ -261,7 +265,7 @@ export function DashboardPage() {
       try {
         await Promise.all([
           overviewQuery.refresh(),
-          sourceUsageQuery.refresh(),
+          sourceVendor !== "all" ? sourceUsageQuery.refresh() : Promise.resolve(),
           toolsQuery.refresh(),
           tokenTrendQuery.refresh(),
           sessionsQuery.refresh(),
@@ -303,7 +307,9 @@ export function DashboardPage() {
   const stableBreakdownRef = useRef<{ scopeKey: string; rows: readonly SourceBreakdownRow[] } | null>(
     null
   );
-  const incomingBreakdown = sourceUsageQuery.data?.sourceBreakdown;
+  const incomingBreakdown = sourceVendor === "all"
+    ? overviewQuery.data?.sourceBreakdown
+    : sourceUsageQuery.data?.sourceBreakdown;
   if (
     incomingBreakdown &&
     (stableBreakdownRef.current === null ||

@@ -1497,7 +1497,7 @@ tbody tr[data-selected="true"] .session-select {
 
 .widget-page {
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
   gap: 8px;
   box-sizing: border-box;
   width: 100%;
@@ -1539,9 +1539,10 @@ tbody tr[data-selected="true"] .session-select {
   inset: 0;
   display: grid;
   place-items: center;
+  padding-bottom: 14px;
   color: var(--signal);
   font-family: "Cascadia Code", "Cascadia Mono", monospace;
-  font-size: 1.4rem;
+  font-size: 1.2rem;
   font-weight: 700;
   line-height: 1;
   letter-spacing: 0;
@@ -1556,6 +1557,25 @@ tbody tr[data-selected="true"] .session-select {
   font-size: 9px;
   letter-spacing: 0.1em;
   opacity: 0.85;
+}
+
+.widget-page--compact .widget-page__cost-value,
+.widget-page--collapsed .widget-page__cost-value {
+  position: absolute;
+  bottom: 25px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 76%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #ffd166;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  text-shadow: 0 0 8px rgba(255, 209, 102, 0.35);
 }
 
 .widget-page--compact .widget-page__status,
@@ -1657,6 +1677,29 @@ tbody tr[data-selected="true"] .session-select {
   color: var(--signal);
   font-family: var(--font-display);
   font-size: 1.85rem;
+  line-height: 1;
+}
+
+.widget-page__cost {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 12px;
+}
+
+.widget-page__cost span {
+  color: #91a7bd;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.widget-page__cost strong {
+  color: var(--signal);
+  font-family: var(--font-display);
+  font-size: 0.95rem;
   line-height: 1;
 }
 
