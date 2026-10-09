@@ -1,5 +1,13 @@
 import { randomUUID } from "node:crypto";
-import type { AnyEvent, SourceAdapter, SourceVendor } from "@agent-metrics/event-schema";
+import {
+  normalizeNativeId,
+  toNormalizedEventV2,
+  type AnyEvent,
+  type EventNormalizationOptions,
+  type NormalizedEventV2,
+  type SourceAdapter,
+  type SourceVendor
+} from "@agent-metrics/event-schema";
 
 export type ClaudeTranscriptObservation =
   | {
@@ -261,7 +269,7 @@ export function extractClaudeTranscriptSessionContext(record: unknown): ClaudeSe
 
 export function normalizeClaudeTranscriptObservation(
   observation: ClaudeTranscriptObservation
-): AnyEvent {
+): NormalizedEventV2 {
   const base = {
     event_id: randomUUID(),
     session_id: observation.sessionId,
@@ -271,17 +279,17 @@ export function normalizeClaudeTranscriptObservation(
     workspace_path: observation.workspacePath
   };
 
+  let legacy: AnyEvent;
+
   if (observation.kind === "prompt_submitted") {
-    return {
+    legacy = {
       ...base,
       type: "prompt.submitted",
       prompt_id: observation.promptId,
       prompt_chars: observation.promptChars
     };
-  }
-
-  if (observation.kind === "assistant_responded") {
-    return {
+  } else if (observation.kind === "assistant_responded") {
+    legacy = {
       ...base,
       type: "assistant.responded",
       message_id: observation.messageId,
@@ -292,53 +300,74 @@ export function normalizeClaudeTranscriptObservation(
       provider_base_url: observation.providerBaseUrl,
       provider_host: observation.providerHost
     };
-  }
-
-  if (observation.kind === "tool_called") {
-    return {
+  } else if (observation.kind === "tool_called") {
+    legacy = {
       ...base,
+      tool_call_id: normalizeNativeId(observation.toolUseId) ?? `native:${observation.toolUseId}`,
       type: "tool.called",
       tool_name: observation.toolName,
       status: "started",
       argument_summary: observation.argumentSummary
     };
-  }
-
-  if (observation.kind === "tool_finished") {
+  } else if (observation.kind === "tool_finished") {
     const toolName = observation.toolName ?? observation.toolUseId;
     if (observation.isError) {
-      return {
+      legacy = {
         ...base,
+        tool_call_id: normalizeNativeId(observation.toolUseId) ?? `native:${observation.toolUseId}`,
         type: "tool.failed",
         tool_name: toolName,
         status: "failed",
         duration_ms: observation.durationMs
       };
+    } else {
+      legacy = {
+        ...base,
+        tool_call_id: normalizeNativeId(observation.toolUseId) ?? `native:${observation.toolUseId}`,
+        type: "tool.succeeded",
+        tool_name: toolName,
+        status: "succeeded",
+        duration_ms: observation.durationMs
+      };
     }
-
-    return {
+  } else {
+    legacy = {
       ...base,
-      type: "tool.succeeded",
-      tool_name: toolName,
-      status: "succeeded",
-      duration_ms: observation.durationMs
+      type: "token.usage.recorded",
+      message_id: observation.messageId,
+      model: observation.model,
+      input_tokens: observation.inputTokens,
+      output_tokens: observation.outputTokens,
+      cache_creation_input_tokens: observation.cacheCreationInputTokens,
+      cache_read_input_tokens: observation.cacheReadInputTokens,
+      server_tool_use: observation.serverToolUse,
+      usage_source: "claude-transcript",
+      provider_id: observation.providerId,
+      provider_base_url: observation.providerBaseUrl,
+      provider_host: observation.providerHost
     };
+  }
+
+  return toNormalizedEventV2(legacy, transcriptNormalizationOptions(observation));
+}
+
+export function transcriptNormalizationOptions(
+  observation: ClaudeTranscriptObservation
+): EventNormalizationOptions {
+  const base: EventNormalizationOptions = { sourceRecordNamespace: "transcript" };
+
+  if (observation.kind === "prompt_submitted") {
+    return { ...base, sourceRecordId: observation.promptId };
+  }
+
+  if (observation.kind === "assistant_responded" || observation.kind === "token_usage_recorded") {
+    return { ...base, sourceRecordId: observation.messageId };
   }
 
   return {
     ...base,
-    type: "token.usage.recorded",
-    message_id: observation.messageId,
-    model: observation.model,
-    input_tokens: observation.inputTokens,
-    output_tokens: observation.outputTokens,
-    cache_creation_input_tokens: observation.cacheCreationInputTokens,
-    cache_read_input_tokens: observation.cacheReadInputTokens,
-    server_tool_use: observation.serverToolUse,
-    usage_source: "claude-transcript",
-    provider_id: observation.providerId,
-    provider_base_url: observation.providerBaseUrl,
-    provider_host: observation.providerHost
+    sourceRecordId: observation.toolUseId,
+    toolCallId: normalizeNativeId(observation.toolUseId) ?? undefined
   };
 }
 

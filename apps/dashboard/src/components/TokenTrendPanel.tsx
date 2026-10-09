@@ -169,9 +169,9 @@ export function TokenTrendPanel({
                   type="monotone"
                   dataKey="cacheHitRate"
                   name="Cache Hit"
-                  stroke="#f3f7ff"
+                  stroke="#c084fc"
                   strokeDasharray="5 4"
-                  strokeWidth={1.75}
+                  strokeWidth={2}
                   dot={false}
                   activeDot={{ r: 4 }}
                 />

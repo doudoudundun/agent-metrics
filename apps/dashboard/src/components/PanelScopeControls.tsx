@@ -34,9 +34,10 @@ export function PanelScopeControls({
               return;
             }
 
+            const range = value.mode === "custom" ? "day" : value.range;
             onOverrideChange({
-              ...value,
-              mode: mode as TimeScopeSelection["mode"],
+              mode: mode as "calendar" | "rolling" | "lifetime",
+              range
             });
           }}
         >
@@ -47,16 +48,16 @@ export function PanelScopeControls({
         </select>
         <select
           aria-label={`${panelName} range`}
-          disabled={!override || override.mode === "lifetime"}
-          value={value.range}
+          disabled={!override || override.mode === "lifetime" || override.mode === "custom"}
+          value={value.mode === "custom" ? "day" : value.range}
           onChange={(event) => {
-            if (!override) {
+            if (!override || override.mode === "custom" || override.mode === "lifetime") {
               return;
             }
 
             onOverrideChange({
-              ...override,
-              range: event.target.value as TimeScopeSelection["range"]
+              mode: override.mode,
+              range: event.target.value as "day" | "week" | "month"
             });
           }}
         >

@@ -1,0 +1,48 @@
+name: Dashboard visual tests
+
+on:
+  workflow_dispatch:
+
+jobs:
+  dashboard-tests:
+    # Snapshots are platform-suffixed (*-win32.png). Keep visual e2e on Windows.
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: corepack pnpm install
+
+      - name: Build dashboard
+        run: corepack pnpm --filter @agent-metrics/dashboard build
+
+      - name: Run dashboard unit tests
+        run: corepack pnpm --filter @agent-metrics/dashboard test
+
+      - name: Install Playwright Chromium
+        run: corepack pnpm exec playwright install --with-deps chromium
+
+      - name: Run dashboard Playwright viewport matrix
+        run: corepack pnpm --filter @agent-metrics/dashboard test:e2e
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dashboard-playwright-report
+          path: |
+            apps/dashboard/playwright-report
+            apps/dashboard/test-results
+            apps/dashboard/e2e/**/*-snapshots/**
+          if-no-files-found: ignore

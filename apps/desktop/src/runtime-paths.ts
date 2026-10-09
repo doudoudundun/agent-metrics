@@ -8,7 +8,8 @@ export type DesktopDashboardSurface =
   | "desktop-main"
   | "desktop-floating"
   | "desktop-orb"
-  | "desktop-orb-peek";
+  | "desktop-orb-peek"
+  | "desktop-widget";
 
 export type DesktopRuntimePaths = {
   appRoot: string;

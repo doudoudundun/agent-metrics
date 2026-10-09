@@ -4,11 +4,20 @@ import { readdir, readFile, rename, rm, stat, writeFile, mkdir } from "node:fs/p
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
-import { appendJsonLine, loadEventLedgerWithFallback, persistEventLedger } from "@agent-metrics/shared-utils";
+import { type NormalizedEventV2 } from "@agent-metrics/event-schema";
+import {
+  appendJsonLine,
+  loadEventLedgerWithFallback,
+  persistEventLedger,
+  reconcileLedgerSessionsWithEventLog
+} from "@agent-metrics/shared-utils";
 import {
   extractCodexEventsFromRollout,
   type CodexProviderConfig
 } from "./codex.js";
+
+/** Re-check rollouts under this many days so ledger/jsonl drift self-heals. */
+const RECENT_ROLLOUT_RECONCILE_DAYS = 4;
 
 type RolloutFileSignature = {
   size: number;
@@ -38,6 +47,14 @@ export function resolveDefaultCodexSessionsRoot(): string {
   return join(homedir(), ".codex", "sessions");
 }
 
+export function resolveDefaultCodexMulticaSessionsRoot(): string {
+  return join(homedir(), ".codex", "multica-sessions");
+}
+
+export function resolveDefaultCodexSessionsRoots(): string[] {
+  return [resolveDefaultCodexSessionsRoot(), resolveDefaultCodexMulticaSessionsRoot()];
+}
+
 export function resolveDefaultCodexLogsDbPath(): string {
   return join(homedir(), ".codex", "logs_2.sqlite");
 }
@@ -46,30 +63,107 @@ export function resolveDefaultCodexConfigPath(): string {
   return join(homedir(), ".codex", "config.toml");
 }
 
+export function resolveCodexSessionsRoots(input: {
+  sessionsRoot?: string;
+  sessionsRoots?: string[];
+} = {}): string[] {
+  if (input.sessionsRoots && input.sessionsRoots.length > 0) {
+    return [...new Set(input.sessionsRoots)];
+  }
+
+  if (input.sessionsRoot) {
+    return [input.sessionsRoot];
+  }
+
+  const singleRoot = process.env.AGENT_METRICS_CODEX_SESSIONS_ROOT?.trim();
+  if (singleRoot) {
+    return [singleRoot];
+  }
+
+  const multiRoots = process.env.AGENT_METRICS_CODEX_SESSIONS_ROOTS?.trim();
+  if (multiRoots) {
+    return [
+      ...new Set(
+        multiRoots
+          .split(/[;|]/u)
+          .map((value) => value.trim())
+          .filter((value) => value.length > 0)
+      )
+    ];
+  }
+
+  return resolveDefaultCodexSessionsRoots();
+}
+
+export function resolveCodexSourcePaths(input: {
+  sessionsRoot?: string;
+  sessionsRoots?: string[];
+  logsDbPath?: string;
+  configPath?: string;
+} = {}): {
+  sessionsRoot: string;
+  sessionsRoots: string[];
+  logsDbPath: string;
+  configPath: string;
+} {
+  const sessionsRoots = resolveCodexSessionsRoots(input);
+  return {
+    sessionsRoot: sessionsRoots[0] ?? resolveDefaultCodexSessionsRoot(),
+    sessionsRoots,
+    logsDbPath:
+      input.logsDbPath ??
+      process.env.AGENT_METRICS_CODEX_LOGS_DB_PATH ??
+      resolveDefaultCodexLogsDbPath(),
+    configPath:
+      input.configPath ??
+      process.env.AGENT_METRICS_CODEX_CONFIG_PATH ??
+      resolveDefaultCodexConfigPath()
+  };
+}
+
+/**
+ * Windows paths under Multica can exceed MAX_PATH; Node fs needs the \\?\ prefix.
+ * Keep logical (unprefixed) paths in cursor/ledger keys for stability.
+ */
+export function toFsPath(filePath: string): string {
+  if (process.platform !== "win32") {
+    return filePath;
+  }
+  if (filePath.startsWith("\\\\?\\")) {
+    return filePath;
+  }
+  if (filePath.startsWith("\\\\")) {
+    return `\\\\?\\UNC\\${filePath.slice(2)}`;
+  }
+  return `\\\\?\\${filePath}`;
+}
+
+export function isMulticaSessionsPath(filePath: string): boolean {
+  return /(?:^|[/\\])multica-sessions(?:[/\\]|$)/iu.test(filePath);
+}
+
 export async function syncCodexRollouts(input: {
   eventLogPath: string;
   cursorPath: string;
   ledgerPath: string;
   sessionsRoot?: string;
+  sessionsRoots?: string[];
   logsDbPath?: string;
   configPath?: string;
+  /**
+   * When true (default), re-check recent rollouts against events.jsonl to heal
+   * ledger/cursor drift. Lightweight refresh passes false and only processes
+   * files whose size/mtime changed.
+   */
+  reconcileRecent?: boolean;
 }): Promise<void> {
-  const sessionsRoot =
-    input.sessionsRoot ??
-    process.env.AGENT_METRICS_CODEX_SESSIONS_ROOT ??
-    resolveDefaultCodexSessionsRoot();
-  if (!existsSync(sessionsRoot)) {
+  const { sessionsRoots, logsDbPath, configPath } = resolveCodexSourcePaths(input);
+  const existingRoots = sessionsRoots.filter((root) => existsSync(toFsPath(root)));
+  if (existingRoots.length === 0) {
     return;
   }
 
-  const logsDbPath =
-    input.logsDbPath ??
-    process.env.AGENT_METRICS_CODEX_LOGS_DB_PATH ??
-    resolveDefaultCodexLogsDbPath();
-  const configPath =
-    input.configPath ??
-    process.env.AGENT_METRICS_CODEX_CONFIG_PATH ??
-    resolveDefaultCodexConfigPath();
+  const reconcileRecent = input.reconcileRecent !== false;
   const cursor = await loadCursor(input.cursorPath);
   const seenEventIds = await loadEventLedgerWithFallback({
     ledgerPath: input.ledgerPath,
@@ -84,39 +178,100 @@ export async function syncCodexRollouts(input: {
     previousModels: cursor.sessionModels,
     previousLastId: cursor.logsLastId
   });
-  const rolloutFiles = await collectRolloutFiles(sessionsRoot);
+  const rolloutFiles = (
+    await Promise.all(existingRoots.map((root) => collectRolloutFiles(root)))
+  )
+    .flat()
+    .sort();
   const nextRolloutFiles: Record<string, RolloutFileSignature> = {
     ...cursor.rolloutFiles
   };
   let ledgerChanged = seenEventIds.size !== baselineEventCount;
 
+  // Recent rollouts: trust events.jsonl over ledger, and drop cursor so files
+  // are re-read when ledger claimed "seen" but rows never landed in the log.
+  if (reconcileRecent) {
+    const recentSessionIds = new Set<string>();
+    let recentCursorHit = false;
+    for (const filePath of rolloutFiles) {
+      if (!isRecentRolloutPath(filePath)) {
+        continue;
+      }
+      const sessionId = sessionIdFromRolloutPath(filePath);
+      if (sessionId === null) {
+        continue;
+      }
+      recentSessionIds.add(sessionId);
+      if (nextRolloutFiles[filePath] !== undefined) {
+        recentCursorHit = true;
+      }
+    }
+
+    if (recentSessionIds.size > 0 && recentCursorHit) {
+      const reconciled = await reconcileLedgerSessionsWithEventLog({
+        eventLogPath: input.eventLogPath,
+        prefix: "codex:",
+        seenEventIds,
+        sessionIds: recentSessionIds,
+        sessionIdFromKey: sessionIdFromCodexLedgerKey
+      });
+      if (reconciled.removed > 0 || reconciled.added > 0) {
+        ledgerChanged = true;
+      }
+      if (reconciled.removed > 0) {
+        for (const path of Object.keys(nextRolloutFiles)) {
+          const sessionId = sessionIdFromRolloutPath(path);
+          if (sessionId !== null && recentSessionIds.has(sessionId)) {
+            delete nextRolloutFiles[path];
+          }
+        }
+      }
+    }
+  }
+
   for (const filePath of rolloutFiles) {
     const signature = await readFileSignature(filePath);
-    const previousSignature = cursor.rolloutFiles[filePath];
-
-    nextRolloutFiles[filePath] = signature;
+    const previousSignature = nextRolloutFiles[filePath];
 
     if (isSameRolloutSignature(signature, previousSignature)) {
       continue;
     }
 
-    const contents = await readFile(filePath, "utf8");
-    const events = extractCodexEventsFromRollout({
-      filePath,
-      contents,
-      sessionModels,
-      providerConfigs
-    });
+    const contents = await readFile(toFsPath(filePath), "utf8");
+    let events;
+    try {
+      events = extractCodexEventsFromRollout({
+        filePath,
+        contents,
+        sessionModels,
+        providerConfigs,
+        sourceInstanceId: isMulticaSessionsPath(filePath) ? "codex:multica" : undefined
+      });
+    } catch (error) {
+      // One corrupt/legacy rollout must not fail the whole Codex adapter run.
+      console.error(
+        `[codex-sync] skipped ${filePath}: ${error instanceof Error ? error.message : String(error)}`
+      );
+      continue;
+    }
 
     for (const event of events) {
-      if (seenEventIds.has(event.event_id)) {
+      // extractCodexEventsFromRollout already emits NormalizedEventV2;
+      // source_record_id carries the stable pre-conversion legacy event_id
+      // that the ledger has always keyed on.
+      const ledgerKey = ledgerKeyFor(event);
+      if (seenEventIds.has(ledgerKey)) {
         continue;
       }
 
       await appendJsonLine(input.eventLogPath, event);
-      seenEventIds.add(event.event_id);
+      seenEventIds.add(ledgerKey);
       ledgerChanged = true;
     }
+
+    // Only mark the file synced after its events were appended (or skipped as
+    // already present). Avoids cursor advancing past a crashed mid-file write.
+    nextRolloutFiles[filePath] = signature;
   }
 
   const nextCursor = {
@@ -142,14 +297,17 @@ function loadSessionModelsFromLogs(input: {
   sessionModels: Record<string, string>;
   logsLastId: number;
 } {
-  if (!existsSync(input.logsDbPath)) {
+  if (!existsSync(toFsPath(input.logsDbPath))) {
     return {
       sessionModels: { ...input.previousModels },
       logsLastId: input.previousLastId
     };
   }
 
-  const db = new Database(input.logsDbPath, { readonly: true, fileMustExist: true }) as ReadOnlyDatabase;
+  const db = new Database(toFsPath(input.logsDbPath), {
+    readonly: true,
+    fileMustExist: true
+  }) as ReadOnlyDatabase;
 
   try {
     const rows = db
@@ -200,11 +358,11 @@ function loadSessionModelsFromLogs(input: {
 }
 
 async function loadProviderConfigs(configPath: string): Promise<Record<string, CodexProviderConfig>> {
-  if (!existsSync(configPath)) {
+  if (!existsSync(toFsPath(configPath))) {
     return {};
   }
 
-  const contents = await readFile(configPath, "utf8");
+  const contents = await readFile(toFsPath(configPath), "utf8");
   const lines = contents.split(/\r?\n/u);
   const providerConfigs: Record<string, CodexProviderConfig> = {};
   let activeProviderId: string | null = null;
@@ -245,7 +403,7 @@ async function loadProviderConfigs(configPath: string): Promise<Record<string, C
 
 async function collectRolloutFiles(root: string): Promise<string[]> {
   const files: string[] = [];
-  const entries = await readdir(root, { withFileTypes: true });
+  const entries = await readdir(toFsPath(root), { withFileTypes: true });
 
   for (const entry of entries) {
     const fullPath = join(root, entry.name);
@@ -264,7 +422,7 @@ async function collectRolloutFiles(root: string): Promise<string[]> {
 }
 
 async function readFileSignature(filePath: string): Promise<RolloutFileSignature> {
-  const details = await stat(filePath);
+  const details = await stat(toFsPath(filePath));
   return {
     size: details.size,
     mtimeMs: details.mtimeMs
@@ -300,7 +458,7 @@ async function loadCursor(cursorPath: string): Promise<SyncCursor> {
 
 async function readJsonFile(filePath: string): Promise<Record<string, unknown> | null> {
   try {
-    const parsed = JSON.parse(await readFile(filePath, "utf8")) as unknown;
+    const parsed = JSON.parse(await readFile(toFsPath(filePath), "utf8")) as unknown;
     return isRecord(parsed) ? parsed : null;
   } catch {
     return null;
@@ -379,4 +537,32 @@ function extractHost(value: string): string | null {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function ledgerKeyFor(event: NormalizedEventV2): string {
+  return event.source_record_id ?? event.event_id;
+}
+
+function sessionIdFromRolloutPath(filePath: string): string | null {
+  const match = filePath.match(
+    /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i
+  );
+  return match?.[1] ?? null;
+}
+
+function sessionIdFromCodexLedgerKey(ledgerKey: string): string | null {
+  const match = ledgerKey.match(
+    /^codex:session:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}):/i
+  );
+  return match?.[1] ?? null;
+}
+
+function isRecentRolloutPath(filePath: string, nowMs = Date.now()): boolean {
+  const match = filePath.match(/[/\\](\d{4})[/\\](\d{2})[/\\](\d{2})[/\\]/);
+  if (!match) {
+    return true;
+  }
+
+  const fileDayMs = Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  return nowMs - fileDayMs < RECENT_ROLLOUT_RECONCILE_DAYS * 24 * 60 * 60 * 1000;
 }

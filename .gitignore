@@ -3,6 +3,7 @@ dist/
 coverage/
 .vite/
 .DS_Store
+.worktrees/
 .runtime/
 apps/desktop/.runtime-bundle/
 apps/desktop/release/
@@ -25,3 +26,19 @@ data/sources/state/*.json
 **/data/hooks/snapshots/
 **/data/sources/state/*.json
 .tmp*.log
+
+# Local IDE / tool state
+.idea/
+.zcode/
+
+# Scratch files & local database
+.tmp/
+.tmp-*
+nul
+data/metrics.db
+data/sources/state/*.tmp
+
+# Tooling artifacts
+test-results/
+apps/dashboard/vite.config.js
+apps/dashboard/vite.config.d.ts

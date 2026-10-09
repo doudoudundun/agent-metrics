@@ -4,7 +4,8 @@ import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/p
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
-import type { AnyEvent } from "@agent-metrics/event-schema";
+import { toNormalizedEventV2 } from "@agent-metrics/event-schema";
+import type { AnyEvent, NormalizedEventV2 } from "@agent-metrics/event-schema";
 import { appendJsonLine, loadEventLedgerWithFallback, persistEventLedger } from "@agent-metrics/shared-utils";
 
 type CursorState = {
@@ -154,6 +155,45 @@ function resolveCursorGlobalStorageDbPath(storageJsonPath: string): string {
   return join(dirname(storageJsonPath), "state.vscdb");
 }
 
+export function resolveCursorSourcePaths(input: {
+  trackingDbPath?: string;
+  workspaceStorageRoot?: string;
+  storageJsonPath?: string;
+  globalStorageDbPath?: string;
+  cursorProjectsRoot?: string;
+} = {}): {
+  trackingDbPath: string;
+  workspaceStorageRoot: string;
+  storageJsonPath: string;
+  globalStorageDbPath: string;
+  cursorProjectsRoot: string;
+} {
+  const storageJsonPath =
+    input.storageJsonPath ??
+    process.env.AGENT_METRICS_CURSOR_STORAGE_JSON_PATH ??
+    resolveDefaultCursorStorageJsonPath();
+
+  return {
+    trackingDbPath:
+      input.trackingDbPath ??
+      process.env.AGENT_METRICS_CURSOR_TRACKING_DB_PATH ??
+      resolveDefaultCursorTrackingDbPath(),
+    workspaceStorageRoot:
+      input.workspaceStorageRoot ??
+      process.env.AGENT_METRICS_CURSOR_WORKSPACE_STORAGE_ROOT ??
+      resolveDefaultCursorWorkspaceStorageRoot(),
+    storageJsonPath,
+    globalStorageDbPath:
+      input.globalStorageDbPath ??
+      process.env.AGENT_METRICS_CURSOR_GLOBAL_STORAGE_DB_PATH ??
+      resolveCursorGlobalStorageDbPath(storageJsonPath),
+    cursorProjectsRoot:
+      input.cursorProjectsRoot ??
+      process.env.AGENT_METRICS_CURSOR_PROJECTS_ROOT ??
+      resolveDefaultCursorProjectsRoot()
+  };
+}
+
 export async function syncCursorArtifacts(input: {
   eventLogPath: string;
   cursorPath: string;
@@ -164,26 +204,13 @@ export async function syncCursorArtifacts(input: {
   globalStorageDbPath?: string;
   cursorProjectsRoot?: string;
 }): Promise<void> {
-  const trackingDbPath =
-    input.trackingDbPath ??
-    process.env.AGENT_METRICS_CURSOR_TRACKING_DB_PATH ??
-    resolveDefaultCursorTrackingDbPath();
-  const workspaceStorageRoot =
-    input.workspaceStorageRoot ??
-    process.env.AGENT_METRICS_CURSOR_WORKSPACE_STORAGE_ROOT ??
-    resolveDefaultCursorWorkspaceStorageRoot();
-  const storageJsonPath =
-    input.storageJsonPath ??
-    process.env.AGENT_METRICS_CURSOR_STORAGE_JSON_PATH ??
-    resolveDefaultCursorStorageJsonPath();
-  const globalStorageDbPath =
-    input.globalStorageDbPath ??
-    process.env.AGENT_METRICS_CURSOR_GLOBAL_STORAGE_DB_PATH ??
-    resolveCursorGlobalStorageDbPath(storageJsonPath);
-  const cursorProjectsRoot =
-    input.cursorProjectsRoot ??
-    process.env.AGENT_METRICS_CURSOR_PROJECTS_ROOT ??
-    resolveDefaultCursorProjectsRoot();
+  const {
+    trackingDbPath,
+    workspaceStorageRoot,
+    storageJsonPath,
+    globalStorageDbPath,
+    cursorProjectsRoot
+  } = resolveCursorSourcePaths(input);
 
   if (
     !existsSync(trackingDbPath) &&
@@ -395,12 +422,13 @@ export async function syncCursorArtifacts(input: {
   let ledgerChanged = false;
 
   for (const event of events) {
-    if (seenEventIds.has(event.event_id)) {
+    const ledgerKey = ledgerKeyFor(event);
+    if (seenEventIds.has(ledgerKey)) {
       continue;
     }
 
     await appendJsonLine(input.eventLogPath, event);
-    seenEventIds.add(event.event_id);
+    seenEventIds.add(ledgerKey);
     ledgerChanged = true;
   }
 
@@ -433,7 +461,7 @@ function buildCursorEvents(input: {
   prompts: CursorPrompt[];
   generations: CursorGeneration[];
   hashRequests: CursorHashRequest[];
-}): AnyEvent[] {
+}): NormalizedEventV2[] {
   const events: AnyEvent[] = [];
 
   for (const session of input.sessions.values()) {
@@ -536,6 +564,9 @@ function buildCursorEvents(input: {
   }
 
   for (const request of input.hashRequests) {
+    // Count Composer AI requests in the same tool KPIs as Claude/Codex tool calls,
+    // but label them as requests so rankings stay honest about what was measured.
+    const toolCallId = `native:${request.requestId}`;
     events.push({
       event_id: `cursor:tool:${request.sessionId}:${request.requestId}:started`,
       session_id: request.sessionId,
@@ -544,7 +575,8 @@ function buildCursorEvents(input: {
       source_adapter: CURSOR_SOURCE_ADAPTER,
       workspace_path: request.workspacePath,
       type: "tool.called",
-      tool_name: "Composer",
+      tool_call_id: toolCallId,
+      tool_name: "Composer Request",
       status: "started",
       argument_summary: ""
     });
@@ -556,7 +588,8 @@ function buildCursorEvents(input: {
       source_adapter: CURSOR_SOURCE_ADAPTER,
       workspace_path: request.workspacePath,
       type: "tool.succeeded",
-      tool_name: "Composer",
+      tool_call_id: toolCallId,
+      tool_name: "Composer Request",
       status: "succeeded",
       duration_ms: Math.max(0, request.completedAt - request.startedAt)
     });
@@ -570,7 +603,7 @@ function buildCursorEvents(input: {
         source_adapter: CURSOR_SOURCE_ADAPTER,
         workspace_path: request.workspacePath,
         type: "code.edit.applied",
-        tool_name: "Composer",
+        tool_name: "Composer Request",
         files_changed: request.filesChanged,
         file_count: request.filesChanged.length,
         insertions: 0,
@@ -580,7 +613,15 @@ function buildCursorEvents(input: {
     }
   }
 
-  return events;
+  return toV2Events(events);
+}
+
+function toV2Events(events: AnyEvent[]): NormalizedEventV2[] {
+  return events.map((event) => toNormalizedEventV2(event, { sourceRecordId: event.event_id }));
+}
+
+function ledgerKeyFor(event: NormalizedEventV2): string {
+  return event.source_record_id ?? event.event_id;
 }
 
 function extractComposers(value: unknown): Array<{
@@ -1332,7 +1373,7 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : null;
 }
 
-function compareCursorEvents(left: AnyEvent, right: AnyEvent): number {
+function compareCursorEvents(left: NormalizedEventV2, right: NormalizedEventV2): number {
   if (left.timestamp !== right.timestamp) {
     return left.timestamp.localeCompare(right.timestamp);
   }
@@ -1344,10 +1385,10 @@ function compareCursorEvents(left: AnyEvent, right: AnyEvent): number {
     return leftRank - rightRank;
   }
 
-  return left.event_id.localeCompare(right.event_id);
+  return ledgerKeyFor(left).localeCompare(ledgerKeyFor(right));
 }
 
-function getCursorEventRank(type: AnyEvent["type"]): number {
+function getCursorEventRank(type: NormalizedEventV2["type"]): number {
   switch (type) {
     case "session.started":
       return 0;

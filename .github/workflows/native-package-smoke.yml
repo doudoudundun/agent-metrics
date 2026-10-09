@@ -1,0 +1,73 @@
+name: Native package smoke
+
+on:
+  workflow_dispatch:
+
+jobs:
+  native-smoke:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Windows x64
+            runner: windows-latest
+            package_script: package:desktop:win:x64
+            platform: win32
+            arch: x64
+          - label: macOS ARM64
+            runner: macos-latest
+            package_script: package:desktop:mac:arm64
+            platform: darwin
+            arch: arm64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: corepack pnpm install
+
+      - name: Build workspace
+        run: corepack pnpm build
+
+      - name: Package and smoke (native)
+        env:
+          AGENT_METRICS_RUN_NATIVE_SMOKE: "1"
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p smoke-logs
+          corepack pnpm run ${{ matrix.package_script }} 2>&1 | tee "smoke-logs/package-${{ matrix.platform }}-${{ matrix.arch }}.log"
+
+      - name: Upload smoke evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-evidence-${{ matrix.platform }}-${{ matrix.arch }}
+          path: |
+            docs/superpowers/notes/evidence/smoke-*.json
+            smoke-logs/
+
+      - name: Summarize evidence
+        if: always()
+        shell: bash
+        run: |
+          shopt -s nullglob
+          files=(docs/superpowers/notes/evidence/smoke-${{ matrix.platform }}-${{ matrix.arch }}-*.json)
+          if ((${#files[@]} == 0)); then
+            echo "No evidence JSON found for ${{ matrix.label }}."
+            exit 1
+          fi
+          echo "Evidence: ${files[-1]}"
+          cat "${files[-1]}"

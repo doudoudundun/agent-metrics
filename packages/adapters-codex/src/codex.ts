@@ -1,5 +1,6 @@
 import { basename } from "node:path";
-import type { AnyEvent, SourceAdapter, SourceVendor } from "@agent-metrics/event-schema";
+import { normalizeNativeId, toNormalizedEventV2 } from "@agent-metrics/event-schema";
+import type { AnyEvent, NormalizedEventV2, SourceAdapter, SourceVendor } from "@agent-metrics/event-schema";
 
 const CODEX_SOURCE_VENDOR: SourceVendor = "codex";
 const CODEX_ROLLOUT_ADAPTER: SourceAdapter = "codex-rollout";
@@ -22,10 +23,14 @@ export function extractCodexEventsFromRollout(input: {
   contents: string;
   sessionModels?: Record<string, string>;
   providerConfigs?: Record<string, CodexProviderConfig>;
-}): AnyEvent[] {
+  sourceInstanceId?: string;
+}): NormalizedEventV2[] {
   const lines = input.contents.split(/\r?\n/u).filter((line) => line.length > 0);
   const events: AnyEvent[] = [];
   const pendingToolCalls = new Map<string, PendingCodexToolCall>();
+  let sourceInstanceId =
+    input.sourceInstanceId ??
+    (isMulticaRolloutPath(input.filePath) ? "codex:multica" : undefined);
   let sessionMeta:
     | {
         sessionId: string;
@@ -53,6 +58,11 @@ export function extractCodexEventsFromRollout(input: {
 
       if (sessionId === null || timestamp === null) {
         continue;
+      }
+
+      const originator = normalizeOptionalString(payload.originator);
+      if (originator === "multica-agent-sdk") {
+        sourceInstanceId = "codex:multica";
       }
 
       sessionMeta = {
@@ -105,6 +115,7 @@ export function extractCodexEventsFromRollout(input: {
           source_adapter: CODEX_ROLLOUT_ADAPTER,
           workspace_path: sessionMeta?.workspacePath ?? ".",
           type: "tool.called",
+          tool_call_id: normalizeNativeId(callId) ?? `native:${callId}`,
           tool_name: toolName,
           status: "started",
           argument_summary: argumentSummary
@@ -141,6 +152,7 @@ export function extractCodexEventsFromRollout(input: {
             source_adapter: CODEX_ROLLOUT_ADAPTER,
             workspace_path: sessionMeta?.workspacePath ?? ".",
             type: "tool.called",
+            tool_call_id: normalizeNativeId(callId) ?? `native:${callId}`,
             tool_name: pending.toolName,
             status: "started",
             argument_summary: pending.argumentSummary
@@ -157,7 +169,9 @@ export function extractCodexEventsFromRollout(input: {
           continue;
         }
 
-        const result = parseCustomToolOutput(normalizeOptionalString(payload.output));
+        // Codex often stores custom_tool_call_output.output as an array of
+        // {type,text} parts rather than a plain string. Coerce before parsing.
+        const result = parseCustomToolOutput(coerceToolOutputText(payload.output));
 
         if (result.success) {
           events.push({
@@ -168,6 +182,7 @@ export function extractCodexEventsFromRollout(input: {
             source_adapter: CODEX_ROLLOUT_ADAPTER,
             workspace_path: pending.workspacePath,
             type: "tool.succeeded",
+            tool_call_id: normalizeNativeId(callId) ?? `native:${callId}`,
             tool_name: pending.toolName,
             status: "succeeded",
             duration_ms: result.durationMs
@@ -181,6 +196,7 @@ export function extractCodexEventsFromRollout(input: {
             source_adapter: CODEX_ROLLOUT_ADAPTER,
             workspace_path: pending.workspacePath,
             type: "tool.failed",
+            tool_call_id: normalizeNativeId(callId) ?? `native:${callId}`,
             tool_name: pending.toolName,
             status: "failed",
             duration_ms: result.durationMs
@@ -198,7 +214,7 @@ export function extractCodexEventsFromRollout(input: {
           continue;
         }
 
-        const result = parseFunctionCallOutput(normalizeOptionalString(payload.output));
+        const result = parseFunctionCallOutput(coerceToolOutputText(payload.output));
 
         if (result.success) {
           events.push({
@@ -209,6 +225,7 @@ export function extractCodexEventsFromRollout(input: {
             source_adapter: CODEX_ROLLOUT_ADAPTER,
             workspace_path: pending.workspacePath,
             type: "tool.succeeded",
+            tool_call_id: normalizeNativeId(callId) ?? `native:${callId}`,
             tool_name: pending.toolName,
             status: "succeeded",
             duration_ms: result.durationMs
@@ -222,6 +239,7 @@ export function extractCodexEventsFromRollout(input: {
             source_adapter: CODEX_ROLLOUT_ADAPTER,
             workspace_path: pending.workspacePath,
             type: "tool.failed",
+            tool_call_id: normalizeNativeId(callId) ?? `native:${callId}`,
             tool_name: pending.toolName,
             status: "failed",
             duration_ms: result.durationMs
@@ -283,19 +301,21 @@ export function extractCodexEventsFromRollout(input: {
       }
 
       if (sessionId !== null && payloadType === "web_search_end") {
+        const callId = buildEventKey(
+          parsed,
+          payloadType,
+          lineIndex,
+          normalizeOptionalString(payload.call_id)
+        );
         events.push({
-          event_id: `codex:session:${sessionId}:web_search:${buildEventKey(
-            parsed,
-            payloadType,
-            lineIndex,
-            normalizeOptionalString(payload.call_id)
-          )}:tool`,
+          event_id: `codex:session:${sessionId}:web_search:${callId}:tool`,
           session_id: sessionId,
           timestamp,
           source_vendor: CODEX_SOURCE_VENDOR,
           source_adapter: CODEX_ROLLOUT_ADAPTER,
           workspace_path: sessionMeta?.workspacePath ?? ".",
           type: "tool.succeeded",
+          tool_call_id: normalizeNativeId(callId) ?? `native:${callId}`,
           tool_name: "WebSearch",
           status: "succeeded",
           duration_ms: 0
@@ -318,6 +338,7 @@ export function extractCodexEventsFromRollout(input: {
           source_vendor: CODEX_SOURCE_VENDOR,
           source_adapter: CODEX_ROLLOUT_ADAPTER,
           workspace_path: sessionMeta?.workspacePath ?? ".",
+          tool_call_id: normalizeNativeId(callId) ?? `native:${callId}`,
           tool_name: inferExecCommandToolName(payload.command),
           duration_ms: getExecCommandDurationMs(payload)
         };
@@ -356,6 +377,7 @@ export function extractCodexEventsFromRollout(input: {
             source_adapter: CODEX_ROLLOUT_ADAPTER,
             workspace_path: sessionMeta?.workspacePath ?? ".",
             type: "tool.succeeded",
+            tool_call_id: normalizeNativeId(callId) ?? `native:${callId}`,
             tool_name: "apply_patch",
             status: "succeeded",
             duration_ms: 0
@@ -369,6 +391,7 @@ export function extractCodexEventsFromRollout(input: {
             source_adapter: CODEX_ROLLOUT_ADAPTER,
             workspace_path: sessionMeta?.workspacePath ?? ".",
             type: "tool.failed",
+            tool_call_id: normalizeNativeId(callId) ?? `native:${callId}`,
             tool_name: "apply_patch",
             status: "failed",
             duration_ms: 0
@@ -433,6 +456,9 @@ export function extractCodexEventsFromRollout(input: {
 
     const inputTokens = normalizeInteger(lastUsage?.input_tokens) ?? 0;
     const cacheReadTokens = normalizeInteger(lastUsage?.cached_input_tokens) ?? 0;
+    // Codex reports cached input as a subset of input_tokens. Preserve the
+    // source-reported gross counter so the shared accounting policy can derive
+    // displayed input by subtracting cache-read input exactly once.
     // Reasoning (chain-of-thought) tokens are model-generated output and must be
     // counted alongside output_tokens, matching the opencode adapter and the
     // accounting that Anthropic/OpenAI bill against. Excluding them understates
@@ -473,13 +499,27 @@ export function extractCodexEventsFromRollout(input: {
     });
   }
 
-  return events.sort(compareCodexEvents);
+  // Sort on the legacy AnyEvent shape (readable, stable event_id) before
+  // wrapping to V2 so ordering among same-timestamp events is unaffected by
+  // the hash-based V2 event_id.
+  return events
+    .sort(compareCodexEvents)
+    .map((event) =>
+      toNormalizedEventV2(event, {
+        sourceRecordId: event.event_id,
+        ...(sourceInstanceId ? { sourceInstanceId } : {})
+      })
+    );
 }
 
 export function inferSessionIdFromPath(filePath: string): string | null {
   const name = basename(filePath);
   const match = /^rollout-.*-([0-9a-f]{8,}-[0-9a-f-]+)\.jsonl$/iu.exec(name);
   return match?.[1] ?? null;
+}
+
+function isMulticaRolloutPath(filePath: string): boolean {
+  return /(?:^|[/\\])multica-sessions(?:[/\\]|$)/iu.test(filePath);
 }
 
 function parseJsonRecord(value: string): Record<string, unknown> | null {
@@ -550,19 +590,48 @@ function getEventSortPriority(event: AnyEvent): number {
   }
 }
 
+/**
+ * Codex tool outputs arrive as either a plain string or an array of content
+ * parts (`{type, text}` / raw strings). normalizeOptionalString alone drops
+ * array forms and previously forced every such terminal event to "failed".
+ */
+function coerceToolOutputText(value: unknown): string | null {
+  if (typeof value === "string") {
+    return value.length > 0 ? value : null;
+  }
+
+  if (!Array.isArray(value)) {
+    return null;
+  }
+
+  const parts: string[] = [];
+  for (const item of value) {
+    if (typeof item === "string") {
+      if (item.length > 0) {
+        parts.push(item);
+      }
+      continue;
+    }
+
+    const record = asRecord(item);
+    const text = normalizeOptionalString(record?.text);
+    if (text !== null) {
+      parts.push(text);
+    }
+  }
+
+  if (parts.length === 0) {
+    return null;
+  }
+
+  return parts.join("\n");
+}
+
 function parseCustomToolOutput(value: string | null): {
   success: boolean;
   durationMs: number;
 } {
-  const structured = tryParseStructuredToolOutput(value);
-  if (structured !== null) {
-    return structured;
-  }
-
-  return {
-    success: false,
-    durationMs: 0
-  };
+  return interpretToolOutputText(value);
 }
 
 function tryParseStructuredToolOutput(value: string | null): {
@@ -577,7 +646,7 @@ function tryParseStructuredToolOutput(value: string | null): {
     const parsed = JSON.parse(value) as unknown;
     const record = asRecord(parsed);
     const metadata = asRecord(record?.metadata);
-    const exitCode = normalizeInteger(metadata?.exit_code);
+    const exitCode = normalizeSignedInteger(metadata?.exit_code);
     const durationSeconds = normalizeNumber(metadata?.duration_seconds);
 
     if (exitCode !== null) {
@@ -597,6 +666,21 @@ function parseFunctionCallOutput(value: string | null): {
   success: boolean;
   durationMs: number;
 } {
+  return interpretToolOutputText(value);
+}
+
+/**
+ * Decide success/failure from a terminal tool output payload.
+ *
+ * Codex frequently omits "Exit code: 0" for completed tools (search/read
+ * results, script cell updates, structured content blocks). Treat only an
+ * explicit non-zero exit as failure; any other non-empty terminal output is
+ * success so the failure rate matches user experience.
+ */
+function interpretToolOutputText(value: string | null): {
+  success: boolean;
+  durationMs: number;
+} {
   const structured = tryParseStructuredToolOutput(value);
   if (structured !== null) {
     return structured;
@@ -611,33 +695,28 @@ function parseFunctionCallOutput(value: string | null): {
 
   const exitCodeMatch = /Exit code:\s*(-?\d+)/iu.exec(value);
   const processExitCodeMatch = /Process exited with code\s*(-?\d+)/iu.exec(value);
-  const wallTimeMatch =
-    /Wall time:\s*([0-9]+(?:\.[0-9]+)?)\s*(milliseconds?|ms|seconds?|s)/iu.exec(value);
+  const durationMs = extractWallTimeMs(value) ?? 0;
   const runningSessionMatch = /Process running with session ID\s+\d+/iu.exec(value);
-
-  if (runningSessionMatch !== null) {
-    return {
-      success: true,
-      durationMs: 0
-    };
-  }
+  const scriptRunningMatch = /Script running with cell ID\s+\S+/iu.exec(value);
+  const scriptCompletedMatch = /Script completed/iu.exec(value);
 
   const normalizedExitCode = exitCodeMatch?.[1] ?? processExitCodeMatch?.[1] ?? null;
   if (normalizedExitCode !== null) {
     const exitCode = Number.parseInt(normalizedExitCode, 10);
-    let durationMs = 0;
-
-    if (wallTimeMatch !== null) {
-      const durationValue = Number.parseFloat(wallTimeMatch[1]);
-      const unit = wallTimeMatch[2].toLowerCase();
-
-      durationMs = unit.startsWith("ms") || unit.startsWith("millisecond")
-        ? Math.round(durationValue)
-        : Math.round(durationValue * 1000);
-    }
-
     return {
       success: exitCode === 0,
+      durationMs
+    };
+  }
+
+  if (
+    runningSessionMatch !== null ||
+    scriptRunningMatch !== null ||
+    scriptCompletedMatch !== null ||
+    value.trim().length > 0
+  ) {
+    return {
+      success: true,
       durationMs
     };
   }
@@ -646,6 +725,29 @@ function parseFunctionCallOutput(value: string | null): {
     success: false,
     durationMs: 0
   };
+}
+
+function extractWallTimeMs(value: string): number | null {
+  // "Wall time: 2.7 seconds" / "Wall time 10.0 seconds" / "Wall time: 64 ms"
+  const wallTimeMatch =
+    /Wall time:?\s*([0-9]+(?:\.[0-9]+)?)\s*(milliseconds?|ms|seconds?|s)\b/iu.exec(value);
+  if (wallTimeMatch === null) {
+    return null;
+  }
+
+  const durationValue = Number.parseFloat(wallTimeMatch[1]);
+  if (!Number.isFinite(durationValue)) {
+    return null;
+  }
+
+  const unit = wallTimeMatch[2].toLowerCase();
+  return unit.startsWith("ms") || unit.startsWith("millisecond")
+    ? Math.round(durationValue)
+    : Math.round(durationValue * 1000);
+}
+
+function normalizeSignedInteger(value: unknown): number | null {
+  return typeof value === "number" && Number.isInteger(value) ? value : null;
 }
 
 function summarizePatchChanges(changes: Record<string, unknown>): {

@@ -2,8 +2,20 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import Database from "better-sqlite3";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { isolateSources, type IsolatedSources } from "@agent-metrics/test-utils";
 import { syncCursorArtifacts } from "./cursor-sync.js";
+
+let isolated: IsolatedSources | null = null;
+
+beforeEach(async () => {
+  isolated = await isolateSources();
+});
+
+afterEach(() => {
+  isolated?.cleanup();
+  isolated = null;
+});
 
 describe("syncCursorArtifacts", () => {
   it("syncs Cursor composer, prompt, generation, usage, and edit data into normalized events", async () => {
@@ -156,7 +168,7 @@ describe("syncCursorArtifacts", () => {
       .split("\n")
       .map((line) => JSON.parse(line));
 
-    expect(events.map((event) => event.event_id)).toEqual([
+    expect(events.map((event) => event.source_record_id)).toEqual([
       "cursor:session:cmp_1:started",
       "cursor:prompt:prompt_1",
       "cursor:assistant:msg_1",
@@ -166,14 +178,14 @@ describe("syncCursorArtifacts", () => {
     expect(events).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          event_id: "cursor:session:cmp_1:started",
+          source_record_id: "cursor:session:cmp_1:started",
           source_vendor: "cursor",
           source_adapter: "cursor-ide",
           workspace_path: workspacePath,
           type: "session.started"
         }),
         expect.objectContaining({
-          event_id: "cursor:usage:msg_1",
+          source_record_id: "cursor:usage:msg_1",
           type: "token.usage.recorded",
           model: "cursor-fast",
           input_tokens: 20,
@@ -183,7 +195,7 @@ describe("syncCursorArtifacts", () => {
           usage_source: "cursor-generation"
         }),
         expect.objectContaining({
-          event_id: `cursor:edit:cmp_1:${createdAt}`,
+          source_record_id: `cursor:edit:cmp_1:${createdAt}`,
           type: "code.edit.applied",
           tool_name: "Composer",
           file_count: 2,
@@ -270,11 +282,11 @@ describe("syncCursorArtifacts", () => {
     expect(events).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          event_id: "cursor:session:cmp_win_1:started",
+          source_record_id: "cursor:session:cmp_win_1:started",
           workspace_path: workspacePath
         }),
         expect.objectContaining({
-          event_id: `cursor:edit:cmp_win_1:${createdAt}`,
+          source_record_id: `cursor:edit:cmp_win_1:${createdAt}`,
           workspace_path: workspacePath
         })
       ])
@@ -412,23 +424,25 @@ describe("syncCursorArtifacts", () => {
     expect(events).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          event_id: "cursor:session:conv_hash_1:started",
+          source_record_id: "cursor:session:conv_hash_1:started",
           type: "session.started",
           workspace_path: "D:/projects/dev/agent-metrics/apps"
         }),
         expect.objectContaining({
-          event_id: "cursor:tool:conv_hash_1:req_hash_1:started",
+          source_record_id: "cursor:tool:conv_hash_1:req_hash_1:started",
           type: "tool.called",
-          tool_name: "Composer"
+          tool_name: "Composer Request",
+          tool_call_id: "native:req_hash_1"
         }),
         expect.objectContaining({
-          event_id: "cursor:tool:conv_hash_1:req_hash_1:succeeded",
+          source_record_id: "cursor:tool:conv_hash_1:req_hash_1:succeeded",
           type: "tool.succeeded",
-          tool_name: "Composer",
+          tool_name: "Composer Request",
+          tool_call_id: "native:req_hash_1",
           duration_ms: completedAt - startedAt
         }),
         expect.objectContaining({
-          event_id: "cursor:edit:conv_hash_1:req_hash_1",
+          source_record_id: "cursor:edit:conv_hash_1:req_hash_1",
           type: "code.edit.applied",
           file_count: 2,
           workspace_path: "D:/projects/dev/agent-metrics/apps",
@@ -551,13 +565,13 @@ describe("syncCursorArtifacts", () => {
     expect(events).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          event_id: "cursor:session:cmp_global_1:started",
+          source_record_id: "cursor:session:cmp_global_1:started",
           type: "session.started",
           workspace_path: "D:/projects/dev/agent-metrics",
           timestamp: new Date(createdAt).toISOString()
         }),
         expect.objectContaining({
-          event_id: `cursor:edit:cmp_global_1:${createdAt}`,
+          source_record_id: `cursor:edit:cmp_global_1:${createdAt}`,
           type: "code.edit.applied",
           file_count: 2,
           insertions: 8,
@@ -730,14 +744,14 @@ describe("syncCursorArtifacts", () => {
     expect(events).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          event_id: "cursor:prompt:transcript:cmp_transcript_1:1",
+          source_record_id: "cursor:prompt:transcript:cmp_transcript_1:1",
           type: "prompt.submitted",
           session_id: sessionId,
           workspace_path: "D:/projects/dev/agent-metrics",
           prompt_chars: promptText.length
         }),
         expect.objectContaining({
-          event_id: "cursor:assistant:transcript:cmp_transcript_1:2",
+          source_record_id: "cursor:assistant:transcript:cmp_transcript_1:2",
           type: "assistant.responded",
           session_id: sessionId,
           workspace_path: "D:/projects/dev/agent-metrics",
@@ -930,13 +944,13 @@ describe("syncCursorArtifacts", () => {
     expect(events).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          event_id: "cursor:assistant:msg_context_1",
+          source_record_id: "cursor:assistant:msg_context_1",
           type: "assistant.responded",
           model: "cursor-max",
           session_id: sessionId
         }),
         expect.objectContaining({
-          event_id: "cursor:usage:msg_context_1",
+          source_record_id: "cursor:usage:msg_context_1",
           type: "token.usage.recorded",
           model: "cursor-max",
           session_id: sessionId,

@@ -1,13 +1,20 @@
-export type TimeScopeMode = "calendar" | "rolling" | "lifetime";
+export type TimeScopeMode = "calendar" | "rolling" | "lifetime" | "custom";
 export type TimeScopeRange = "day" | "week" | "month";
 
 export type ResolvedTimeScope = {
   mode: TimeScopeMode;
-  range: TimeScopeRange;
+  range: TimeScopeRange | null;
   timezone: string;
   windowStart: string | null;
   windowEnd: string | null;
 };
+
+export class InvalidTimeScopeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "InvalidTimeScopeError";
+  }
+}
 
 export function resolveTimeScope(
   query: Record<string, unknown>,
@@ -21,6 +28,11 @@ export function resolveTimeScope(
   const timezone = input.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
   const offsetMinutes = input.offsetMinutes ?? -now.getTimezoneOffset();
   const mode = normalizeMode(query.mode);
+
+  if (mode === "custom") {
+    return resolveCustomScope(query, timezone);
+  }
+
   const range = normalizeRange(query.range);
 
   if (mode === "lifetime") {
@@ -48,8 +60,46 @@ export function resolveTimeScope(
   };
 }
 
+function resolveCustomScope(query: Record<string, unknown>, timezone: string): ResolvedTimeScope {
+  const startAt = readTimestamp(query.startAt);
+  const endAt = readTimestamp(query.endAt);
+  if (startAt === null || endAt === null) {
+    throw new InvalidTimeScopeError("Custom time scope requires startAt and endAt as RFC3339 timestamps.");
+  }
+  const startMs = Date.parse(startAt);
+  const endMs = Date.parse(endAt);
+  if (startMs >= endMs) {
+    throw new InvalidTimeScopeError("Custom time scope requires startAt earlier than endAt.");
+  }
+  const maxSpanMs = 3 * 365.25 * 24 * 60 * 60 * 1000;
+  if (endMs - startMs > maxSpanMs) {
+    throw new InvalidTimeScopeError("Custom time scope cannot exceed 3 years.");
+  }
+  return {
+    mode: "custom",
+    range: null,
+    timezone,
+    windowStart: startAt,
+    windowEnd: endAt
+  };
+}
+
+function readTimestamp(value: unknown): string | null {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return null;
+  }
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
+  return new Date(parsed).toISOString();
+}
+
 function normalizeMode(value: unknown): TimeScopeMode {
-  return value === "rolling" || value === "lifetime" ? value : "calendar";
+  if (value === "rolling" || value === "lifetime" || value === "custom") {
+    return value;
+  }
+  return "calendar";
 }
 
 function normalizeRange(value: unknown): TimeScopeRange {

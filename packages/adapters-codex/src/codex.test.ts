@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AnyEventSchema } from "@agent-metrics/event-schema";
+import { NormalizedEventV2Schema } from "@agent-metrics/event-schema";
 import { extractCodexEventsFromRollout } from "./codex.js";
 
 describe("extractCodexEventsFromRollout", () => {
@@ -50,7 +50,8 @@ describe("extractCodexEventsFromRollout", () => {
       expect.objectContaining({
         type: "tool.called",
         tool_name: "apply_patch",
-        status: "started"
+        status: "started",
+        tool_call_id: "native:call_apply_patch_1"
       })
     );
     expect(events).toContainEqual(
@@ -58,6 +59,7 @@ describe("extractCodexEventsFromRollout", () => {
         type: "tool.succeeded",
         tool_name: "apply_patch",
         status: "succeeded",
+        tool_call_id: "native:call_apply_patch_1",
         duration_ms: 400
       })
     );
@@ -141,7 +143,7 @@ describe("extractCodexEventsFromRollout", () => {
     );
 
     for (const event of events) {
-      expect(AnyEventSchema.safeParse(event).success).toBe(true);
+      expect(NormalizedEventV2Schema.safeParse(event).success).toBe(true);
     }
   });
 
@@ -194,7 +196,7 @@ describe("extractCodexEventsFromRollout", () => {
     );
 
     for (const event of events) {
-      expect(AnyEventSchema.safeParse(event).success).toBe(true);
+      expect(NormalizedEventV2Schema.safeParse(event).success).toBe(true);
     }
   });
 
@@ -253,8 +255,143 @@ describe("extractCodexEventsFromRollout", () => {
     );
 
     for (const event of events) {
-      expect(AnyEventSchema.safeParse(event).success).toBe(true);
+      expect(NormalizedEventV2Schema.safeParse(event).success).toBe(true);
     }
+  });
+
+  it("treats custom_tool_call_output array parts and missing exit codes as success", () => {
+    const events = extractCodexEventsFromRollout({
+      filePath: "C:/Users/test/.codex/sessions/2026/05/28/rollout-custom-array.jsonl",
+      contents: [
+        JSON.stringify({
+          timestamp: "2026-05-28T10:00:00.000Z",
+          type: "session_meta",
+          payload: {
+            id: "ses_custom_array",
+            timestamp: "2026-05-28T10:00:00.000Z",
+            cwd: "D:/projects/dev",
+            model_provider: "ai"
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-05-28T10:00:03.000Z",
+          type: "response_item",
+          payload: {
+            type: "custom_tool_call",
+            call_id: "call_custom_array_1",
+            name: "exec",
+            input: JSON.stringify({ cmd: "rg pattern src" })
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-05-28T10:00:12.000Z",
+          type: "response_item",
+          payload: {
+            type: "custom_tool_call_output",
+            call_id: "call_custom_array_1",
+            output: [
+              {
+                type: "input_text",
+                text: "Script completed\nWall time 9.0 seconds\nOutput:\n"
+              },
+              {
+                type: "input_text",
+                text: "src/index.ts:1:match"
+              }
+            ]
+          }
+        })
+      ].join("\n")
+    });
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "tool.succeeded",
+        tool_name: "exec",
+        status: "succeeded",
+        duration_ms: 9000
+      })
+    );
+    expect(events.some((event) => event.type === "tool.failed")).toBe(false);
+  });
+
+  it("treats function_call_output without an exit code as success, not failure", () => {
+    const events = extractCodexEventsFromRollout({
+      filePath: "C:/Users/test/.codex/sessions/2026/05/28/rollout-no-exit.jsonl",
+      contents: [
+        JSON.stringify({
+          timestamp: "2026-05-28T10:00:00.000Z",
+          type: "session_meta",
+          payload: {
+            id: "ses_no_exit",
+            timestamp: "2026-05-28T10:00:00.000Z",
+            cwd: "D:/projects/dev",
+            model_provider: "ai"
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-05-28T10:00:03.000Z",
+          type: "response_item",
+          payload: {
+            type: "function_call",
+            call_id: "call_no_exit_1",
+            name: "shell_command",
+            arguments: JSON.stringify({
+              command: "rg -n pattern src",
+              workdir: "D:/projects/dev"
+            })
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-05-28T10:00:05.000Z",
+          type: "response_item",
+          payload: {
+            type: "function_call_output",
+            call_id: "call_no_exit_1",
+            output: ["Wall time: 0.0643 seconds", "Output:", "src/a.ts:1:hit"].join("\n")
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-05-28T10:00:06.000Z",
+          type: "response_item",
+          payload: {
+            type: "function_call",
+            call_id: "call_nonzero_1",
+            name: "shell_command",
+            arguments: JSON.stringify({
+              command: "rg -n missing src",
+              workdir: "D:/projects/dev"
+            })
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-05-28T10:00:07.000Z",
+          type: "response_item",
+          payload: {
+            type: "function_call_output",
+            call_id: "call_nonzero_1",
+            output: ["Exit code: 1", "Wall time: 0.1 seconds", "Output:"].join("\n")
+          }
+        })
+      ].join("\n")
+    });
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "tool.succeeded",
+        tool_name: "rg",
+        status: "succeeded",
+        duration_ms: 64
+      })
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "tool.failed",
+        tool_name: "rg",
+        status: "failed",
+        duration_ms: 100
+      })
+    );
   });
 
   it("maps exec_command function calls into normalized tool events on macOS", () => {
@@ -573,7 +710,7 @@ describe("extractCodexEventsFromRollout", () => {
     );
 
     for (const event of events) {
-      expect(AnyEventSchema.safeParse(event).success).toBe(true);
+      expect(NormalizedEventV2Schema.safeParse(event).success).toBe(true);
     }
   });
 
@@ -628,14 +765,14 @@ describe("extractCodexEventsFromRollout", () => {
 
     expect(events).toEqual([
       expect.objectContaining({
-        event_id: "codex:session:019e5dc9-b10c-7371-8edd-066e8db7e50d:started",
+        source_record_id: "codex:session:019e5dc9-b10c-7371-8edd-066e8db7e50d:started",
         session_id: "019e5dc9-b10c-7371-8edd-066e8db7e50d",
         source_vendor: "codex",
         source_adapter: "codex-rollout",
         type: "session.started"
       }),
       expect.objectContaining({
-        event_id: "codex:session:019e5dc9-b10c-7371-8edd-066e8db7e50d:usage:30321",
+        source_record_id: "codex:session:019e5dc9-b10c-7371-8edd-066e8db7e50d:usage:30321",
         session_id: "019e5dc9-b10c-7371-8edd-066e8db7e50d",
         type: "token.usage.recorded",
         message_id: "usage_30321",
@@ -652,7 +789,56 @@ describe("extractCodexEventsFromRollout", () => {
     ]);
 
     for (const event of events) {
-      expect(AnyEventSchema.safeParse(event).success).toBe(true);
+      expect(NormalizedEventV2Schema.safeParse(event).success).toBe(true);
     }
+  });
+
+  it("tags Multica rollouts via path and originator as codex:multica", () => {
+    const byPath = extractCodexEventsFromRollout({
+      filePath:
+        "C:/Users/test/.codex/multica-sessions/p_abc/task/id/2026/07/30/rollout-2026-07-30T10-00-00-019fb0ea-92d6-7a61-afbe-3c3385675400.jsonl",
+      contents: JSON.stringify({
+        timestamp: "2026-07-30T10:00:00.000Z",
+        type: "session_meta",
+        payload: {
+          id: "019fb0ea-92d6-7a61-afbe-3c3385675400",
+          timestamp: "2026-07-30T10:00:00.000Z",
+          cwd: "D:/projects/dev",
+          model_provider: "ai"
+        }
+      })
+    });
+
+    expect(byPath[0]).toEqual(
+      expect.objectContaining({
+        type: "session.started",
+        source_vendor: "codex",
+        source_instance_id: "codex:multica",
+        adapter_instance_id: "codex-rollout@codex:multica"
+      })
+    );
+
+    const byOriginator = extractCodexEventsFromRollout({
+      filePath:
+        "C:/Users/test/.codex/sessions/2026/07/30/rollout-2026-07-30T10-00-00-019fb0ea-92d6-7a61-afbe-3c3385675400.jsonl",
+      contents: JSON.stringify({
+        timestamp: "2026-07-30T10:00:00.000Z",
+        type: "session_meta",
+        payload: {
+          id: "019fb0ea-92d6-7a61-afbe-3c3385675400",
+          timestamp: "2026-07-30T10:00:00.000Z",
+          cwd: "D:/projects/dev",
+          originator: "multica-agent-sdk",
+          model_provider: "ai"
+        }
+      })
+    });
+
+    expect(byOriginator[0]).toEqual(
+      expect.objectContaining({
+        type: "session.started",
+        source_instance_id: "codex:multica"
+      })
+    );
   });
 });

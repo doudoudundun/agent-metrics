@@ -2,7 +2,7 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "../App";
-import type { AgentMetricsDesktopBridge } from "../desktop-mode";
+import type { AgentMetricsDesktopBridge } from "../legacyDesktopBridge";
 import { OrbSurface } from "./OrbSurface";
 
 const apiMocks = vi.hoisted(() => ({
@@ -13,7 +13,7 @@ const apiMocks = vi.hoisted(() => ({
   buildExportUrl: vi.fn()
 }));
 
-vi.mock("../api", () => ({
+vi.mock("../legacy-api", () => ({
   ...apiMocks
 }));
 

@@ -3,12 +3,16 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "files": ["dist/**/*", "package.json"],
   "scripts": {
     "build": "vite build",
     "dev": "vite",
-    "test": "node ../../scripts/run-tests.mjs run src"
+    "test": "node ../../scripts/run-tests.mjs run src",
+    "test:e2e": "playwright test",
+    "test:e2e:update": "playwright test --update-snapshots"
   },
   "dependencies": {
+    "@agent-metrics/contracts": "workspace:*",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "recharts": "^2.15.3"

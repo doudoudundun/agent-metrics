@@ -16,6 +16,7 @@ describe("RecentSessionsTable", () => {
         onSelect={onSelect}
         rows={[
           {
+            sourceInstanceId: "claude:default",
             sessionId: "ses_1",
             workspacePath: "D:/projects/dev/agent-metrics",
             turnCount: 14,
@@ -23,7 +24,7 @@ describe("RecentSessionsTable", () => {
             lastModel: "gpt-5-codex"
           }
         ]}
-        selectedSessionId={null}
+        selectedSession={null}
       />
     );
 
@@ -36,7 +37,7 @@ describe("RecentSessionsTable", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "ses_1" }));
 
-    expect(onSelect).toHaveBeenCalledWith("ses_1");
+    expect(onSelect).toHaveBeenCalledWith({ sourceInstanceId: "claude:default", sessionId: "ses_1" });
   });
 
   it("renders unknown when the session has no reported model", () => {
@@ -45,6 +46,7 @@ describe("RecentSessionsTable", () => {
         onSelect={vi.fn()}
         rows={[
           {
+            sourceInstanceId: "claude:default",
             sessionId: "ses_2",
             workspacePath: "D:/projects/dev/agent-metrics",
             turnCount: 3,
@@ -52,7 +54,7 @@ describe("RecentSessionsTable", () => {
             lastModel: null
           }
         ]}
-        selectedSessionId={null}
+        selectedSession={null}
       />
     );
 

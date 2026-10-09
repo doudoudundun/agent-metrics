@@ -1,3 +1,12 @@
+/**
+ * LEGACY Desktop entry (orb / floating / peek multi-window).
+ *
+ * Quarantined under `legacy/` for Phase 7 rollback only.
+ * Production entry is `../main-v2.ts` (see package.json "main").
+ * Keep this module only until Phase 7 parity evidence in
+ * `docs/superpowers/notes/2026-07-20-phase7-legacy-parity.md` is complete.
+ * Do not register new IPC or windows here.
+ */
 import { spawn, type ChildProcess } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 import { createRequire } from "node:module";
@@ -14,7 +23,7 @@ import {
   createDesktopMetricsSnapshot,
   type DesktopMetricsSnapshot
 } from "./orb-snapshot.js";
-import { migrateLegacyDataRoots } from "./data-root-migration.js";
+import { migrateLegacyDataRoots } from "../data-root-migration.js";
 import {
   resolveDefaultOrbBounds,
   resolveOrbDockEdge,
@@ -23,14 +32,14 @@ import {
   resolveOrbWindowPlacement,
   resolvePeekCardBounds
 } from "./orb-layout.js";
-import { resolveDesktopNodeExecutable } from "./runtime/node-executable.js";
-import { createProcessSupervisor } from "./runtime/process-supervisor.js";
+import { resolveDesktopNodeExecutable } from "../runtime/node-executable.js";
+import { createProcessSupervisor } from "../runtime/process-supervisor.js";
 import {
   buildDashboardUrl,
   type DesktopDashboardSurface,
   resolveDesktopRuntimePaths
-} from "./runtime-paths.js";
-import { installBrokenPipeGuards } from "./runtime/safe-logging.js";
+} from "../runtime-paths.js";
+import { installBrokenPipeGuards } from "../runtime/safe-logging.js";
 import { loadDesktopSettings, saveDesktopSettings } from "./settings.js";
 import {
   clampBoundsToDisplay,

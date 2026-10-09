@@ -9,7 +9,7 @@ import {
   resolveApiPath,
   type OverviewResponse,
   type SessionDetailResponse
-} from "./api";
+} from "./legacy-api";
 
 function stubFetchJson(payload: unknown): void {
   vi.stubGlobal(
@@ -278,7 +278,7 @@ describe("api client", () => {
     };
 
     stubFetchJson({ rows, ...scopeMeta });
-    await expect(fetchTokenTrend()).resolves.toEqual({ rows, ...scopeMeta });
+    await expect(fetchTokenTrend({ mode: "calendar", range: "day" })).resolves.toEqual({ rows, ...scopeMeta });
     expect(fetch).toHaveBeenCalledWith("/api/token-trend?mode=calendar&range=day&sourceVendor=all");
   });
 

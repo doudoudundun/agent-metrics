@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import Database from "better-sqlite3";
@@ -266,7 +266,7 @@ describe("syncCodexRollouts", () => {
 
     expect(events).toEqual([
       expect.objectContaining({
-        event_id: "codex:session:019e5dc9-b10c-7371-8edd-066e8db7e50d:started",
+        source_record_id: "codex:session:019e5dc9-b10c-7371-8edd-066e8db7e50d:started",
         type: "session.started"
       }),
       expect.objectContaining({
@@ -317,7 +317,7 @@ describe("syncCodexRollouts", () => {
         duration_ms: 2285
       }),
       expect.objectContaining({
-        event_id: "codex:session:019e5dc9-b10c-7371-8edd-066e8db7e50d:usage:30321",
+        source_record_id: "codex:session:019e5dc9-b10c-7371-8edd-066e8db7e50d:usage:30321",
         type: "token.usage.recorded",
         model: "gpt-5.4",
         input_tokens: 15928,
@@ -329,5 +329,223 @@ describe("syncCodexRollouts", () => {
         provider_host: "api.psydo.top"
       })
     ]);
+  });
+
+  it("re-ingests recent rollouts when ledger has ghost keys but event log does not", async () => {
+    const root = await mkdtemp(join(tmpdir(), "agent-metrics-codex-ghost-"));
+    const sessionsRoot = join(root, "sessions");
+    // Rollouts are only reconciled within a recency window, so anchor the
+    // fixture day to "today" instead of a fixed date that ages out.
+    const now = new Date();
+    const dayParts = [
+      String(now.getUTCFullYear()),
+      String(now.getUTCMonth() + 1).padStart(2, "0"),
+      String(now.getUTCDate()).padStart(2, "0")
+    ];
+    const dayRoot = join(sessionsRoot, ...dayParts);
+    const sessionId = "019f7d68-67d0-74d2-bbfc-67adbe750b4e";
+    const rolloutPath = join(
+      dayRoot,
+      `rollout-${dayParts[0]}-${dayParts[1]}-${dayParts[2]}T10-00-00-${sessionId}.jsonl`
+    );
+    const eventLogPath = join(root, "events.jsonl");
+    const cursorPath = join(root, "codex-cursor.json");
+    const ledgerPath = join(root, "codex-ledger.json");
+    const logsDbPath = join(root, "logs_2.sqlite");
+    const configPath = join(root, "config.toml");
+
+    await mkdir(dayRoot, { recursive: true });
+    const rolloutBody = [
+      JSON.stringify({
+        timestamp: "2026-07-20T02:00:00.000Z",
+        type: "session_meta",
+        payload: {
+          id: sessionId,
+          timestamp: "2026-07-20T02:00:00.000Z",
+          cwd: "D:/projects/dev",
+          model_provider: "ai"
+        }
+      }),
+      JSON.stringify({
+        timestamp: "2026-07-20T02:00:01.000Z",
+        type: "event_msg",
+        payload: {
+          type: "token_count",
+          info: {
+            total_token_usage: {
+              input_tokens: 100,
+              cached_input_tokens: 0,
+              output_tokens: 20,
+              reasoning_output_tokens: 0,
+              total_tokens: 120
+            },
+            last_token_usage: {
+              input_tokens: 100,
+              cached_input_tokens: 0,
+              output_tokens: 20,
+              reasoning_output_tokens: 0,
+              total_tokens: 120
+            }
+          }
+        }
+      })
+    ].join("\n");
+    await writeFile(rolloutPath, rolloutBody, "utf8");
+    await writeFile(
+      configPath,
+      ['model_provider = "ai"', "", "[model_providers.ai]", 'base_url = "https://api.psydo.top"'].join(
+        "\n"
+      ),
+      "utf8"
+    );
+
+    const db = new Database(logsDbPath);
+    db.exec(`
+      CREATE TABLE logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts INTEGER NOT NULL,
+        ts_nanos INTEGER NOT NULL DEFAULT 0,
+        level TEXT NOT NULL DEFAULT 'INFO',
+        target TEXT NOT NULL DEFAULT 'codex_otel.log_only',
+        feedback_log_body TEXT,
+        estimated_bytes INTEGER NOT NULL DEFAULT 0
+      );
+    `);
+    db.close();
+
+    const ghostKey = `codex:session:${sessionId}:usage:ghost`;
+    await writeFile(ledgerPath, JSON.stringify({ eventIds: [ghostKey] }), "utf8");
+    const st = await stat(rolloutPath);
+    await writeFile(
+      cursorPath,
+      JSON.stringify({
+        rolloutFiles: { [rolloutPath]: { size: st.size, mtimeMs: st.mtimeMs } },
+        logsLastId: 0,
+        sessionModels: {}
+      }),
+      "utf8"
+    );
+    await writeFile(eventLogPath, "", "utf8");
+
+    await syncCodexRollouts({
+      eventLogPath,
+      cursorPath,
+      ledgerPath,
+      sessionsRoot,
+      logsDbPath,
+      configPath
+    });
+
+    const events = (await readFile(eventLogPath, "utf8"))
+      .trim()
+      .split("\n")
+      .filter((line) => line.length > 0)
+      .map((line) => JSON.parse(line));
+
+    expect(events.some((event) => event.type === "token.usage.recorded")).toBe(true);
+    expect(events.some((event) => event.source_record_id === ghostKey)).toBe(false);
+
+    const ledger = JSON.parse(await readFile(ledgerPath, "utf8")) as { eventIds: string[] };
+    expect(ledger.eventIds).not.toContain(ghostKey);
+    expect(ledger.eventIds.some((id) => id.includes(sessionId))).toBe(true);
+  });
+
+  it("syncs Multica sessions root alongside normal Codex sessions", async () => {
+    const root = await mkdtemp(join(tmpdir(), "agent-metrics-codex-multica-"));
+    const sessionsRoot = join(root, "sessions");
+    const multicaRoot = join(root, "multica-sessions");
+    const normalDay = join(sessionsRoot, "2026", "07", "30");
+    const multicaDay = join(
+      multicaRoot,
+      "p_profile",
+      "task-id",
+      "agent-id",
+      "2026",
+      "07",
+      "30"
+    );
+    const normalSessionId = "019fb127-1937-79f1-bf33-d8914831262b";
+    const multicaSessionId = "019fb0ea-92d6-7a61-afbe-3c3385675400";
+    const normalPath = join(normalDay, `rollout-2026-07-30T11-00-00-${normalSessionId}.jsonl`);
+    const multicaPath = join(multicaDay, `rollout-2026-07-30T10-00-00-${multicaSessionId}.jsonl`);
+    const eventLogPath = join(root, "events.jsonl");
+    const cursorPath = join(root, "codex-cursor.json");
+    const ledgerPath = join(root, "codex-ledger.json");
+    const logsDbPath = join(root, "logs_2.sqlite");
+    const configPath = join(root, "config.toml");
+
+    await mkdir(normalDay, { recursive: true });
+    await mkdir(multicaDay, { recursive: true });
+    await writeFile(configPath, "", "utf8");
+    await writeFile(
+      normalPath,
+      JSON.stringify({
+        timestamp: "2026-07-30T11:00:00.000Z",
+        type: "session_meta",
+        payload: {
+          id: normalSessionId,
+          timestamp: "2026-07-30T11:00:00.000Z",
+          cwd: "D:/projects/dev",
+          model_provider: "ai"
+        }
+      }),
+      "utf8"
+    );
+    await writeFile(
+      multicaPath,
+      JSON.stringify({
+        timestamp: "2026-07-30T10:00:00.000Z",
+        type: "session_meta",
+        payload: {
+          id: multicaSessionId,
+          timestamp: "2026-07-30T10:00:00.000Z",
+          cwd: "D:/projects/dev",
+          originator: "multica-agent-sdk",
+          model_provider: "ai"
+        }
+      }),
+      "utf8"
+    );
+
+    const db = new Database(logsDbPath);
+    db.exec(`
+      CREATE TABLE logs (
+        id INTEGER PRIMARY KEY,
+        created_at TEXT NOT NULL DEFAULT '',
+        level TEXT NOT NULL DEFAULT 'INFO',
+        target TEXT NOT NULL DEFAULT 'codex_otel.log_only',
+        feedback_log_body TEXT,
+        estimated_bytes INTEGER NOT NULL DEFAULT 0
+      );
+    `);
+    db.close();
+
+    await syncCodexRollouts({
+      eventLogPath,
+      cursorPath,
+      ledgerPath,
+      sessionsRoots: [sessionsRoot, multicaRoot],
+      logsDbPath,
+      configPath
+    });
+
+    const events = (await readFile(eventLogPath, "utf8"))
+      .trim()
+      .split("\n")
+      .filter((line) => line.length > 0)
+      .map((line) => JSON.parse(line) as { session_id: string; source_instance_id: string });
+
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          session_id: normalSessionId,
+          source_instance_id: "codex:default"
+        }),
+        expect.objectContaining({
+          session_id: multicaSessionId,
+          source_instance_id: "codex:multica"
+        })
+      ])
+    );
   });
 });

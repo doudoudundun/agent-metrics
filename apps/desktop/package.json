@@ -6,18 +6,21 @@
   "author": "OpenAI Codex",
   "private": true,
   "type": "module",
-  "main": "dist/main.js",
+  "main": "dist/main-v2.js",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "dev": "corepack pnpm build && electron dist/main.js",
+    "build": "tsc -p tsconfig.json && node ./scripts/bundle-main.mjs",
+    "dev": "corepack pnpm build && electron dist/main-v2.js",
     "prepare-runtime": "node ./scripts/stage-runtime.mjs",
+    "verify:package": "node ./scripts/verify-package.mjs",
+    "smoke:package": "node ./scripts/smoke-package.mjs",
     "test": "node ../../scripts/run-tests.mjs run src",
-    "package:mac": "corepack pnpm prepare-runtime && electron-builder --mac dir --arm64",
-    "package:mac:x64": "corepack pnpm prepare-runtime && electron-builder --mac dir --x64",
-    "package:mac:arm64": "corepack pnpm prepare-runtime && electron-builder --mac dir --arm64",
-    "package:win": "node ./scripts/clean-release.mjs win-unpacked && corepack pnpm prepare-runtime && electron-builder --win dir --x64",
-    "package:win:x64": "node ./scripts/clean-release.mjs win-unpacked && corepack pnpm prepare-runtime && electron-builder --win dir --x64",
-    "package:win:arm64": "node ./scripts/clean-release.mjs win-unpacked && corepack pnpm prepare-runtime && electron-builder --win dir --arm64"
+    "package:mac": "corepack pnpm package:mac:arm64",
+    "package:mac:x64": "node ./scripts/clean-release.mjs mac && node ./scripts/stage-runtime.mjs --target-platform=darwin --target-arch=x64 && electron-builder --mac dir --x64 && node ./scripts/verify-package.mjs --target-platform=darwin --target-arch=x64 && node ./scripts/smoke-package.mjs --target-platform=darwin --target-arch=x64",
+    "package:mac:arm64": "node ./scripts/clean-release.mjs mac && node ./scripts/stage-runtime.mjs --target-platform=darwin --target-arch=arm64 && electron-builder --mac dir --arm64 && node ./scripts/verify-package.mjs --target-platform=darwin --target-arch=arm64 && node ./scripts/smoke-package.mjs --target-platform=darwin --target-arch=arm64",
+    "package:win": "corepack pnpm package:win:x64",
+    "package:win:x64": "node ./scripts/clean-release.mjs win-unpacked && node ./scripts/clean-win-distributables.mjs && node ./scripts/stage-runtime.mjs --target-platform=win32 --target-arch=x64 && electron-builder --win nsis zip --x64 && node ./scripts/verify-package.mjs --target-platform=win32 --target-arch=x64 && node ./scripts/smoke-package.mjs --target-platform=win32 --target-arch=x64",
+    "package:win:arm64": "node ./scripts/clean-release.mjs win-unpacked && node ./scripts/clean-win-distributables.mjs && node ./scripts/stage-runtime.mjs --target-platform=win32 --target-arch=arm64 && electron-builder --win nsis zip --arm64 && node ./scripts/verify-package.mjs --target-platform=win32 --target-arch=arm64 && node ./scripts/smoke-package.mjs --target-platform=win32 --target-arch=arm64",
+    "package:win:dir": "node ./scripts/clean-release.mjs win-unpacked && node ./scripts/stage-runtime.mjs --target-platform=win32 --target-arch=x64 && electron-builder --win dir --x64 && node ./scripts/verify-package.mjs --target-platform=win32 --target-arch=x64 && node ./scripts/smoke-package.mjs --target-platform=win32 --target-arch=x64"
   },
   "build": {
     "appId": "dev.agentmetrics.desktop",
@@ -37,15 +40,31 @@
       "target": ["dir"]
     },
     "win": {
-      "target": ["dir"],
-      "signAndEditExecutable": false
+      "target": ["nsis", "zip"],
+      "signAndEditExecutable": false,
+      "artifactName": "${productName}-${version}-${os}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "allowElevation": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Agent Metrics",
+      "deleteAppDataOnUninstall": false,
+      "artifactName": "${productName}-Setup-${version}-${arch}.${ext}"
     },
     "directories": {
       "output": "release"
     }
   },
+  "dependencies": {
+    "@agent-metrics/contracts": "workspace:*"
+  },
   "devDependencies": {
     "electron": "^33.2.1",
-    "electron-builder": "^25.1.8"
+    "electron-builder": "^25.1.8",
+    "esbuild": "^0.25.9"
   }
 }

@@ -1,276 +1,49 @@
 import { mkdirSync } from "node:fs";
-import { readFile, stat } from "node:fs/promises";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 import Fastify from "fastify";
-import {
-  syncKnownClaudeTranscripts,
-  type ClaudeSessionContext
-} from "@agent-metrics/adapters-claude";
+import { syncKnownClaudeTranscripts } from "@agent-metrics/adapters-claude";
 import { syncCodexRollouts } from "@agent-metrics/adapters-codex";
-import { syncCursorArtifacts } from "@agent-metrics/adapters-cursor";
-import { syncOpenCodeDatabase } from "@agent-metrics/adapters-opencode";
-import { AnyEventSchema, type AnyEvent, type SourceVendor } from "@agent-metrics/event-schema";
-import { toCsv, toJson } from "@agent-metrics/export-kit";
-import { buildOverviewMetrics } from "@agent-metrics/metrics-engine";
+import { syncCursorArtifacts, syncCursorOfficialUsage } from "@agent-metrics/adapters-cursor";
+import { syncOpenCodeDatabase, syncZCodeDatabase } from "@agent-metrics/adapters-opencode";
+import { syncKimicodeSessions } from "@agent-metrics/adapters-kimicode";
+import { syncMiMoDatabase } from "@agent-metrics/adapters-mimo";
+import { syncDshSessions } from "@agent-metrics/adapters-dsh";
 import { getAgentMetricsPaths } from "@agent-metrics/shared-utils";
-import { createRecentResultAction } from "./request-sync.js";
-import { resolveTimeScope, type ResolvedTimeScope } from "./time-scope.js";
+import { runDomainMigrations, type SqliteDatabaseLike } from "./domain-migrations.js";
+import {
+  SyncCoordinator,
+  type SyncAdapter,
+  type SyncResult
+} from "./sync-coordinator.js";
+import { initializeLegacySchema } from "./legacy-schema.js";
+import {
+  createEventLogSynchronizer as createIncrementalEventLogSynchronizer,
+  ingestEventLog as projectEventLog,
+  persistClaudeSessionContexts as persistClaudeContexts,
+  readProjectionWatermark,
+  repairBrokenIngestionCursor,
+  withCanonicalWriterLease as withProjectorLease,
+  yieldEventLoop
+} from "./event-log-projector.js";
+import { createSqliteSyncRunStore } from "./sync-run-store.js";
+import { installHttpSecurity } from "./http-security.js";
+import { registerCoreRoutes } from "./core-routes.js";
+import { persistCursorAccountUsage } from "./cursor-account-usage.js";
+import { startCursorOfficialRefreshLoop } from "./cursor-official-refresh.js";
+import { runIsolatedSourceRefreshTasks, startSourceLightRefreshLoop } from "./source-light-refresh.js";
+import type { BuildAppInput, MetricsDatabase } from "./core-types.js";
 
-type MetricsStatement<Result = unknown> = {
-  all(...params: unknown[]): Result[];
-  get(...params: unknown[]): Result;
-  run(...params: unknown[]): unknown;
-};
+/** Vendors covered by dedicated light refresh loops (not the heavy periodic coordinator). */
+const LIGHT_REFRESH_VENDORS = new Set(["cursor", "codex", "opencode", "zcode", "kimicode", "dsh", "mimo"]);
 
-type MetricsDatabase = {
-  close(): void;
-  exec(sql: string): unknown;
-  pragma(pragma: string): unknown;
-  prepare<Result = unknown>(sql: string): MetricsStatement<Result>;
-  transaction<TArgs extends unknown[], TResult>(
-    fn: (...args: TArgs) => TResult
-  ): (...args: TArgs) => TResult;
-};
+export { createEventLogSynchronizer } from "./event-log-projector.js";
 
 type MetricsApp = ReturnType<typeof Fastify> & {
   db: MetricsDatabase;
+  syncCoordinator: SyncCoordinator;
 };
-
-type BuildAppInput = {
-  dbPath: string;
-  eventLogPath?: string;
-  repoRoot?: string;
-  now?: () => Date;
-  timezone?: string;
-  offsetMinutes?: number;
-};
-
-type SourceVendorFilter = SourceVendor | "all";
-
-type SessionOverviewRow = {
-  session_id: string;
-};
-
-type ToolEventOverviewRow = {
-  event_id: string;
-  session_id: string;
-  tool_name: string;
-  status: string;
-  duration_ms: number | null;
-};
-
-type CodeEditOverviewRow = {
-  files_changed: string[];
-  file_count: number;
-  insertions: number;
-  deletions: number;
-  edit_operation_count: number;
-};
-
-type PromptOverviewRow = {
-  prompt_id: string;
-};
-
-type AssistantResponseOverviewRow = {
-  message_id: string;
-};
-
-type TokenUsageOverviewRow = {
-  model: string | null;
-  input_tokens: number;
-  output_tokens: number;
-  cache_creation_input_tokens: number;
-  cache_read_input_tokens: number;
-  source_vendor: SourceVendor;
-};
-
-type TokensByModelRow = {
-  model: string;
-  totalTokens: number;
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens: number;
-  cacheCreationTokens: number;
-};
-
-type SourceBreakdownRow = {
-  sourceVendor: SourceVendor;
-  sessionCount: number;
-  turnCount: number;
-  totalTokens: number;
-  toolCalls: number;
-};
-
-type ProviderBreakdownRow = {
-  providerHost: string | null;
-  providerId: string | null;
-  totalTokens: number;
-};
-
-type TokenTrendRow = {
-  bucketStart: string;
-  label: string;
-  totalTokens: number;
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens: number;
-  cacheCreationTokens: number;
-  cacheHitRate: number;
-};
-
-type ToolRankingRow = {
-  toolName: string;
-  count: number;
-  failures: number;
-  averageDurationMs: number;
-};
-
-type RawToolRankingRow = {
-  sourceVendor: SourceVendor;
-  toolName: string;
-  sessionId: string;
-  eventId: string;
-  count: number;
-  failures: number;
-  totalDurationMs: number;
-};
-
-type SessionListRow = {
-  sessionId: string;
-  workspacePath: string;
-  sourceVendor: string;
-  sourceAdapter: string;
-  providerId: string | null;
-  providerHost: string | null;
-  turnCount: number;
-  totalTokens: number;
-  lastModel: string | null;
-};
-
-type SessionRow = {
-  sessionId: string;
-  startedAt: string;
-  endedAt: string | null;
-  workspacePath: string;
-  sourceVendor: string;
-  sourceAdapter: string;
-};
-
-type SessionContextRow = {
-  executionPath: string | null;
-  skillsLoaded: number;
-  skillNamesJson: string;
-};
-
-type ToolTimelineRow = {
-  toolName: string;
-  status: string;
-  durationMs: number | null;
-  createdAt: string;
-  sourceVendor: string;
-  sourceAdapter: string;
-};
-
-type CodeEditTimelineRow = {
-  toolName: string;
-  filesChanged: string;
-  insertions: number;
-  deletions: number;
-  createdAt: string;
-  sourceVendor: string;
-  sourceAdapter: string;
-};
-
-type PromptTimelineRow = {
-  promptId: string;
-  promptChars: number;
-  createdAt: string;
-  sourceVendor: string;
-  sourceAdapter: string;
-};
-
-type AssistantTimelineRow = {
-  messageId: string;
-  model: string | null;
-  stopReason: string | null;
-  responseChars: number;
-  createdAt: string;
-  sourceVendor: string;
-  sourceAdapter: string;
-  providerId: string | null;
-  providerHost: string | null;
-};
-
-type TokenUsageTimelineRow = {
-  messageId: string;
-  model: string | null;
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens: number;
-  cacheCreationTokens: number;
-  usageSource: string;
-  createdAt: string;
-  sourceVendor: string;
-  sourceAdapter: string;
-  providerId: string | null;
-  providerHost: string | null;
-};
-
-type TokenTrendUsageRow = {
-  createdAt: string;
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens: number;
-  cacheCreationTokens: number;
-  sourceVendor: SourceVendor;
-};
-
-type SessionTimelineEntry = {
-  createdAt: string;
-  type: string;
-  toolName: string;
-  status: string;
-  durationMs: number;
-  sourceVendor: string;
-  sourceAdapter: string;
-  providerId: string | null;
-  providerHost: string | null;
-  filesChanged: string[];
-  insertions: number;
-  deletions: number;
-  promptId: string | null;
-  promptChars: number | null;
-  messageId: string | null;
-  model: string | null;
-  stopReason: string | null;
-  responseChars: number | null;
-  inputTokens: number | null;
-  outputTokens: number | null;
-  cacheReadTokens: number | null;
-  cacheCreationTokens: number | null;
-  totalTokens: number | null;
-  usageSource: string | null;
-};
-
-type TimeWindow = {
-  whereSql: string;
-  params: string[];
-};
-
-type EventLogSignature = {
-  mtimeMs: number;
-  size: number;
-};
-
-type EventLogCursor = {
-  offsetBytes: number;
-  sizeBytes: number;
-  mtimeMs: number;
-};
-
-const REQUEST_SYNC_TTL_MS = 1500;
 
 export function resolveDefaultDbPath(moduleUrl: string): string {
   return fileURLToPath(new URL("../../../data/sqlite/metrics.sqlite", moduleUrl));
@@ -280,857 +53,8 @@ export function resolveDefaultEventLogPath(moduleUrl: string): string {
   return fileURLToPath(new URL("../../../data/events/events.jsonl", moduleUrl));
 }
 
-export function createEventLogSynchronizer(input: {
-  eventLogPath: string;
-  ingest: () => Promise<void>;
-}): () => Promise<void> {
-  let lastIngestedSignature: EventLogSignature | null = null;
-  let syncQueue: Promise<void> = Promise.resolve();
 
-  return async () => {
-    const run = syncQueue.catch(() => undefined).then(async () => {
-      const nextSignature = await readEventLogSignature(input.eventLogPath);
 
-      if (isSameEventLogSignature(nextSignature, lastIngestedSignature)) {
-        return;
-      }
-
-      if (nextSignature === null) {
-        lastIngestedSignature = null;
-        return;
-      }
-
-      await input.ingest();
-      lastIngestedSignature = nextSignature;
-    });
-
-    syncQueue = run;
-    await run;
-  };
-}
-
-function selectOverviewRows(
-  db: MetricsDatabase,
-  scope?: ResolvedTimeScope,
-  sourceVendor: SourceVendorFilter = "all"
-): {
-  sessions: SessionOverviewRow[];
-  toolEvents: ToolEventOverviewRow[];
-  prompts: PromptOverviewRow[];
-  responses: AssistantResponseOverviewRow[];
-  tokenUsage: TokenUsageOverviewRow[];
-  codeEdits: CodeEditOverviewRow[];
-} {
-  const sessionWindow = buildTimeWindow("started_at", scope, sourceVendor);
-  const toolWindow = buildTimeWindow("created_at", scope, sourceVendor);
-  const promptWindow = buildTimeWindow("created_at", scope, sourceVendor);
-  const responseWindow = buildTimeWindow("created_at", scope, sourceVendor);
-  const tokenUsageWindow = buildTimeWindow("created_at", scope, sourceVendor);
-  const codeEditWindow = buildTimeWindow("created_at", scope, sourceVendor);
-  const sessions = db
-    .prepare<SessionOverviewRow>(`SELECT session_id FROM sessions${sessionWindow.whereSql}`)
-    .all(...sessionWindow.params);
-  const toolEvents = db
-    .prepare<ToolEventOverviewRow>(`
-      WITH deduped_tool_events AS (
-        SELECT
-          CASE
-            WHEN event_id LIKE '%:started' THEN substr(event_id, 1, length(event_id) - 8)
-            WHEN event_id LIKE '%:succeeded' THEN substr(event_id, 1, length(event_id) - 10)
-            WHEN event_id LIKE '%:failed' THEN substr(event_id, 1, length(event_id) - 7)
-            ELSE event_id
-          END AS normalized_event_id,
-          session_id,
-          tool_name,
-          CASE
-            WHEN SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) > 0 THEN 'failed'
-            WHEN SUM(CASE WHEN status = 'succeeded' THEN 1 ELSE 0 END) > 0 THEN 'succeeded'
-            ELSE 'started'
-          END AS status,
-          MAX(duration_ms) AS duration_ms
-        FROM tool_events
-        ${toolWindow.whereSql}
-        GROUP BY normalized_event_id, session_id, tool_name
-      )
-      SELECT
-        normalized_event_id AS event_id,
-        session_id,
-        tool_name,
-        status,
-        duration_ms
-      FROM deduped_tool_events
-    `)
-    .all(...toolWindow.params);
-  const prompts = db
-    .prepare<PromptOverviewRow>(`SELECT prompt_id FROM prompt_events${promptWindow.whereSql}`)
-    .all(...promptWindow.params);
-  const responses = db
-    .prepare<AssistantResponseOverviewRow>(
-      `SELECT message_id FROM assistant_responses${responseWindow.whereSql}`
-    )
-    .all(...responseWindow.params);
-  const tokenUsage = db
-    .prepare<TokenUsageOverviewRow>(
-      `SELECT model, input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens, source_vendor FROM token_usage_events${tokenUsageWindow.whereSql}`
-    )
-    .all(...tokenUsageWindow.params);
-  const codeEdits = db
-    .prepare<{
-      filesChanged: string;
-      file_count: number;
-      insertions: number;
-      deletions: number;
-      edit_operation_count: number;
-    }>(
-      `SELECT files_changed AS filesChanged, file_count, insertions, deletions, edit_operation_count FROM code_edits${codeEditWindow.whereSql}`
-    )
-    .all(...codeEditWindow.params)
-    .map((row) => ({
-      files_changed: parseFilesChanged(row.filesChanged),
-      file_count: row.file_count,
-      insertions: row.insertions,
-      deletions: row.deletions,
-      edit_operation_count: row.edit_operation_count
-    }));
-
-  return {
-    sessions,
-    toolEvents,
-    prompts,
-    responses,
-    tokenUsage,
-    codeEdits
-  };
-}
-
-function selectTokensByModel(
-  db: MetricsDatabase,
-  scope?: ResolvedTimeScope,
-  sourceVendor: SourceVendorFilter = "all"
-): TokensByModelRow[] {
-  const window = buildTimeWindow("created_at", scope, sourceVendor);
-
-  return db
-    .prepare<TokensByModelRow>(`
-      SELECT
-        COALESCE(model, 'unknown') AS model,
-        SUM(
-          CASE
-            WHEN source_vendor = 'codex' THEN input_tokens + output_tokens + cache_creation_input_tokens
-            ELSE input_tokens + output_tokens + cache_creation_input_tokens + cache_read_input_tokens
-          END
-        ) AS totalTokens,
-        SUM(
-          CASE
-            WHEN source_vendor = 'codex' THEN MAX(input_tokens - cache_read_input_tokens, 0)
-            ELSE input_tokens
-          END
-        ) AS inputTokens,
-        SUM(output_tokens) AS outputTokens,
-        SUM(cache_read_input_tokens) AS cacheReadTokens,
-        SUM(cache_creation_input_tokens) AS cacheCreationTokens
-      FROM token_usage_events
-      ${window.whereSql}
-      GROUP BY COALESCE(model, 'unknown')
-      ORDER BY totalTokens DESC, model ASC
-    `)
-    .all(...window.params);
-}
-
-function selectToolRanking(
-  db: MetricsDatabase,
-  scope?: ResolvedTimeScope,
-  sourceVendor: SourceVendorFilter = "all"
-): ToolRankingRow[] {
-  const window = buildTimeWindow("created_at", scope, sourceVendor);
-
-  const rows = db
-    .prepare<RawToolRankingRow>(`
-      WITH deduped_tool_events AS (
-        SELECT
-          source_vendor AS sourceVendor,
-          tool_name AS toolName,
-          CASE
-            WHEN event_id LIKE '%:started' THEN substr(event_id, 1, length(event_id) - 8)
-            WHEN event_id LIKE '%:succeeded' THEN substr(event_id, 1, length(event_id) - 10)
-            WHEN event_id LIKE '%:failed' THEN substr(event_id, 1, length(event_id) - 7)
-            ELSE event_id
-          END AS eventId,
-          CASE
-            WHEN SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) > 0 THEN 1
-            ELSE 0
-          END AS failures,
-          MAX(COALESCE(duration_ms, 0)) AS totalDurationMs
-        FROM tool_events
-        ${window.whereSql}
-        GROUP BY source_vendor, tool_name, eventId
-      )
-      SELECT
-        sourceVendor,
-        toolName,
-        '' AS sessionId,
-        eventId,
-        COUNT(*) AS count,
-        SUM(failures) AS failures,
-        COALESCE(SUM(totalDurationMs), 0) AS totalDurationMs
-      FROM deduped_tool_events
-      GROUP BY sourceVendor, toolName
-      ORDER BY count DESC, toolName ASC
-    `)
-    .all(...window.params);
-
-  return normalizeToolRankingRows(rows);
-}
-
-function normalizeToolRankingRows(rows: RawToolRankingRow[]): ToolRankingRow[] {
-  const grouped = new Map<
-    string,
-    {
-      count: number;
-      failures: number;
-      totalDurationMs: number;
-    }
-  >();
-
-  for (const row of rows) {
-    const toolName = normalizeToolRankingName(row.toolName, row.sourceVendor);
-    if (toolName === null) {
-      continue;
-    }
-    const current = grouped.get(toolName) ?? {
-      count: 0,
-      failures: 0,
-      totalDurationMs: 0
-    };
-
-    current.count += row.count;
-    current.failures += row.failures;
-    current.totalDurationMs += row.totalDurationMs;
-    grouped.set(toolName, current);
-  }
-
-  return Array.from(grouped.entries())
-    .map(([toolName, value]) => ({
-      toolName,
-      count: value.count,
-      failures: value.failures,
-      averageDurationMs:
-        value.count > 0 ? Math.round(value.totalDurationMs / value.count) : 0
-    }))
-    .sort((left, right) => right.count - left.count || left.toolName.localeCompare(right.toolName));
-}
-
-function normalizeToolRankingName(toolName: string, sourceVendor: SourceVendor): string | null {
-  if (sourceVendor !== "codex") {
-    return toolName;
-  }
-
-  const normalized = normalizeCodexToolRankingToken(toolName);
-  if (normalized === null) {
-    return null;
-  }
-
-  if (normalized === "apply_patch") {
-    return "Edit";
-  }
-
-  if (normalized === "websearch") {
-    return "WebSearch";
-  }
-
-  if (["rg", "grep", "findstr", "select-string"].includes(normalized)) {
-    return "Search";
-  }
-
-  if (["get-content", "cat", "type", "more", "less", "sed", "head", "tail", "nl", "bat"].includes(normalized)) {
-    return "Read";
-  }
-
-  if (["get-childitem", "dir", "ls", "tree"].includes(normalized)) {
-    return "List";
-  }
-
-  if (normalized === "git") {
-    return "Git";
-  }
-
-  if (["corepack", "pnpm", "npm", "yarn", "bun"].includes(normalized)) {
-    return "Build";
-  }
-
-  if (["invoke-restmethod", "invoke-webrequest", "curl", "wget"].includes(normalized)) {
-    return "HTTP";
-  }
-
-  if (["get-process", "get-ciminstance", "get-nettcpconnection", "tasklist", "ps"].includes(normalized)) {
-    return "Inspect";
-  }
-
-  if (["powershell", "bash", "cmd", "python", "node", "add-type", "start-sleep"].includes(normalized)) {
-    return "Shell";
-  }
-
-  return "Shell";
-}
-
-const IGNORED_CODEX_TOOL_RANKING_NAMES = new Set([
-  "close_agent",
-  "resume_agent",
-  "send_input",
-  "spawn_agent",
-  "update_plan",
-  "wait_agent"
-]);
-
-function normalizeCodexToolRankingToken(toolName: string): string | null {
-  let cleaned = toolName.trim().toLowerCase();
-  if (cleaned.length === 0) {
-    return null;
-  }
-
-  cleaned = cleaned.replace(/^[&([{]+/u, "");
-  cleaned = cleaned.replace(/^[`'"]+/u, "");
-  cleaned = cleaned.replace(/[;|)\]}]+$/u, "");
-  cleaned = cleaned.replace(/[`'"]+$/u, "");
-
-  if (cleaned.length === 0 || cleaned.startsWith("$")) {
-    return null;
-  }
-
-  if (IGNORED_CODEX_TOOL_RANKING_NAMES.has(cleaned)) {
-    return null;
-  }
-
-  if (cleaned.includes(".ts") || cleaned.includes(".json") || cleaned.includes(".md") || cleaned.includes(".pid")) {
-    return null;
-  }
-
-  return cleaned;
-}
-
-function selectSessions(
-  db: MetricsDatabase,
-  scope?: ResolvedTimeScope,
-  sourceVendor: SourceVendorFilter = "all"
-): SessionListRow[] {
-  const window = buildTimeWindow("started_at", scope, sourceVendor);
-
-  return db
-    .prepare<SessionListRow>(
-      `
-        SELECT
-          sessions.session_id AS sessionId,
-          sessions.workspace_path AS workspacePath,
-          sessions.source_vendor AS sourceVendor,
-          sessions.source_adapter AS sourceAdapter,
-          COALESCE(prompt_counts.turnCount, 0) AS turnCount,
-          COALESCE(token_totals.totalTokens, 0) AS totalTokens,
-          (
-            SELECT combined.providerId
-            FROM (
-              SELECT provider_id AS providerId, created_at, event_id
-              FROM assistant_responses
-              WHERE session_id = sessions.session_id AND provider_id IS NOT NULL
-              UNION ALL
-              SELECT provider_id AS providerId, created_at, event_id
-              FROM token_usage_events
-              WHERE session_id = sessions.session_id AND provider_id IS NOT NULL
-            ) AS combined
-            ORDER BY combined.created_at DESC, combined.event_id DESC
-            LIMIT 1
-          ) AS providerId,
-          (
-            SELECT combined.providerHost
-            FROM (
-              SELECT provider_host AS providerHost, created_at, event_id
-              FROM assistant_responses
-              WHERE session_id = sessions.session_id AND provider_host IS NOT NULL
-              UNION ALL
-              SELECT provider_host AS providerHost, created_at, event_id
-              FROM token_usage_events
-              WHERE session_id = sessions.session_id AND provider_host IS NOT NULL
-            ) AS combined
-            ORDER BY combined.created_at DESC, combined.event_id DESC
-            LIMIT 1
-          ) AS providerHost,
-          (
-            SELECT combined.model
-            FROM (
-              SELECT model, created_at, event_id
-              FROM assistant_responses
-              WHERE session_id = sessions.session_id AND model IS NOT NULL
-              UNION ALL
-              SELECT model, created_at, event_id
-              FROM token_usage_events
-              WHERE session_id = sessions.session_id AND model IS NOT NULL
-            ) AS combined
-            ORDER BY combined.created_at DESC, combined.event_id DESC
-            LIMIT 1
-          ) AS lastModel
-        FROM sessions
-        LEFT JOIN (
-          SELECT session_id, COUNT(*) AS turnCount
-          FROM prompt_events
-          GROUP BY session_id
-        ) AS prompt_counts
-          ON prompt_counts.session_id = sessions.session_id
-        LEFT JOIN (
-          SELECT
-            session_id,
-            SUM(
-              CASE
-                WHEN source_vendor = 'codex' THEN input_tokens + output_tokens + cache_creation_input_tokens
-                ELSE input_tokens + output_tokens + cache_creation_input_tokens + cache_read_input_tokens
-              END
-            ) AS totalTokens
-          FROM token_usage_events
-          GROUP BY session_id
-        ) AS token_totals
-          ON token_totals.session_id = sessions.session_id
-        ${window.whereSql}
-        ORDER BY sessions.started_at DESC
-      `
-    )
-    .all(...window.params);
-}
-
-function selectSourceBreakdown(
-  db: MetricsDatabase,
-  scope?: ResolvedTimeScope,
-  sourceVendor: SourceVendorFilter = "all"
-): SourceBreakdownRow[] {
-  const breakdown = new Map<SourceVendor, SourceBreakdownRow>();
-
-  const ensureRow = (rowSourceVendor: SourceVendor): SourceBreakdownRow => {
-    const existing = breakdown.get(rowSourceVendor);
-    if (existing) {
-      return existing;
-    }
-
-    const created: SourceBreakdownRow = {
-      sourceVendor: rowSourceVendor,
-      sessionCount: 0,
-      turnCount: 0,
-      totalTokens: 0,
-      toolCalls: 0
-    };
-    breakdown.set(rowSourceVendor, created);
-    return created;
-  };
-
-  const sessionWindow = buildTimeWindow("started_at", scope, sourceVendor);
-  const promptWindow = buildTimeWindow("created_at", scope, sourceVendor);
-  const toolWindow = buildTimeWindow("created_at", scope, sourceVendor);
-  const tokenWindow = buildTimeWindow("created_at", scope, sourceVendor);
-
-  for (const row of db
-    .prepare<{ sourceVendor: SourceVendor; sessionCount: number }>(`
-      SELECT source_vendor AS sourceVendor, COUNT(*) AS sessionCount
-      FROM sessions
-      ${sessionWindow.whereSql}
-      GROUP BY source_vendor
-    `)
-    .all(...sessionWindow.params)) {
-    ensureRow(row.sourceVendor).sessionCount = row.sessionCount;
-  }
-
-  for (const row of db
-    .prepare<{ sourceVendor: SourceVendor; turnCount: number }>(`
-      SELECT source_vendor AS sourceVendor, COUNT(*) AS turnCount
-      FROM prompt_events
-      ${promptWindow.whereSql}
-      GROUP BY source_vendor
-    `)
-    .all(...promptWindow.params)) {
-    ensureRow(row.sourceVendor).turnCount = row.turnCount;
-  }
-
-  for (const row of db
-    .prepare<{ sourceVendor: SourceVendor; toolCalls: number }>(`
-      WITH deduped_tool_events AS (
-        SELECT
-          source_vendor AS sourceVendor,
-          CASE
-            WHEN event_id LIKE '%:started' THEN substr(event_id, 1, length(event_id) - 8)
-            WHEN event_id LIKE '%:succeeded' THEN substr(event_id, 1, length(event_id) - 10)
-            WHEN event_id LIKE '%:failed' THEN substr(event_id, 1, length(event_id) - 7)
-            ELSE event_id
-          END AS eventId,
-          MAX(CASE WHEN status = 'succeeded' THEN 1 ELSE 0 END) AS hasSucceeded,
-          MAX(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS hasFailed
-        FROM tool_events
-        ${toolWindow.whereSql}
-        GROUP BY source_vendor, eventId
-      )
-      SELECT sourceVendor, COUNT(*) AS toolCalls
-      FROM deduped_tool_events
-      WHERE hasSucceeded = 1 OR hasFailed = 1
-      GROUP BY sourceVendor
-    `)
-    .all(...toolWindow.params)) {
-    ensureRow(row.sourceVendor).toolCalls = row.toolCalls;
-  }
-
-  for (const row of db
-    .prepare<{ sourceVendor: SourceVendor; totalTokens: number }>(`
-      SELECT
-        source_vendor AS sourceVendor,
-        SUM(
-          CASE
-            WHEN source_vendor IN ('codex', 'opencode')
-              THEN input_tokens + output_tokens + cache_creation_input_tokens
-            ELSE input_tokens + output_tokens + cache_creation_input_tokens + cache_read_input_tokens
-          END
-        ) AS totalTokens
-      FROM token_usage_events
-      ${tokenWindow.whereSql}
-      GROUP BY source_vendor
-    `)
-    .all(...tokenWindow.params)) {
-    ensureRow(row.sourceVendor).totalTokens = row.totalTokens;
-  }
-
-  return [...breakdown.values()].sort((left, right) => left.sourceVendor.localeCompare(right.sourceVendor));
-}
-
-function selectProviderBreakdown(
-  db: MetricsDatabase,
-  scope?: ResolvedTimeScope,
-  sourceVendor: SourceVendorFilter = "all"
-): ProviderBreakdownRow[] {
-  const window = buildTimeWindow("created_at", scope, sourceVendor);
-
-  return db
-    .prepare<ProviderBreakdownRow>(`
-      SELECT
-        provider_host AS providerHost,
-        provider_id AS providerId,
-        SUM(
-          CASE
-            WHEN source_vendor IN ('codex', 'opencode')
-              THEN input_tokens + output_tokens + cache_creation_input_tokens
-            ELSE input_tokens + output_tokens + cache_creation_input_tokens + cache_read_input_tokens
-          END
-        ) AS totalTokens
-      FROM token_usage_events
-      ${window.whereSql}
-      GROUP BY provider_host, provider_id
-      ORDER BY totalTokens DESC, providerHost ASC, providerId ASC
-    `)
-    .all(...window.params);
-}
-
-function selectTokenTrend(
-  db: MetricsDatabase,
-  scope?: ResolvedTimeScope,
-  sourceVendor: SourceVendorFilter = "all"
-): TokenTrendRow[] {
-  const window = buildTimeWindow("created_at", scope, sourceVendor);
-  const rows = db
-    .prepare<TokenTrendUsageRow>(`
-      SELECT
-        created_at AS createdAt,
-        input_tokens AS inputTokens,
-        output_tokens AS outputTokens,
-        cache_read_input_tokens AS cacheReadTokens,
-        cache_creation_input_tokens AS cacheCreationTokens,
-        source_vendor AS sourceVendor
-      FROM token_usage_events
-      ${window.whereSql}
-      ORDER BY created_at ASC, event_id ASC
-    `)
-    .all(...window.params);
-
-  if (rows.length === 0) {
-    return [];
-  }
-
-  const bucketType = scope?.range === "day" ? "hour" : "day";
-  const buckets = new Map<string, TokenTrendRow>();
-
-  for (const row of rows) {
-    const bucket = resolveTokenTrendBucket(row.createdAt, scope?.timezone ?? "UTC", bucketType);
-    const displayedInputTokens = resolveDisplayedInputTokens({
-      sourceVendor: row.sourceVendor,
-      inputTokens: row.inputTokens,
-      cacheReadTokens: row.cacheReadTokens
-    });
-    const current = buckets.get(bucket.key) ?? {
-      bucketStart: row.createdAt,
-      label: bucket.label,
-      totalTokens: 0,
-      inputTokens: 0,
-      outputTokens: 0,
-      cacheReadTokens: 0,
-      cacheCreationTokens: 0,
-      cacheHitRate: 0
-    };
-
-    current.inputTokens += displayedInputTokens;
-    current.outputTokens += row.outputTokens;
-    current.cacheReadTokens += row.cacheReadTokens;
-    current.cacheCreationTokens += row.cacheCreationTokens;
-    current.totalTokens +=
-      displayedInputTokens +
-      row.outputTokens +
-      row.cacheReadTokens +
-      row.cacheCreationTokens;
-    buckets.set(bucket.key, current);
-  }
-
-  return Array.from(buckets.values()).map((row) => {
-    const cacheableInput = row.inputTokens + row.cacheReadTokens + row.cacheCreationTokens;
-
-    return {
-      ...row,
-      cacheHitRate: cacheableInput > 0 ? row.cacheReadTokens / cacheableInput : 0
-    };
-  });
-}
-
-function resolveTokenTrendBucket(
-  createdAt: string,
-  timezone: string,
-  bucketType: "hour" | "day"
-): { key: string; label: string } {
-  const date = new Date(createdAt);
-  const parts = new Intl.DateTimeFormat("sv-SE", {
-    timeZone: timezone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    hour12: false
-  }).formatToParts(date);
-  const year = readDatePart(parts, "year");
-  const month = readDatePart(parts, "month");
-  const day = readDatePart(parts, "day");
-  const hour = readDatePart(parts, "hour");
-
-  if (bucketType === "hour") {
-    return {
-      key: `${year}-${month}-${day} ${hour}`,
-      label: `${month}-${day} ${hour}:00`
-    };
-  }
-
-  return {
-    key: `${year}-${month}-${day}`,
-    label: `${month}-${day}`
-  };
-}
-
-function readDatePart(
-  parts: Intl.DateTimeFormatPart[],
-  type: "year" | "month" | "day" | "hour"
-): string {
-  const value = parts.find((entry) => entry.type === type)?.value;
-
-  if (!value) {
-    throw new Error(`Missing ${type} in formatted date parts.`);
-  }
-
-  return value;
-}
-
-function buildTimeWindow(
-  columnName: string,
-  scope?: ResolvedTimeScope,
-  sourceVendor: SourceVendorFilter = "all",
-  sourceColumnName = "source_vendor"
-): TimeWindow {
-  const clauses: string[] = [];
-  const params: string[] = [];
-
-  if (scope?.windowStart && scope.windowEnd) {
-    clauses.push(`${columnName} >= ? AND ${columnName} <= ?`);
-    params.push(scope.windowStart, scope.windowEnd);
-  }
-
-  if (sourceVendor !== "all") {
-    clauses.push(`${sourceColumnName} = ?`);
-    params.push(sourceVendor);
-  }
-
-  if (clauses.length === 0) {
-    return {
-      whereSql: "",
-      params: []
-    };
-  }
-
-  return {
-    whereSql: ` WHERE ${clauses.join(" AND ")}`,
-    params
-  };
-}
-
-function resolveRequestScope(
-  query: unknown,
-  input: BuildAppInput
-): ResolvedTimeScope & { updatedAt: string } {
-  const now = input.now?.() ?? new Date();
-  const scope = resolveTimeScope(queryRecord(query), {
-    now,
-    timezone: input.timezone,
-    offsetMinutes: input.offsetMinutes
-  });
-
-  return {
-    ...scope,
-    updatedAt: now.toISOString()
-  };
-}
-
-function withScopeMetadata<T extends object>(
-  payload: T,
-  scope: ResolvedTimeScope & { updatedAt: string }
-): T & {
-  mode: ResolvedTimeScope["mode"];
-  range: ResolvedTimeScope["range"];
-  timezone: string;
-  windowStart: string | null;
-  windowEnd: string | null;
-  updatedAt: string;
-} {
-  return {
-    ...payload,
-    mode: scope.mode,
-    range: scope.range,
-    timezone: scope.timezone,
-    windowStart: scope.windowStart,
-    windowEnd: scope.windowEnd,
-    updatedAt: scope.updatedAt
-  };
-}
-
-function queryRecord(query: unknown): Record<string, unknown> {
-  return query && typeof query === "object" ? (query as Record<string, unknown>) : {};
-}
-
-function resolveSourceVendor(query: unknown): SourceVendorFilter {
-  const sourceVendor = queryRecord(query).sourceVendor;
-
-  return sourceVendor === "claude-code" || sourceVendor === "opencode" || sourceVendor === "codex" || sourceVendor === "cursor"
-    ? sourceVendor
-    : "all";
-}
-
-function migrateLegacySessionsSchema(db: MetricsDatabase): void {
-  const sessionColumns = db.prepare<{ name: string }>("PRAGMA table_info(sessions)").all();
-  const hasEndedAt = sessionColumns.some((column) => column.name === "ended_at");
-  const hasExitCode = sessionColumns.some((column) => column.name === "exit_code");
-  const hasSourceVendor = sessionColumns.some((column) => column.name === "source_vendor");
-  const hasSourceAdapter = sessionColumns.some((column) => column.name === "source_adapter");
-
-  if (!hasEndedAt) {
-    db.exec("ALTER TABLE sessions ADD COLUMN ended_at TEXT");
-  }
-
-  if (!hasExitCode) {
-    db.exec("ALTER TABLE sessions ADD COLUMN exit_code INTEGER");
-  }
-
-  if (!hasSourceVendor) {
-    db.exec("ALTER TABLE sessions ADD COLUMN source_vendor TEXT NOT NULL DEFAULT 'claude-code'");
-  }
-
-  if (!hasSourceAdapter) {
-    db.exec("ALTER TABLE sessions ADD COLUMN source_adapter TEXT NOT NULL DEFAULT 'claude-hook'");
-  }
-}
-
-function migrateLegacyCodeEditsSchema(db: MetricsDatabase): void {
-  const codeEditColumns = db.prepare<{ name: string }>("PRAGMA table_info(code_edits)").all();
-
-  if (codeEditColumns.length === 0) {
-    return;
-  }
-
-  const hasFilesChanged = codeEditColumns.some((column) => column.name === "files_changed");
-
-  if (!hasFilesChanged) {
-    db.exec("ALTER TABLE code_edits ADD COLUMN files_changed TEXT NOT NULL DEFAULT '[]'");
-  }
-
-  if (!codeEditColumns.some((column) => column.name === "source_vendor")) {
-    db.exec("ALTER TABLE code_edits ADD COLUMN source_vendor TEXT NOT NULL DEFAULT 'claude-code'");
-  }
-
-  if (!codeEditColumns.some((column) => column.name === "source_adapter")) {
-    db.exec("ALTER TABLE code_edits ADD COLUMN source_adapter TEXT NOT NULL DEFAULT 'claude-hook'");
-  }
-}
-
-function migrateCodexTokenUsageInputTokens(db: MetricsDatabase): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS schema_migrations (
-      name TEXT PRIMARY KEY,
-      applied_at TEXT NOT NULL
-    );
-  `);
-
-  const migrationName = "codex-raw-input-tokens-v1";
-  const applied = db
-    .prepare<{ name: string }>("SELECT name FROM schema_migrations WHERE name = ?")
-    .get(migrationName);
-
-  if (applied) {
-    return;
-  }
-
-  db.exec(`
-    UPDATE token_usage_events
-    SET input_tokens = input_tokens + cache_read_input_tokens
-    WHERE source_vendor = 'codex'
-      AND cache_read_input_tokens > 0;
-  `);
-  db.prepare("INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)").run(
-    migrationName,
-    new Date().toISOString()
-  );
-}
-
-function migrateLegacyEventTableSchema(
-  db: MetricsDatabase,
-  tableName: "tool_events" | "prompt_events" | "assistant_responses" | "token_usage_events",
-  input: {
-    defaultAdapter: "claude-hook" | "claude-transcript";
-    includeProviderColumns?: boolean;
-  }
-): void {
-  const columns = db.prepare<{ name: string }>(`PRAGMA table_info(${tableName})`).all();
-
-  if (columns.length === 0) {
-    return;
-  }
-
-  if (!columns.some((column) => column.name === "source_vendor")) {
-    db.exec(`ALTER TABLE ${tableName} ADD COLUMN source_vendor TEXT NOT NULL DEFAULT 'claude-code'`);
-  }
-
-  if (!columns.some((column) => column.name === "source_adapter")) {
-    db.exec(
-      `ALTER TABLE ${tableName} ADD COLUMN source_adapter TEXT NOT NULL DEFAULT '${input.defaultAdapter}'`
-    );
-  }
-
-  if (!input.includeProviderColumns) {
-    return;
-  }
-
-  if (!columns.some((column) => column.name === "provider_id")) {
-    db.exec(`ALTER TABLE ${tableName} ADD COLUMN provider_id TEXT`);
-  }
-
-  if (!columns.some((column) => column.name === "provider_base_url")) {
-    db.exec(`ALTER TABLE ${tableName} ADD COLUMN provider_base_url TEXT`);
-  }
-
-  if (!columns.some((column) => column.name === "provider_host")) {
-    db.exec(`ALTER TABLE ${tableName} ADD COLUMN provider_host TEXT`);
-  }
-}
 
 export function buildApp(input: BuildAppInput): MetricsApp {
   mkdirSync(dirname(input.dbPath), { recursive: true });
@@ -1149,506 +73,369 @@ export function buildApp(input: BuildAppInput): MetricsApp {
 
   const agentPaths = input.repoRoot ? getAgentMetricsPaths(input.repoRoot) : null;
 
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS sessions (
-      session_id TEXT PRIMARY KEY,
-      started_at TEXT NOT NULL,
-      workspace_path TEXT NOT NULL,
-      source_vendor TEXT NOT NULL,
-      source_adapter TEXT NOT NULL,
-      ended_at TEXT,
-      exit_code INTEGER
-    );
-
-    CREATE TABLE IF NOT EXISTS tool_events (
-      event_id TEXT PRIMARY KEY,
-      session_id TEXT NOT NULL,
-      tool_name TEXT NOT NULL,
-      status TEXT NOT NULL,
-      duration_ms INTEGER,
-      source_vendor TEXT NOT NULL,
-      source_adapter TEXT NOT NULL,
-      created_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS prompt_events (
-      event_id TEXT PRIMARY KEY,
-      session_id TEXT NOT NULL,
-      prompt_id TEXT NOT NULL,
-      prompt_chars INTEGER NOT NULL,
-      source_vendor TEXT NOT NULL,
-      source_adapter TEXT NOT NULL,
-      created_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS assistant_responses (
-      event_id TEXT PRIMARY KEY,
-      session_id TEXT NOT NULL,
-      message_id TEXT NOT NULL,
-      model TEXT,
-      stop_reason TEXT,
-      response_chars INTEGER NOT NULL,
-      source_vendor TEXT NOT NULL,
-      source_adapter TEXT NOT NULL,
-      provider_id TEXT,
-      provider_base_url TEXT,
-      provider_host TEXT,
-      created_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS token_usage_events (
-      event_id TEXT PRIMARY KEY,
-      session_id TEXT NOT NULL,
-      message_id TEXT NOT NULL,
-      model TEXT,
-      input_tokens INTEGER NOT NULL,
-      output_tokens INTEGER NOT NULL,
-      cache_creation_input_tokens INTEGER NOT NULL,
-      cache_read_input_tokens INTEGER NOT NULL,
-      server_tool_use TEXT NOT NULL DEFAULT '{}',
-      usage_source TEXT NOT NULL,
-      source_vendor TEXT NOT NULL,
-      source_adapter TEXT NOT NULL,
-      provider_id TEXT,
-      provider_base_url TEXT,
-      provider_host TEXT,
-      created_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS code_edits (
-      event_id TEXT PRIMARY KEY,
-      session_id TEXT NOT NULL,
-      tool_name TEXT NOT NULL,
-      files_changed TEXT NOT NULL DEFAULT '[]',
-      file_count INTEGER NOT NULL,
-      insertions INTEGER NOT NULL,
-      deletions INTEGER NOT NULL,
-      edit_operation_count INTEGER NOT NULL,
-      source_vendor TEXT NOT NULL,
-      source_adapter TEXT NOT NULL,
-      created_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS ingestion_state (
-      stream_name TEXT PRIMARY KEY,
-      offset_bytes INTEGER NOT NULL,
-      size_bytes INTEGER NOT NULL,
-      mtime_ms REAL NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS session_contexts (
-      session_id TEXT PRIMARY KEY,
-      source_vendor TEXT NOT NULL,
-      source_adapter TEXT NOT NULL,
-      execution_path TEXT,
-      skills_loaded INTEGER NOT NULL DEFAULT 0,
-      skill_names_json TEXT NOT NULL DEFAULT '[]',
-      updated_at TEXT NOT NULL
-    );
-  `);
-  migrateLegacySessionsSchema(db);
-  migrateLegacyCodeEditsSchema(db);
-  migrateLegacyEventTableSchema(db, "tool_events", { defaultAdapter: "claude-hook" });
-  migrateLegacyEventTableSchema(db, "prompt_events", { defaultAdapter: "claude-transcript" });
-  migrateLegacyEventTableSchema(db, "assistant_responses", {
-    defaultAdapter: "claude-transcript",
-    includeProviderColumns: true
-  });
-  migrateLegacyEventTableSchema(db, "token_usage_events", {
-    defaultAdapter: "claude-transcript",
-    includeProviderColumns: true
-  });
-  migrateCodexTokenUsageInputTokens(db);
-
-  db.exec(`
-    CREATE INDEX IF NOT EXISTS idx_sessions_source_started_at
-      ON sessions (source_vendor, started_at);
-    CREATE INDEX IF NOT EXISTS idx_tool_events_source_created_at
-      ON tool_events (source_vendor, created_at);
-    CREATE INDEX IF NOT EXISTS idx_prompt_events_source_created_at
-      ON prompt_events (source_vendor, created_at);
-    CREATE INDEX IF NOT EXISTS idx_assistant_responses_source_created_at
-      ON assistant_responses (source_vendor, created_at);
-    CREATE INDEX IF NOT EXISTS idx_token_usage_events_source_created_at
-      ON token_usage_events (source_vendor, created_at);
-    CREATE INDEX IF NOT EXISTS idx_code_edits_source_created_at
-      ON code_edits (source_vendor, created_at);
-  `);
+  initializeLegacySchema(db);
+  runDomainMigrations(db as unknown as SqliteDatabaseLike, input.now ?? (() => new Date()));
 
   const app = Fastify();
-  const metricsApp = Object.assign(app, { db });
-  const syncEventLog = input.eventLogPath
-    ? createEventLogSynchronizer({
-        eventLogPath: input.eventLogPath,
-        ingest: async () => {
-          await ingestEventLog({
-            app: metricsApp,
-            eventLogPath: input.eventLogPath!
-          });
-        }
+  const metricsApp = Object.assign(app, {
+    db,
+    syncCoordinator: null as unknown as SyncCoordinator
+  });
+  installHttpSecurity(app, {
+    trustedOrigins: input.trustedOrigins,
+    localAccessToken: input.localAccessToken
+  });
+  const canonicalEventLogPath = input.eventLogPath ?? agentPaths?.eventLogPath;
+  // Note: broken ingestion cursors are repaired in server.ts before listen.
+  // Startup catch-up ingest is intentionally omitted (blocks /api/health).
+  const syncEventLog = canonicalEventLogPath
+    ? createIncrementalEventLogSynchronizer({
+        eventLogPath: canonicalEventLogPath,
+        ingest: async () =>
+          projectEventLog({
+            db: db as unknown as import("./event-log-projector.js").EventProjectorDatabase,
+            eventLogPath: canonicalEventLogPath,
+            logger: metricsApp.log
+          })
       })
     : null;
-  const syncTranscriptState = agentPaths && process.env.AGENT_METRICS_CORE_TRANSCRIPT_SYNC !== "0"
-    ? createRecentResultAction(async () => {
-        const result = await syncKnownClaudeTranscripts({
-          manifestPath: agentPaths.transcriptManifestPath,
-          eventLogPath: input.eventLogPath ?? agentPaths.eventLogPath,
-          transcriptCursorPath: agentPaths.transcriptCursorPath,
-          transcriptLedgerPath: agentPaths.transcriptLedgerPath,
-          discoveryRoots: []
-        });
-        persistClaudeSessionContexts(db, result.sessionContexts);
-      }, REQUEST_SYNC_TTL_MS)
-    : null;
-  const syncOpenCodeState = agentPaths
-    ? createRecentResultAction(async () => {
-        await syncOpenCodeDatabase({
-          eventLogPath: input.eventLogPath ?? agentPaths.eventLogPath,
-          cursorPath: agentPaths.opencodeCursorPath,
-          ledgerPath: agentPaths.opencodeLedgerPath
-        });
-      }, REQUEST_SYNC_TTL_MS)
-    : null;
-  const syncCursorState = agentPaths
-    ? createRecentResultAction(async () => {
-        await syncCursorArtifacts({
-          eventLogPath: input.eventLogPath ?? agentPaths.eventLogPath,
-          cursorPath: agentPaths.cursorIdeStatePath,
-          ledgerPath: agentPaths.cursorIdeLedgerPath
-        });
-      }, REQUEST_SYNC_TTL_MS)
-    : null;
-  const syncCodexState = agentPaths
-    ? createRecentResultAction(async () => {
-        await syncCodexRollouts({
-          eventLogPath: input.eventLogPath ?? agentPaths.eventLogPath,
-          cursorPath: agentPaths.codexCursorPath,
-          ledgerPath: agentPaths.codexLedgerPath
-        });
-      }, REQUEST_SYNC_TTL_MS)
-    : null;
+
+  const projectAfterSourceSync = async (): Promise<SyncResult> => {
+    // Yield before synchronous better-sqlite3 projection so /api/health can answer.
+    await yieldEventLoop();
+    const before = readProjectionWatermark(
+      db as unknown as import("./event-log-projector.js").EventProjectorDatabase
+    );
+    if (syncEventLog !== null) {
+      await syncEventLog();
+    }
+    await yieldEventLoop();
+    const after = readProjectionWatermark(
+      db as unknown as import("./event-log-projector.js").EventProjectorDatabase
+    );
+    const projectedUniqueEvents = Math.max(0, after - before);
+    return {
+      discoveredRecords: projectedUniqueEvents,
+      committedUniqueEvents: projectedUniqueEvents,
+      projectedUniqueEvents,
+      projectionWatermark: after
+    };
+  };
+  const runWithCanonicalWriterLease = <T>(
+    signal: AbortSignal,
+    operation: () => Promise<T>
+  ): Promise<T> =>
+    withProjectorLease({
+      lockPath: `${canonicalEventLogPath ?? "canonical-events"}.writer.lock`,
+      canonicalPath: canonicalEventLogPath ?? "canonical-events",
+      signal,
+      operation
+    });
+
+  const sourceSyncAdapters: SyncAdapter[] = [];
+  if (agentPaths !== null && canonicalEventLogPath !== undefined) {
+    if (process.env.AGENT_METRICS_CORE_TRANSCRIPT_SYNC !== "0") {
+      sourceSyncAdapters.push({
+        adapterInstanceId: "claude-transcript@claude:default",
+        sourceInstanceId: "claude:default",
+        sourceAdapter: "claude-transcript",
+        sourceVendor: "claude-code",
+        enabled: true,
+        sync: async ({ signal }) =>
+          runWithCanonicalWriterLease(signal, async () => {
+            const result = await syncKnownClaudeTranscripts({
+              manifestPath: agentPaths.transcriptManifestPath,
+              eventLogPath: canonicalEventLogPath,
+              transcriptCursorPath: agentPaths.transcriptCursorPath,
+              transcriptLedgerPath: agentPaths.transcriptLedgerPath,
+              discoveryRoots: []
+            });
+            persistClaudeContexts(db as unknown as import("./event-log-projector.js").EventProjectorDatabase, result.sessionContexts);
+            return projectAfterSourceSync();
+          })
+        }
+      );
+    }
+
+    sourceSyncAdapters.push(
+      {
+        adapterInstanceId: "opencode-db@opencode:default",
+        sourceInstanceId: "opencode:default",
+        sourceAdapter: "opencode-db",
+        sourceVendor: "opencode",
+        enabled: true,
+        sync: async ({ signal }) =>
+          runWithCanonicalWriterLease(signal, async () => {
+            await syncOpenCodeDatabase({
+              eventLogPath: canonicalEventLogPath,
+              cursorPath: agentPaths.opencodeCursorPath,
+              ledgerPath: agentPaths.opencodeLedgerPath
+            });
+            return projectAfterSourceSync();
+          })
+        }
+      ,
+      {
+        adapterInstanceId: "zcode-db@zcode:default",
+        sourceInstanceId: "zcode:default",
+        sourceAdapter: "zcode-db",
+        sourceVendor: "zcode",
+        enabled: true,
+        sync: async ({ signal }) =>
+          runWithCanonicalWriterLease(signal, async () => {
+            await syncZCodeDatabase({
+              eventLogPath: canonicalEventLogPath,
+              cursorPath: agentPaths.zcodeCursorPath,
+              ledgerPath: agentPaths.zcodeLedgerPath
+            });
+            return projectAfterSourceSync();
+          })
+        }
+      ,
+      {
+        adapterInstanceId: "kimicode-wire@kimicode:default",
+        sourceInstanceId: "kimicode:default",
+        sourceAdapter: "kimicode-wire",
+        sourceVendor: "kimicode",
+        enabled: true,
+        sync: async ({ signal }) =>
+          runWithCanonicalWriterLease(signal, async () => {
+            await syncKimicodeSessions({
+              eventLogPath: canonicalEventLogPath,
+              cursorPath: agentPaths.kimicodeCursorPath,
+              ledgerPath: agentPaths.kimicodeLedgerPath
+            });
+            return projectAfterSourceSync();
+          })
+        }
+      ,
+      {
+        adapterInstanceId: "mimo-db@mimo:default",
+        sourceInstanceId: "mimo:default",
+        sourceAdapter: "mimo-db",
+        sourceVendor: "mimo",
+        enabled: true,
+        sync: async ({ signal }) =>
+          runWithCanonicalWriterLease(signal, async () => {
+            await syncMiMoDatabase({
+              eventLogPath: canonicalEventLogPath,
+              cursorPath: agentPaths.mimoCursorPath,
+              ledgerPath: agentPaths.mimoLedgerPath
+            });
+            return projectAfterSourceSync();
+          })
+        }
+      ,
+      {
+        adapterInstanceId: "dsh-jsonl@dsh:default",
+        sourceInstanceId: "dsh:default",
+        sourceAdapter: "dsh-jsonl",
+        sourceVendor: "dsh",
+        enabled: true,
+        sync: async ({ signal }) =>
+          runWithCanonicalWriterLease(signal, async () => {
+            await syncDshSessions({
+              eventLogPath: canonicalEventLogPath,
+              cursorPath: agentPaths.dshCursorPath,
+              ledgerPath: agentPaths.dshLedgerPath
+            });
+            return projectAfterSourceSync();
+          })
+        }
+      ,
+      {
+        adapterInstanceId: "cursor-ide@cursor:default",
+        sourceInstanceId: "cursor:default",
+        sourceAdapter: "cursor-ide",
+        sourceVendor: "cursor",
+        enabled: true,
+        sync: async ({ signal }) =>
+          runWithCanonicalWriterLease(signal, async () => {
+            await syncCursorArtifacts({
+              eventLogPath: canonicalEventLogPath,
+              cursorPath: agentPaths.cursorIdeStatePath,
+              ledgerPath: agentPaths.cursorIdeLedgerPath
+            });
+            const officialUsage = await syncCursorOfficialUsage({
+              sourceInstanceId: "cursor:default",
+              timeZone: "Asia/Shanghai"
+            });
+            if (officialUsage) {
+              persistCursorAccountUsage(db as unknown as import("./domain-types.js").SqliteDatabaseLike, officialUsage);
+            }
+            return projectAfterSourceSync();
+          })
+        }
+      ,
+      {
+        adapterInstanceId: "codex-rollout@codex:default",
+        sourceInstanceId: "codex:default",
+        sourceAdapter: "codex-rollout",
+        sourceVendor: "codex",
+        enabled: true,
+        sync: async ({ signal }) =>
+          runWithCanonicalWriterLease(signal, async () => {
+            await syncCodexRollouts({
+              eventLogPath: canonicalEventLogPath,
+              cursorPath: agentPaths.codexCursorPath,
+              ledgerPath: agentPaths.codexLedgerPath
+            });
+            return projectAfterSourceSync();
+          })
+        }
+    );
+  }
+
+  const syncCoordinator = new SyncCoordinator(sourceSyncAdapters, {
+    maxConcurrency: 2,
+    now: input.now,
+    persistence: createSqliteSyncRunStore(db as unknown as SqliteDatabaseLike)
+  });
+  metricsApp.syncCoordinator = syncCoordinator;
+  let cursorOfficialRefresh: ReturnType<typeof startCursorOfficialRefreshLoop> | null = null;
+  let sourceLightRefresh: ReturnType<typeof startSourceLightRefreshLoop> | null = null;
 
   app.addHook("onClose", async () => {
+    cursorOfficialRefresh?.stop();
+    cursorOfficialRefresh = null;
+    sourceLightRefresh?.stop();
+    sourceLightRefresh = null;
+    await syncCoordinator.shutdown();
     db.close();
   });
 
-  app.addHook("onRequest", async (request) => {
-    const syncTasks: Promise<void>[] = [];
-
-    if (syncTranscriptState) {
-      syncTasks.push(
-        syncTranscriptState().catch((error) => {
-          request.log.warn(
-            { err: error },
-            "Transcript sync failed; serving stale local metrics."
-          );
-        })
+  app.addHook("onReady", async () => {
+    if (sourceSyncAdapters.length > 0) {
+      const initialAdapterIds = sourceSyncAdapters
+        .map((adapter) => adapter.adapterInstanceId)
+        .filter((adapterInstanceId) => {
+          const state = syncCoordinator.getStatus(adapterInstanceId);
+          return state?.lastSuccessfulAt === null;
+        });
+      const periodicAdapterIds = sourceSyncAdapters
+        .filter((adapter) => !LIGHT_REFRESH_VENDORS.has(adapter.sourceVendor))
+        .map((adapter) => adapter.adapterInstanceId);
+      if (initialAdapterIds.length > 0) {
+        // Coordinator runs are asynchronous; accepting them after routes are ready
+        // keeps API startup non-blocking while recording initial run state.
+        syncCoordinator.startInitialSync(initialAdapterIds);
+      }
+      if (periodicAdapterIds.length > 0) {
+        syncCoordinator.startPeriodicSync(undefined, periodicAdapterIds);
+      }
+      // Always refresh Cursor official day tokens lightly so the widget stays current.
+      cursorOfficialRefresh = startCursorOfficialRefreshLoop(
+        db as unknown as import("./domain-types.js").SqliteDatabaseLike,
+        {
+          timeZone: "Asia/Shanghai",
+          log: metricsApp.log
+        }
       );
-    }
-
-    if (syncOpenCodeState) {
-      syncTasks.push(
-        syncOpenCodeState().catch((error) => {
-          request.log.warn(
-            { err: error },
-            "OpenCode sync failed; serving stale local metrics."
-          );
-        })
-      );
-    }
-
-    if (syncCursorState) {
-      syncTasks.push(
-        syncCursorState().catch((error) => {
-          request.log.warn(
-            { err: error },
-            "Cursor sync failed; serving stale local metrics."
-          );
-        })
-      );
-    }
-
-    if (syncCodexState) {
-      syncTasks.push(
-        syncCodexState().catch((error) => {
-          request.log.warn(
-            { err: error },
-            "Codex sync failed; serving stale local metrics."
-          );
-        })
-      );
-    }
-
-    if (syncTasks.length > 0) {
-      await Promise.all(syncTasks);
-    }
-
-    if (!syncEventLog) {
+      if (agentPaths !== null && canonicalEventLogPath !== undefined) {
+        const eventLogPath = canonicalEventLogPath;
+        const paths = agentPaths;
+        sourceLightRefresh = startSourceLightRefreshLoop(
+          async ({ reconcileRecent }) => {
+            // Do not contend with manual/periodic coordinator runs for the writer lease.
+            if (syncCoordinator.hasActiveWork()) {
+              return;
+            }
+            const succeededAdapterIds: string[] = [];
+            await runWithCanonicalWriterLease(new AbortController().signal, async () => {
+              await runIsolatedSourceRefreshTasks(
+                [
+                  {
+                    id: "codex-rollout@codex:default",
+                    run: () =>
+                      syncCodexRollouts({
+                        eventLogPath,
+                        cursorPath: paths.codexCursorPath,
+                        ledgerPath: paths.codexLedgerPath,
+                        reconcileRecent
+                      })
+                  },
+                  {
+                    id: "opencode-db@opencode:default",
+                    run: () =>
+                      syncOpenCodeDatabase({
+                        eventLogPath,
+                        cursorPath: paths.opencodeCursorPath,
+                        ledgerPath: paths.opencodeLedgerPath
+                      })
+                  },
+                  {
+                    id: "zcode-db@zcode:default",
+                    run: () =>
+                      syncZCodeDatabase({
+                        eventLogPath,
+                        cursorPath: paths.zcodeCursorPath,
+                        ledgerPath: paths.zcodeLedgerPath
+                      })
+                  },
+                  {
+                    id: "kimicode-wire@kimicode:default",
+                    run: () =>
+                      syncKimicodeSessions({
+                        eventLogPath,
+                        cursorPath: paths.kimicodeCursorPath,
+                        ledgerPath: paths.kimicodeLedgerPath
+                      })
+                  },
+                  {
+                    id: "mimo-db@mimo:default",
+                    run: () =>
+                      syncMiMoDatabase({
+                        eventLogPath,
+                        cursorPath: paths.mimoCursorPath,
+                        ledgerPath: paths.mimoLedgerPath
+                      })
+                  },
+                  {
+                    id: "dsh-jsonl@dsh:default",
+                    run: () =>
+                      syncDshSessions({
+                        eventLogPath,
+                        cursorPath: paths.dshCursorPath,
+                        ledgerPath: paths.dshLedgerPath
+                      })
+                  },
+                  {
+                    id: "cursor-ide@cursor:default",
+                    run: () =>
+                      syncCursorArtifacts({
+                        eventLogPath,
+                        cursorPath: paths.cursorIdeStatePath,
+                        ledgerPath: paths.cursorIdeLedgerPath
+                      })
+                  }
+                ],
+                {
+                  log: metricsApp.log,
+                  onSuccess: (id) => {
+                    succeededAdapterIds.push(id);
+                  }
+                }
+              );
+              if (succeededAdapterIds.length > 0) {
+                await projectAfterSourceSync();
+              }
+            });
+            for (const adapterId of succeededAdapterIds) {
+              syncCoordinator.markBackgroundSuccess(adapterId);
+            }
+          },
+          { log: metricsApp.log }
+        );
+      }
       return;
     }
 
-    await syncEventLog();
-  });
-
-  app.get("/api/overview", async (request) => {
-    const scope = resolveRequestScope(request.query, input);
-    const sourceVendor = resolveSourceVendor(request.query);
-    const overviewRows = selectOverviewRows(db, scope, sourceVendor);
-
-    return withScopeMetadata(
-      {
-        ...buildOverviewMetrics({
-          sessions: overviewRows.sessions,
-          toolEvents: overviewRows.toolEvents,
-          prompts: overviewRows.prompts,
-          responses: overviewRows.responses,
-          tokenUsage: overviewRows.tokenUsage,
-          codeEdits: overviewRows.codeEdits
-        }),
-        tokensByModel: selectTokensByModel(db, scope, sourceVendor),
-        sourceBreakdown: selectSourceBreakdown(db, scope, sourceVendor),
-        providerBreakdown: selectProviderBreakdown(db, scope, sourceVendor)
-      },
-      scope
-    );
-  });
-
-  app.get("/api/token-trend", async (request) => {
-    const scope = resolveRequestScope(request.query, input);
-    const sourceVendor = resolveSourceVendor(request.query);
-
-    return withScopeMetadata({ rows: selectTokenTrend(db, scope, sourceVendor) }, scope);
-  });
-
-  app.get("/api/tools", async (request) => {
-    const scope = resolveRequestScope(request.query, input);
-    const sourceVendor = resolveSourceVendor(request.query);
-
-    return withScopeMetadata({ rows: selectToolRanking(db, scope, sourceVendor) }, scope);
-  });
-
-  app.get("/api/sessions", async (request) => {
-    const scope = resolveRequestScope(request.query, input);
-    const sourceVendor = resolveSourceVendor(request.query);
-
-    return withScopeMetadata({ rows: selectSessions(db, scope, sourceVendor) }, scope);
-  });
-
-  app.get("/api/sessions/:id", async (request, reply) => {
-    const params = request.params as { id: string };
-    const session = db
-      .prepare<SessionRow>(
-        "SELECT session_id AS sessionId, started_at AS startedAt, ended_at AS endedAt, workspace_path AS workspacePath, source_vendor AS sourceVendor, source_adapter AS sourceAdapter FROM sessions WHERE session_id = ?"
-      )
-      .get(params.id);
-
-    if (!session) {
-      reply.code(404);
-      return { message: "Session not found" };
+    if (syncEventLog !== null) {
+      await projectAfterSourceSync();
     }
-
-    const sessionContext = db
-      .prepare<SessionContextRow>(
-        "SELECT execution_path AS executionPath, skills_loaded AS skillsLoaded, skill_names_json AS skillNamesJson FROM session_contexts WHERE session_id = ?"
-      )
-      .get(params.id);
-
-    const toolRows = db
-      .prepare<ToolTimelineRow>(
-        "SELECT tool_name AS toolName, status, duration_ms AS durationMs, created_at AS createdAt, source_vendor AS sourceVendor, source_adapter AS sourceAdapter FROM tool_events WHERE session_id = ? ORDER BY created_at ASC"
-      )
-      .all(params.id);
-    const promptRows = db
-      .prepare<PromptTimelineRow>(
-        "SELECT prompt_id AS promptId, prompt_chars AS promptChars, created_at AS createdAt, source_vendor AS sourceVendor, source_adapter AS sourceAdapter FROM prompt_events WHERE session_id = ? ORDER BY created_at ASC"
-      )
-      .all(params.id);
-    const assistantRows = db
-      .prepare<AssistantTimelineRow>(
-        "SELECT message_id AS messageId, model, stop_reason AS stopReason, response_chars AS responseChars, created_at AS createdAt, source_vendor AS sourceVendor, source_adapter AS sourceAdapter, provider_id AS providerId, provider_host AS providerHost FROM assistant_responses WHERE session_id = ? ORDER BY created_at ASC"
-      )
-      .all(params.id);
-    const tokenUsageRows = db
-      .prepare<TokenUsageTimelineRow>(
-        "SELECT message_id AS messageId, model, input_tokens AS inputTokens, output_tokens AS outputTokens, cache_read_input_tokens AS cacheReadTokens, cache_creation_input_tokens AS cacheCreationTokens, usage_source AS usageSource, created_at AS createdAt, source_vendor AS sourceVendor, source_adapter AS sourceAdapter, provider_id AS providerId, provider_host AS providerHost FROM token_usage_events WHERE session_id = ? ORDER BY created_at ASC"
-      )
-      .all(params.id);
-    const codeEditRows = db
-      .prepare<CodeEditTimelineRow>(
-        "SELECT tool_name AS toolName, files_changed AS filesChanged, insertions, deletions, created_at AS createdAt, source_vendor AS sourceVendor, source_adapter AS sourceAdapter FROM code_edits WHERE session_id = ? ORDER BY created_at ASC"
-      )
-      .all(params.id);
-
-    const timeline: SessionTimelineEntry[] = [
-      createTimelineEntry({
-        createdAt: session.startedAt,
-        type: "session.started",
-        toolName: "",
-        status: "started",
-        durationMs: 0,
-        sourceVendor: session.sourceVendor,
-        sourceAdapter: session.sourceAdapter,
-        providerId: null,
-        providerHost: null,
-        filesChanged: [],
-        insertions: 0,
-        deletions: 0
-      }),
-      ...promptRows.map((row) =>
-        createTimelineEntry({
-          createdAt: row.createdAt,
-          type: "prompt.submitted",
-          toolName: "",
-          status: "submitted",
-          durationMs: 0,
-          sourceVendor: row.sourceVendor,
-          sourceAdapter: row.sourceAdapter,
-          providerId: null,
-          providerHost: null,
-          filesChanged: [],
-          insertions: 0,
-          deletions: 0,
-          promptId: row.promptId,
-          promptChars: row.promptChars
-        })
-      ),
-      ...toolRows.map((row) =>
-        createTimelineEntry({
-        createdAt: row.createdAt,
-        type: `tool.${row.status}`,
-        toolName: row.toolName,
-        status: row.status,
-        durationMs: row.durationMs ?? 0,
-        sourceVendor: row.sourceVendor,
-        sourceAdapter: row.sourceAdapter,
-        providerId: null,
-        providerHost: null,
-        filesChanged: [],
-        insertions: 0,
-        deletions: 0
-        })
-      ),
-      ...assistantRows.map((row) =>
-        createTimelineEntry({
-          createdAt: row.createdAt,
-          type: "assistant.responded",
-          toolName: "",
-          status: "responded",
-          durationMs: 0,
-          sourceVendor: row.sourceVendor,
-          sourceAdapter: row.sourceAdapter,
-          providerId: row.providerId,
-          providerHost: row.providerHost,
-          filesChanged: [],
-          insertions: 0,
-          deletions: 0,
-          messageId: row.messageId,
-          model: row.model,
-          stopReason: row.stopReason,
-          responseChars: row.responseChars
-        })
-      ),
-      ...tokenUsageRows.map((row) =>
-        createTimelineEntry({
-          createdAt: row.createdAt,
-          type: "token.usage.recorded",
-          toolName: "",
-          status: "recorded",
-          durationMs: 0,
-          sourceVendor: row.sourceVendor,
-          sourceAdapter: row.sourceAdapter,
-          providerId: row.providerId,
-          providerHost: row.providerHost,
-          filesChanged: [],
-          insertions: 0,
-          deletions: 0,
-          messageId: row.messageId,
-          model: row.model ?? "unknown",
-          inputTokens: resolveDisplayedInputTokens({
-            sourceVendor: row.sourceVendor,
-            inputTokens: row.inputTokens,
-            cacheReadTokens: row.cacheReadTokens
-          }),
-          outputTokens: row.outputTokens,
-          cacheReadTokens: row.cacheReadTokens,
-          cacheCreationTokens: row.cacheCreationTokens,
-          totalTokens:
-            row.sourceVendor === "codex"
-              ? row.inputTokens + row.outputTokens + row.cacheCreationTokens
-              : resolveDisplayedInputTokens({
-                  sourceVendor: row.sourceVendor,
-                  inputTokens: row.inputTokens,
-                  cacheReadTokens: row.cacheReadTokens
-                }) +
-                row.outputTokens +
-                row.cacheReadTokens +
-                row.cacheCreationTokens,
-          usageSource: row.usageSource
-        })
-      ),
-      ...codeEditRows.map((row) =>
-        createTimelineEntry({
-        createdAt: row.createdAt,
-        type: "code.edit.applied",
-        toolName: row.toolName,
-        status: "applied",
-        durationMs: 0,
-        sourceVendor: row.sourceVendor,
-        sourceAdapter: row.sourceAdapter,
-        providerId: null,
-        providerHost: null,
-        filesChanged: parseFilesChanged(row.filesChanged),
-        insertions: row.insertions,
-        deletions: row.deletions
-        })
-      ),
-      ...(session.endedAt
-        ? [
-            createTimelineEntry({
-              createdAt: session.endedAt,
-              type: "session.ended",
-              toolName: "",
-              status: "ended",
-              durationMs: 0,
-              sourceVendor: session.sourceVendor,
-              sourceAdapter: session.sourceAdapter,
-              providerId: null,
-              providerHost: null,
-              filesChanged: [],
-              insertions: 0,
-              deletions: 0
-            })
-          ]
-        : [])
-    ].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
-
-    return {
-      sessionId: params.id,
-      workspacePath: session.workspacePath,
-      sourceVendor: session.sourceVendor,
-      sourceAdapter: session.sourceAdapter,
-      context: sessionContext
-        ? {
-            executionPath: sessionContext.executionPath,
-            skillsLoaded: sessionContext.skillsLoaded === 1,
-            skillNames: parseFilesChanged(sessionContext.skillNamesJson)
-          }
-        : null,
-      timeline
-    };
   });
 
-  app.get("/api/exports/json", async (_, reply) => {
-    reply.header("content-type", "application/json; charset=utf-8");
-    reply.header("content-disposition", 'attachment; filename="tools.json"');
-    return toJson(selectToolRanking(db));
-  });
-
-  app.get("/api/exports/csv", async (_, reply) => {
-    reply.header("content-type", "text/csv; charset=utf-8");
-    reply.header("content-disposition", 'attachment; filename="tools.csv"');
-    return toCsv(selectToolRanking(db));
-  });
+  registerCoreRoutes({ app, db, input, syncCoordinator });
 
   return metricsApp;
 }
@@ -1656,516 +443,10 @@ export function buildApp(input: BuildAppInput): MetricsApp {
 export async function ingestEventLog(input: {
   app: MetricsApp;
   eventLogPath: string;
-}): Promise<void> {
-  const db = input.app.db;
-  const signature = await readEventLogSignature(input.eventLogPath);
-
-  if (signature === null) {
-    return;
-  }
-
-  const existingCursor = readEventLogCursor(db);
-  if (
-    existingCursor !== null &&
-    existingCursor.offsetBytes === signature.size &&
-    existingCursor.sizeBytes === signature.size &&
-    existingCursor.mtimeMs === signature.mtimeMs
-  ) {
-    return;
-  }
-
-  let file: Buffer;
-
-  try {
-    file = await readFile(input.eventLogPath);
-  } catch (error) {
-    if (isMissingFileError(error)) {
-      return;
-    }
-
-    throw error;
-  }
-
-  const committedSize = resolveCommittedEventLogSize(file);
-  const shouldResumeIncrementally =
-    existingCursor !== null &&
-    existingCursor.offsetBytes > 0 &&
-    existingCursor.offsetBytes <= committedSize &&
-    existingCursor.sizeBytes < signature.size;
-  const startOffset = shouldResumeIncrementally ? existingCursor.offsetBytes : 0;
-  const nextOffset = committedSize;
-
-  if (nextOffset <= startOffset) {
-    writeEventLogCursor(db, {
-      offsetBytes: nextOffset,
-      sizeBytes: signature.size,
-      mtimeMs: signature.mtimeMs
-    });
-    return;
-  }
-
-  const chunk = file.subarray(startOffset, nextOffset);
-  const lines = chunk
-    .toString("utf8")
-    .split("\n")
-    .filter((line) => line.length > 0);
-  if (lines.length === 0) {
-    writeEventLogCursor(db, {
-      offsetBytes: nextOffset,
-      sizeBytes: signature.size,
-      mtimeMs: signature.mtimeMs
-    });
-    return;
-  }
-
-  const parsedEvents: AnyEvent[] = [];
-  for (const line of lines) {
-    let parsed: AnyEvent;
-    try {
-      parsed = AnyEventSchema.parse(JSON.parse(line));
-    } catch (error) {
-      // A single corrupt/partial line (e.g. a half-written JSON line left by a
-      // crashed process) must not abort the whole chunk: the remaining valid
-      // events would be lost and the cursor would stall on this batch forever.
-      // Skip the bad line, record it, and keep going.
-      input.app.log.warn(
-        {
-          offsetBytes: startOffset,
-          preview: line.length > 200 ? `${line.slice(0, 200)}…` : line,
-          err: error
-        },
-        "skipped malformed event log line"
-      );
-      continue;
-    }
-    parsedEvents.push(parsed);
-  }
-
-  const persistEvents = db.transaction((events: AnyEvent[]) => {
-    for (const parsed of events) {
-      const storedSourceVendor = parsed.source_vendor;
-      const storedSourceAdapter = normalizeSourceAdapterForStorage(parsed);
-
-      if (parsed.type === "session.started") {
-        db.prepare(
-          `
-            INSERT INTO sessions (
-              session_id,
-              started_at,
-              workspace_path,
-              source_vendor,
-              source_adapter,
-              ended_at,
-              exit_code
-            )
-            VALUES (?, ?, ?, ?, ?, NULL, NULL)
-            ON CONFLICT(session_id) DO UPDATE SET
-              started_at = excluded.started_at,
-              workspace_path = excluded.workspace_path,
-              source_vendor = excluded.source_vendor,
-              source_adapter = excluded.source_adapter
-          `
-        ).run(
-          parsed.session_id,
-          parsed.timestamp,
-          parsed.workspace_path,
-          storedSourceVendor,
-          storedSourceAdapter
-        );
-      }
-
-      if (parsed.type === "session.ended") {
-        ensureSessionExists(
-          db,
-          parsed.session_id,
-          parsed.timestamp,
-          parsed.workspace_path,
-          storedSourceVendor,
-          storedSourceAdapter
-        );
-        db.prepare(
-          "UPDATE sessions SET ended_at = ?, exit_code = ?, workspace_path = ?, source_vendor = ?, source_adapter = ? WHERE session_id = ?"
-        ).run(
-          parsed.timestamp,
-          parsed.exit_code ?? null,
-          parsed.workspace_path,
-          storedSourceVendor,
-          storedSourceAdapter,
-          parsed.session_id
-        );
-      }
-
-      if (
-        parsed.type === "tool.called" ||
-        parsed.type === "tool.succeeded" ||
-        parsed.type === "tool.failed"
-      ) {
-        db.prepare(
-          "INSERT OR REPLACE INTO tool_events (event_id, session_id, tool_name, status, duration_ms, source_vendor, source_adapter, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-        ).run(
-          parsed.event_id,
-          parsed.session_id,
-          parsed.tool_name,
-          parsed.status,
-          parsed.type === "tool.called" ? 0 : parsed.duration_ms,
-          storedSourceVendor,
-          storedSourceAdapter,
-          parsed.timestamp
-        );
-      }
-
-      if (parsed.type === "prompt.submitted") {
-        ensureSessionExists(
-          db,
-          parsed.session_id,
-          parsed.timestamp,
-          parsed.workspace_path,
-          storedSourceVendor,
-          storedSourceAdapter
-        );
-        db.prepare(
-          "INSERT OR REPLACE INTO prompt_events (event_id, session_id, prompt_id, prompt_chars, source_vendor, source_adapter, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
-        ).run(
-          parsed.event_id,
-          parsed.session_id,
-          parsed.prompt_id,
-          parsed.prompt_chars,
-          storedSourceVendor,
-          storedSourceAdapter,
-          parsed.timestamp
-        );
-      }
-
-      if (parsed.type === "assistant.responded") {
-        ensureSessionExists(
-          db,
-          parsed.session_id,
-          parsed.timestamp,
-          parsed.workspace_path,
-          storedSourceVendor,
-          storedSourceAdapter
-        );
-        db.prepare(
-          "INSERT OR REPLACE INTO assistant_responses (event_id, session_id, message_id, model, stop_reason, response_chars, source_vendor, source_adapter, provider_id, provider_base_url, provider_host, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-        ).run(
-          parsed.event_id,
-          parsed.session_id,
-          parsed.message_id,
-          parsed.model ?? null,
-          parsed.stop_reason ?? null,
-          parsed.response_chars,
-          storedSourceVendor,
-          storedSourceAdapter,
-          parsed.provider_id ?? null,
-          parsed.provider_base_url ?? null,
-          parsed.provider_host ?? null,
-          parsed.timestamp
-        );
-      }
-
-      if (parsed.type === "token.usage.recorded") {
-        ensureSessionExists(
-          db,
-          parsed.session_id,
-          parsed.timestamp,
-          parsed.workspace_path,
-          storedSourceVendor,
-          storedSourceAdapter
-        );
-        db.prepare(
-          "INSERT OR REPLACE INTO token_usage_events (event_id, session_id, message_id, model, input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens, server_tool_use, usage_source, source_vendor, source_adapter, provider_id, provider_base_url, provider_host, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-        ).run(
-          parsed.event_id,
-          parsed.session_id,
-          parsed.message_id,
-          parsed.model ?? null,
-          parsed.input_tokens,
-          parsed.output_tokens,
-          parsed.cache_creation_input_tokens,
-          parsed.cache_read_input_tokens,
-          parsed.server_tool_use,
-          parsed.usage_source,
-          storedSourceVendor,
-          storedSourceAdapter,
-          parsed.provider_id ?? null,
-          parsed.provider_base_url ?? null,
-          parsed.provider_host ?? null,
-          parsed.timestamp
-        );
-      }
-
-      if (parsed.type === "code.edit.applied") {
-        db.prepare(
-          "INSERT OR REPLACE INTO code_edits (event_id, session_id, tool_name, files_changed, file_count, insertions, deletions, edit_operation_count, source_vendor, source_adapter, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-        ).run(
-          parsed.event_id,
-          parsed.session_id,
-          parsed.tool_name,
-          JSON.stringify(parsed.files_changed),
-          parsed.file_count,
-          parsed.insertions,
-          parsed.deletions,
-          parsed.edit_operation_count,
-          storedSourceVendor,
-          storedSourceAdapter,
-          parsed.timestamp
-        );
-      }
-    }
+}): Promise<{ atEnd: boolean }> {
+  return projectEventLog({
+    db: input.app.db as unknown as import("./event-log-projector.js").EventProjectorDatabase,
+    eventLogPath: input.eventLogPath,
+    logger: input.app.log
   });
-
-  persistEvents(parsedEvents);
-  writeEventLogCursor(db, {
-    offsetBytes: nextOffset,
-    sizeBytes: signature.size,
-    mtimeMs: signature.mtimeMs
-  });
-}
-
-function normalizeSourceAdapterForStorage(event: AnyEvent): string {
-  if (event.source_adapter !== "claude") {
-    return event.source_adapter;
-  }
-
-  if (
-    event.type === "prompt.submitted" ||
-    event.type === "assistant.responded" ||
-    event.type === "token.usage.recorded"
-  ) {
-    return "claude-transcript";
-  }
-
-  return "claude-hook";
-}
-
-function ensureSessionExists(
-  db: MetricsDatabase,
-  sessionId: string,
-  startedAt: string,
-  workspacePath: string,
-  sourceVendor: string,
-  sourceAdapter: string
-): void {
-  db.prepare(
-    "INSERT OR IGNORE INTO sessions (session_id, started_at, workspace_path, source_vendor, source_adapter, ended_at, exit_code) VALUES (?, ?, ?, ?, ?, NULL, NULL)"
-  ).run(sessionId, startedAt, workspacePath, sourceVendor, sourceAdapter);
-}
-
-function persistClaudeSessionContexts(
-  db: MetricsDatabase,
-  contexts: ClaudeSessionContext[]
-): void {
-  const persist = db.transaction((items: ClaudeSessionContext[]) => {
-    for (const context of items) {
-      ensureSessionExists(
-        db,
-        context.sessionId,
-        context.updatedAt,
-        context.workspacePath,
-        context.sourceVendor,
-        context.sourceAdapter
-      );
-      db.prepare(
-        `
-          INSERT INTO session_contexts (
-            session_id,
-            source_vendor,
-            source_adapter,
-            execution_path,
-            skills_loaded,
-            skill_names_json,
-            updated_at
-          )
-          VALUES (?, ?, ?, ?, ?, ?, ?)
-          ON CONFLICT(session_id) DO UPDATE SET
-            source_vendor = excluded.source_vendor,
-            source_adapter = excluded.source_adapter,
-            execution_path = excluded.execution_path,
-            skills_loaded = excluded.skills_loaded,
-            skill_names_json = excluded.skill_names_json,
-            updated_at = excluded.updated_at
-        `
-      ).run(
-        context.sessionId,
-        context.sourceVendor,
-        context.sourceAdapter,
-        context.executionPath,
-        context.skillsLoaded ? 1 : 0,
-        JSON.stringify(context.skillNames),
-        context.updatedAt
-      );
-    }
-  });
-
-  persist(contexts);
-}
-
-function resolveDisplayedInputTokens(input: {
-  sourceVendor: string;
-  inputTokens: number;
-  cacheReadTokens: number;
-}): number {
-  // Vendors whose adapters record input_tokens as the *gross* prompt size
-  // (i.e. it already includes cache_read_input_tokens). Mirror the list in
-  // packages/metrics-engine/src/index.ts so all aggregation paths agree.
-  if (input.sourceVendor === "codex" || input.sourceVendor === "opencode") {
-    return Math.max(0, input.inputTokens - input.cacheReadTokens);
-  }
-
-  return input.inputTokens;
-}
-
-function parseFilesChanged(value: string): string[] {
-  try {
-    const parsed = JSON.parse(value) as unknown;
-    return Array.isArray(parsed) ? parsed.filter((entry): entry is string => typeof entry === "string") : [];
-  } catch {
-    return [];
-  }
-}
-
-function createTimelineEntry(
-  input: Omit<
-    SessionTimelineEntry,
-    | "sourceVendor"
-    | "sourceAdapter"
-    | "providerId"
-    | "providerHost"
-    | "promptId"
-    | "promptChars"
-    | "messageId"
-    | "model"
-    | "stopReason"
-    | "responseChars"
-    | "inputTokens"
-    | "outputTokens"
-    | "cacheReadTokens"
-    | "cacheCreationTokens"
-    | "totalTokens"
-    | "usageSource"
-  > &
-    Partial<
-      Pick<
-        SessionTimelineEntry,
-        | "sourceVendor"
-        | "sourceAdapter"
-        | "providerId"
-        | "providerHost"
-        | "promptId"
-        | "promptChars"
-        | "messageId"
-        | "model"
-        | "stopReason"
-        | "responseChars"
-        | "inputTokens"
-        | "outputTokens"
-        | "cacheReadTokens"
-        | "cacheCreationTokens"
-        | "totalTokens"
-        | "usageSource"
-      >
-    >
-): SessionTimelineEntry {
-  return {
-    sourceVendor: "claude-code",
-    sourceAdapter: "claude-hook",
-    providerId: null,
-    providerHost: null,
-    promptId: null,
-    promptChars: null,
-    messageId: null,
-    model: null,
-    stopReason: null,
-    responseChars: null,
-    inputTokens: null,
-    outputTokens: null,
-    cacheReadTokens: null,
-    cacheCreationTokens: null,
-    totalTokens: null,
-    usageSource: null,
-    ...input
-  };
-}
-
-function isMissingFileError(error: unknown): boolean {
-  return error instanceof Error && "code" in error && error.code === "ENOENT";
-}
-
-function readEventLogCursor(db: MetricsDatabase): EventLogCursor | null {
-  const row = db
-    .prepare<{ offsetBytes: number; sizeBytes: number; mtimeMs: number }>(
-      `
-        SELECT
-          offset_bytes AS offsetBytes,
-          size_bytes AS sizeBytes,
-          mtime_ms AS mtimeMs
-        FROM ingestion_state
-        WHERE stream_name = 'events.jsonl'
-      `
-    )
-    .get();
-
-  if (
-    !row ||
-    !Number.isInteger(row.offsetBytes) ||
-    row.offsetBytes < 0 ||
-    !Number.isInteger(row.sizeBytes) ||
-    row.sizeBytes < 0 ||
-    typeof row.mtimeMs !== "number" ||
-    row.mtimeMs < 0
-  ) {
-    return null;
-  }
-
-  return row;
-}
-
-function writeEventLogCursor(db: MetricsDatabase, cursor: EventLogCursor): void {
-  db.prepare(
-    `
-      INSERT INTO ingestion_state (stream_name, offset_bytes, size_bytes, mtime_ms)
-      VALUES ('events.jsonl', ?, ?, ?)
-      ON CONFLICT(stream_name) DO UPDATE SET
-        offset_bytes = excluded.offset_bytes,
-        size_bytes = excluded.size_bytes,
-        mtime_ms = excluded.mtime_ms
-    `
-  ).run(cursor.offsetBytes, cursor.sizeBytes, cursor.mtimeMs);
-}
-
-async function readEventLogSignature(eventLogPath: string): Promise<EventLogSignature | null> {
-  try {
-    const details = await stat(eventLogPath);
-
-    return {
-      mtimeMs: details.mtimeMs,
-      size: details.size
-    };
-  } catch (error) {
-    if (isMissingFileError(error)) {
-      return null;
-    }
-
-    throw error;
-  }
-}
-
-function resolveCommittedEventLogSize(file: Buffer): number {
-  if (file.length === 0) {
-    return 0;
-  }
-
-  const newlineIndex = file.lastIndexOf(0x0a);
-  return newlineIndex === -1 ? 0 : newlineIndex + 1;
-}
-
-function isSameEventLogSignature(
-  left: EventLogSignature | null,
-  right: EventLogSignature | null
-): boolean {
-  if (left === null || right === null) {
-    return left === right;
-  }
-
-  return left.size === right.size && left.mtimeMs === right.mtimeMs;
 }

@@ -14,10 +14,18 @@ describe("getAgentMetricsPaths", () => {
       transcriptLedgerPath: "D:/projects/dev/agent-metrics/data/hooks/state/transcript-ledger.json",
       opencodeCursorPath: "D:/projects/dev/agent-metrics/data/sources/state/opencode-cursor.json",
       opencodeLedgerPath: "D:/projects/dev/agent-metrics/data/sources/state/opencode-ledger.json",
+      zcodeCursorPath: "D:/projects/dev/agent-metrics/data/sources/state/zcode-cursor.json",
+      zcodeLedgerPath: "D:/projects/dev/agent-metrics/data/sources/state/zcode-ledger.json",
+      kimicodeCursorPath: "D:/projects/dev/agent-metrics/data/sources/state/kimicode-cursor.json",
+      kimicodeLedgerPath: "D:/projects/dev/agent-metrics/data/sources/state/kimicode-ledger.json",
+      dshCursorPath: "D:/projects/dev/agent-metrics/data/sources/state/dsh-cursor.json",
+      dshLedgerPath: "D:/projects/dev/agent-metrics/data/sources/state/dsh-ledger.json",
       cursorIdeStatePath: "D:/projects/dev/agent-metrics/data/sources/state/cursor-ide-state.json",
       cursorIdeLedgerPath: "D:/projects/dev/agent-metrics/data/sources/state/cursor-ide-ledger.json",
       codexCursorPath: "D:/projects/dev/agent-metrics/data/sources/state/codex-cursor.json",
-      codexLedgerPath: "D:/projects/dev/agent-metrics/data/sources/state/codex-ledger.json"
+      codexLedgerPath: "D:/projects/dev/agent-metrics/data/sources/state/codex-ledger.json",
+      mimoCursorPath: "D:/projects/dev/agent-metrics/data/sources/state/mimo-cursor.json",
+      mimoLedgerPath: "D:/projects/dev/agent-metrics/data/sources/state/mimo-ledger.json"
     });
   });
 
@@ -38,6 +46,18 @@ describe("getAgentMetricsPaths", () => {
         "D:\\projects\\dev\\agent-metrics\\data\\sources\\state\\opencode-cursor.json",
       opencodeLedgerPath:
         "D:\\projects\\dev\\agent-metrics\\data\\sources\\state\\opencode-ledger.json",
+      zcodeCursorPath:
+        "D:\\projects\\dev\\agent-metrics\\data\\sources\\state\\zcode-cursor.json",
+      zcodeLedgerPath:
+        "D:\\projects\\dev\\agent-metrics\\data\\sources\\state\\zcode-ledger.json",
+      kimicodeCursorPath:
+        "D:\\projects\\dev\\agent-metrics\\data\\sources\\state\\kimicode-cursor.json",
+      kimicodeLedgerPath:
+        "D:\\projects\\dev\\agent-metrics\\data\\sources\\state\\kimicode-ledger.json",
+      dshCursorPath:
+        "D:\\projects\\dev\\agent-metrics\\data\\sources\\state\\dsh-cursor.json",
+      dshLedgerPath:
+        "D:\\projects\\dev\\agent-metrics\\data\\sources\\state\\dsh-ledger.json",
       cursorIdeStatePath:
         "D:\\projects\\dev\\agent-metrics\\data\\sources\\state\\cursor-ide-state.json",
       cursorIdeLedgerPath:
@@ -45,7 +65,11 @@ describe("getAgentMetricsPaths", () => {
       codexCursorPath:
         "D:\\projects\\dev\\agent-metrics\\data\\sources\\state\\codex-cursor.json",
       codexLedgerPath:
-        "D:\\projects\\dev\\agent-metrics\\data\\sources\\state\\codex-ledger.json"
+        "D:\\projects\\dev\\agent-metrics\\data\\sources\\state\\codex-ledger.json",
+      mimoCursorPath:
+        "D:\\projects\\dev\\agent-metrics\\data\\sources\\state\\mimo-cursor.json",
+      mimoLedgerPath:
+        "D:\\projects\\dev\\agent-metrics\\data\\sources\\state\\mimo-ledger.json"
     });
   });
 
@@ -66,6 +90,18 @@ describe("getAgentMetricsPaths", () => {
         "\\\\server\\share\\repo\\data\\sources\\state\\opencode-cursor.json",
       opencodeLedgerPath:
         "\\\\server\\share\\repo\\data\\sources\\state\\opencode-ledger.json",
+      zcodeCursorPath:
+        "\\\\server\\share\\repo\\data\\sources\\state\\zcode-cursor.json",
+      zcodeLedgerPath:
+        "\\\\server\\share\\repo\\data\\sources\\state\\zcode-ledger.json",
+      kimicodeCursorPath:
+        "\\\\server\\share\\repo\\data\\sources\\state\\kimicode-cursor.json",
+      kimicodeLedgerPath:
+        "\\\\server\\share\\repo\\data\\sources\\state\\kimicode-ledger.json",
+      dshCursorPath:
+        "\\\\server\\share\\repo\\data\\sources\\state\\dsh-cursor.json",
+      dshLedgerPath:
+        "\\\\server\\share\\repo\\data\\sources\\state\\dsh-ledger.json",
       cursorIdeStatePath:
         "\\\\server\\share\\repo\\data\\sources\\state\\cursor-ide-state.json",
       cursorIdeLedgerPath:
@@ -73,7 +109,11 @@ describe("getAgentMetricsPaths", () => {
       codexCursorPath:
         "\\\\server\\share\\repo\\data\\sources\\state\\codex-cursor.json",
       codexLedgerPath:
-        "\\\\server\\share\\repo\\data\\sources\\state\\codex-ledger.json"
+        "\\\\server\\share\\repo\\data\\sources\\state\\codex-ledger.json",
+      mimoCursorPath:
+        "\\\\server\\share\\repo\\data\\sources\\state\\mimo-cursor.json",
+      mimoLedgerPath:
+        "\\\\server\\share\\repo\\data\\sources\\state\\mimo-ledger.json"
     });
   });
 });

@@ -3,28 +3,33 @@ export type DesktopSurface =
   | "desktop-main"
   | "desktop-floating"
   | "desktop-orb"
-  | "desktop-orb-peek";
+  | "desktop-orb-peek"
+  | "desktop-widget";
 
-export type AgentMetricsDesktopBridge = {
+/** Main window bridge exposed by preload-v2 (no orb/peek/floating APIs). */
+export type AgentMetricsMainBridge = {
   getRuntimeStatus: () => Promise<unknown>;
   getSettings: () => Promise<unknown>;
   updateSettings: (patch: Record<string, unknown>) => Promise<unknown>;
-  showMainWindow: () => Promise<void>;
-  toggleFloatingWindow: () => Promise<{ visible: boolean }>;
-  showOrb: () => Promise<void>;
-  hideOrb: () => Promise<void>;
-  pinPeekCard: () => Promise<{ pinned: boolean }>;
-  togglePeekCardPin: () => Promise<{ pinned: boolean }>;
-  expandOrbDetail: () => Promise<void>;
-  getOrbSnapshot: () => Promise<unknown>;
-  setOrbSnapshot: (snapshot: Record<string, unknown>) => Promise<void>;
-  markOrbStale: () => Promise<void>;
-  peekEnter: () => Promise<void>;
-  peekLeave: () => Promise<void>;
-  orbDragStart: () => Promise<void>;
-  orbDragMove: () => Promise<void>;
-  orbDragEnd: () => Promise<void>;
-  showOrbMenu?: () => Promise<void>;
+  showMainWindow: () => Promise<{ visible: true } | void>;
+  restartRuntime?: (child: "watcher" | "parser" | "core") => Promise<unknown>;
+  getLocalAccessToken?: () => string;
+};
+
+export type AgentMetricsWidgetBridge = {
+  getPlatformInfo: () => Promise<unknown>;
+  getSettings?: () => Promise<unknown>;
+  showMainWindow: () => Promise<{ visible: true }>;
+  hideWidget: () => Promise<{ visible: boolean; mode: "collapsed" | "expanded" | "pinned" }>;
+  setWidgetMode: (mode: "collapsed" | "expanded" | "pinned") => Promise<unknown>;
+  pointerEnter: () => Promise<unknown>;
+  pointerLeave: () => Promise<unknown>;
+  focusWithin: (focused: boolean) => Promise<unknown>;
+  pointerBegin: () => Promise<unknown>;
+  pointerUpdate: () => Promise<unknown>;
+  pointerEnd: () => Promise<unknown>;
+  showWidgetMenu: () => Promise<unknown>;
+  getLocalAccessToken?: () => string;
 };
 
 export function resolveDesktopSurface(search: string): {
@@ -38,7 +43,8 @@ export function resolveDesktopSurface(search: string): {
     surface === "desktop-main" ||
     surface === "desktop-floating" ||
     surface === "desktop-orb" ||
-    surface === "desktop-orb-peek"
+    surface === "desktop-orb-peek" ||
+    surface === "desktop-widget"
   ) {
     return { isDesktop: true, surface };
   }
@@ -46,10 +52,10 @@ export function resolveDesktopSurface(search: string): {
   return { isDesktop: false, surface: "browser" };
 }
 
-export function getAgentMetricsDesktopBridge(
+export function getAgentMetricsMainBridge(
   currentWindow: Window = window
-): AgentMetricsDesktopBridge | null {
-  const bridge = currentWindow.agentMetricsDesktop;
+): AgentMetricsMainBridge | null {
+  const bridge = currentWindow.agentMetricsDesktop as AgentMetricsMainBridge | undefined;
 
   if (!bridge) {
     return null;
@@ -59,21 +65,7 @@ export function getAgentMetricsDesktopBridge(
     typeof bridge.getRuntimeStatus !== "function" ||
     typeof bridge.getSettings !== "function" ||
     typeof bridge.updateSettings !== "function" ||
-    typeof bridge.showMainWindow !== "function" ||
-    typeof bridge.toggleFloatingWindow !== "function" ||
-    typeof bridge.showOrb !== "function" ||
-    typeof bridge.hideOrb !== "function" ||
-    typeof bridge.pinPeekCard !== "function" ||
-    typeof bridge.togglePeekCardPin !== "function" ||
-    typeof bridge.expandOrbDetail !== "function" ||
-    typeof bridge.getOrbSnapshot !== "function" ||
-    typeof bridge.setOrbSnapshot !== "function" ||
-    typeof bridge.markOrbStale !== "function" ||
-    typeof bridge.peekEnter !== "function" ||
-    typeof bridge.peekLeave !== "function" ||
-    typeof bridge.orbDragStart !== "function" ||
-    typeof bridge.orbDragMove !== "function" ||
-    typeof bridge.orbDragEnd !== "function"
+    typeof bridge.showMainWindow !== "function"
   ) {
     return null;
   }
@@ -81,8 +73,42 @@ export function getAgentMetricsDesktopBridge(
   return bridge;
 }
 
+export function getAgentMetricsWidgetBridge(
+  currentWindow: Window = window
+): AgentMetricsWidgetBridge | null {
+  const bridge = currentWindow.agentMetricsDesktop as AgentMetricsWidgetBridge | undefined;
+  if (
+    !bridge ||
+    typeof bridge.getPlatformInfo !== "function" ||
+    typeof bridge.showMainWindow !== "function" ||
+    typeof bridge.hideWidget !== "function" ||
+    typeof bridge.setWidgetMode !== "function" ||
+    typeof bridge.pointerEnter !== "function" ||
+    typeof bridge.pointerLeave !== "function" ||
+    typeof bridge.focusWithin !== "function" ||
+    typeof bridge.pointerBegin !== "function" ||
+    typeof bridge.pointerUpdate !== "function" ||
+    typeof bridge.pointerEnd !== "function" ||
+    typeof bridge.showWidgetMenu !== "function"
+  ) {
+    return null;
+  }
+  return bridge;
+}
+
+export function getLocalAccessToken(currentWindow: Window = window): string | null {
+  const bridge = currentWindow.agentMetricsDesktop as
+    | { getLocalAccessToken?: () => string }
+    | undefined;
+  const token = bridge?.getLocalAccessToken?.();
+  if (typeof token === "string" && token.length > 0) {
+    return token;
+  }
+  return null;
+}
+
 declare global {
   interface Window {
-    agentMetricsDesktop?: AgentMetricsDesktopBridge;
+    agentMetricsDesktop?: AgentMetricsMainBridge | AgentMetricsWidgetBridge;
   }
 }

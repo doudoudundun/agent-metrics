@@ -12,6 +12,9 @@ type ToolRankingTableProps = {
   emptyMessage?: string;
 };
 
+/** Heaviest tools kept individually; lighter ones fold into a single "Others" row. */
+const TOOL_RANKING_LIMIT = 5;
+
 export function ToolRankingTable({
   rows,
   scope,
@@ -21,6 +24,8 @@ export function ToolRankingTable({
   statusMessage,
   emptyMessage
 }: ToolRankingTableProps) {
+  const { visibleRows, othersRow } = buildRanking(rows);
+
   return (
     <section className="panel table-panel">
       <div className="panel-heading panel-heading-scoped">
@@ -34,7 +39,7 @@ export function ToolRankingTable({
             onOverrideChange={onOverrideChange}
           />
         </div>
-        <span>{rows.length} tracked</span>
+        <span>{buildCountLabel(visibleRows.length, rows.length)}</span>
       </div>
       {statusMessage ? <p className="panel-scope-message">{statusMessage}</p> : null}
       {rows.length > 0 ? (
@@ -49,7 +54,7 @@ export function ToolRankingTable({
               </tr>
             </thead>
             <tbody>
-              {rows.map((row) => (
+              {visibleRows.map((row) => (
                 <tr key={row.toolName}>
                   <td>{row.toolName}</td>
                   <td>{row.count}</td>
@@ -57,6 +62,14 @@ export function ToolRankingTable({
                   <td>{row.averageDurationMs} ms</td>
                 </tr>
               ))}
+              {othersRow !== null ? (
+                <tr data-aggregate="true">
+                  <td>{othersRow.toolName}</td>
+                  <td>{othersRow.count}</td>
+                  <td>{othersRow.failures}</td>
+                  <td>{othersRow.averageDurationMs} ms</td>
+                </tr>
+              ) : null}
             </tbody>
           </table>
         </div>
@@ -65,4 +78,41 @@ export function ToolRankingTable({
       )}
     </section>
   );
+}
+
+function buildRanking(rows: ToolRow[]): { visibleRows: ToolRow[]; othersRow: ToolRow | null } {
+  const ranked = [...rows].sort(
+    (left, right) => right.count - left.count || left.toolName.localeCompare(right.toolName)
+  );
+
+  // Folding a single leftover away hides more than it clarifies.
+  if (ranked.length <= TOOL_RANKING_LIMIT + 1) {
+    return { visibleRows: ranked, othersRow: null };
+  }
+
+  return {
+    visibleRows: ranked.slice(0, TOOL_RANKING_LIMIT),
+    othersRow: sumOthers(ranked.slice(TOOL_RANKING_LIMIT))
+  };
+}
+
+function sumOthers(rows: ToolRow[]): ToolRow {
+  const count = rows.reduce((total, row) => total + row.count, 0);
+  const failures = rows.reduce((total, row) => total + row.failures, 0);
+  const durationTotal = rows.reduce((total, row) => total + row.averageDurationMs * row.count, 0);
+
+  return {
+    toolName: `Others (${rows.length})`,
+    count,
+    failures,
+    averageDurationMs: count > 0 ? Math.round(durationTotal / count) : 0
+  };
+}
+
+function buildCountLabel(rowCount: number, totalCount: number): string {
+  if (rowCount >= totalCount) {
+    return `${totalCount} tracked`;
+  }
+
+  return `Top ${rowCount} of ${totalCount}`;
 }

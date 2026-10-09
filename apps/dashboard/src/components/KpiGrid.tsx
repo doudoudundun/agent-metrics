@@ -1,5 +1,22 @@
 import type { ReactNode } from "react";
-import type { OverviewResponse } from "../api";
+
+type OverviewResponse = {
+  totalTokens: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  turnCount: number;
+  responseCount: number;
+  totalToolCalls: number;
+  successfulExecutions: number;
+  failedExecutions: number;
+  startedOnlyExecutions: number;
+  editOperationCount: number;
+  affectedFileCount: number;
+  insertions: number;
+  deletions: number;
+};
 
 type KpiGridProps = {
   overview: OverviewResponse;

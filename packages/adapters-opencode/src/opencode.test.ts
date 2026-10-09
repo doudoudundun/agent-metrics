@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AnyEventSchema } from "@agent-metrics/event-schema";
+import { NormalizedEventV2Schema } from "@agent-metrics/event-schema";
 import {
   normalizeOpenCodePartRow,
   normalizeOpenCodeMessageRow,
@@ -28,7 +28,7 @@ describe("normalizeOpenCodeSessionRow", () => {
 
     expect(normalizeOpenCodeSessionRow(row)).toEqual([
       expect.objectContaining({
-        event_id: "opencode:session:ses_open_1:started",
+        source_record_id: "opencode:session:ses_open_1:started",
         session_id: "ses_open_1",
         source_vendor: "opencode",
         source_adapter: "opencode-db",
@@ -36,7 +36,7 @@ describe("normalizeOpenCodeSessionRow", () => {
         type: "session.started"
       }),
       expect.objectContaining({
-        event_id: "opencode:session:ses_open_1:ended",
+        source_record_id: "opencode:session:ses_open_1:ended",
         session_id: "ses_open_1",
         type: "session.ended",
         duration_ms: 35000
@@ -118,7 +118,7 @@ describe("normalizeOpenCodeMessageRow", () => {
       partRows: userParts
     })).toEqual([
       expect.objectContaining({
-        event_id: "opencode:message:msg_user_1:prompt",
+        source_record_id: "opencode:message:msg_user_1:prompt",
         session_id: "ses_open_1",
         type: "prompt.submitted",
         prompt_id: "msg_user_1",
@@ -135,7 +135,7 @@ describe("normalizeOpenCodeMessageRow", () => {
 
     expect(assistantEvents).toEqual([
       expect.objectContaining({
-        event_id: "opencode:message:msg_assistant_1:assistant",
+        source_record_id: "opencode:message:msg_assistant_1:assistant",
         session_id: "ses_open_1",
         type: "assistant.responded",
         message_id: "msg_assistant_1",
@@ -145,7 +145,7 @@ describe("normalizeOpenCodeMessageRow", () => {
         provider_id: "opencode"
       }),
       expect.objectContaining({
-        event_id: "opencode:message:msg_assistant_1:usage",
+        source_record_id: "opencode:message:msg_assistant_1:usage",
         session_id: "ses_open_1",
         type: "token.usage.recorded",
         message_id: "msg_assistant_1",
@@ -160,8 +160,58 @@ describe("normalizeOpenCodeMessageRow", () => {
     ]);
 
     for (const event of assistantEvents) {
-      expect(AnyEventSchema.safeParse(event).success).toBe(true);
+      expect(NormalizedEventV2Schema.safeParse(event).success).toBe(true);
     }
+  });
+
+  it("folds Anthropic-style cache-read into gross input when cache exceeds input", () => {
+    const assistantRow: OpenCodeMessageRow = {
+      id: "msg_assistant_net_cache",
+      session_id: "ses_open_net_cache",
+      time_created: 1777355829153,
+      time_updated: 1777355842420,
+      data: JSON.stringify({
+        role: "assistant",
+        time: {
+          created: 1777355829153,
+          completed: 1777355842420
+        },
+        providerID: "opencode",
+        modelID: "hy3-preview-free",
+        finish: "stop",
+        path: {
+          root: "D:/projects/dev/agent-metrics"
+        },
+        tokens: {
+          input: 437,
+          output: 47,
+          reasoning: 0,
+          cache: {
+            read: 45568,
+            write: 0
+          }
+        }
+      })
+    };
+
+    const events = normalizeOpenCodeMessageRow({
+      row: assistantRow,
+      sessionDirectory: "D:/projects/dev/agent-metrics",
+      partRows: []
+    });
+    const usage = events.find((event) => event.type === "token.usage.recorded");
+
+    expect(usage).toEqual(
+      expect.objectContaining({
+        type: "token.usage.recorded",
+        input_tokens: 46005,
+        output_tokens: 47,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 45568,
+        usage_source: "opencode-message"
+      })
+    );
+    expect(NormalizedEventV2Schema.safeParse(usage).success).toBe(true);
   });
 
   it("enriches assistant and usage events from a provider registry", () => {
@@ -219,13 +269,13 @@ describe("normalizeOpenCodeMessageRow", () => {
 
     expect(events).toEqual([
       expect.objectContaining({
-        event_id: "opencode:message:msg_assistant_registry:assistant",
+        source_record_id: "opencode:message:msg_assistant_registry:assistant",
         provider_id: "opencode",
         provider_base_url: "https://opencode.ai/zen/v1",
         provider_host: "opencode.ai"
       }),
       expect.objectContaining({
-        event_id: "opencode:message:msg_assistant_registry:usage",
+        source_record_id: "opencode:message:msg_assistant_registry:usage",
         provider_id: "opencode",
         provider_base_url: "https://opencode.ai/zen/v1",
         provider_host: "opencode.ai"
@@ -301,7 +351,7 @@ describe("normalizeOpenCodeMessageRow", () => {
 
     expect(events).toEqual([
       expect.objectContaining({
-        event_id: "opencode:message:msg_assistant_step_finish:assistant",
+        source_record_id: "opencode:message:msg_assistant_step_finish:assistant",
         type: "assistant.responded"
       })
     ]);
@@ -343,7 +393,7 @@ describe("normalizeOpenCodeMessageRow", () => {
 
     expect(events).toEqual([
       expect.objectContaining({
-        event_id: "opencode:message:msg_assistant_zero_tokens:assistant",
+        source_record_id: "opencode:message:msg_assistant_zero_tokens:assistant",
         type: "assistant.responded"
       })
     ]);
@@ -381,24 +431,26 @@ describe("normalizeOpenCodeToolPartRow", () => {
 
     expect(events).toEqual([
       expect.objectContaining({
-        event_id: "opencode:part:prt_tool_1:tool:started",
+        source_record_id: "opencode:part:prt_tool_1:tool:started",
         session_id: "ses_open_1",
         type: "tool.called",
         tool_name: "read",
-        status: "started"
+        status: "started",
+        tool_call_id: "native:prt_tool_1"
       }),
       expect.objectContaining({
-        event_id: "opencode:part:prt_tool_1:tool:failed",
+        source_record_id: "opencode:part:prt_tool_1:tool:failed",
         session_id: "ses_open_1",
         type: "tool.failed",
         tool_name: "read",
         status: "failed",
+        tool_call_id: "native:prt_tool_1",
         duration_ms: 14
       })
     ]);
 
     for (const event of events) {
-      expect(AnyEventSchema.safeParse(event).success).toBe(true);
+      expect(NormalizedEventV2Schema.safeParse(event).success).toBe(true);
     }
   });
 
@@ -456,7 +508,7 @@ describe("normalizeOpenCodeToolPartRow", () => {
 
     expect(events).toEqual([
       expect.objectContaining({
-        event_id: "opencode:message:msg_assistant_usage_part:usage",
+        source_record_id: "opencode:message:msg_assistant_usage_part:usage",
         session_id: "ses_open_usage_part",
         type: "token.usage.recorded",
         model: "hy3-preview-free",
@@ -471,8 +523,59 @@ describe("normalizeOpenCodeToolPartRow", () => {
     ]);
 
     for (const event of events) {
-      expect(AnyEventSchema.safeParse(event).success).toBe(true);
+      expect(NormalizedEventV2Schema.safeParse(event).success).toBe(true);
     }
+  });
+
+  it("folds Anthropic-style step-finish cache-read into gross input", () => {
+    const messageRow: OpenCodeMessageRow = {
+      id: "msg_assistant_net_step",
+      session_id: "ses_open_net_step",
+      time_created: 1777355829153,
+      time_updated: 1777355842420,
+      data: JSON.stringify({
+        role: "assistant",
+        providerID: "opencode",
+        modelID: "hy3-preview-free"
+      })
+    };
+    const partRow: OpenCodePartRow = {
+      id: "prt_assistant_net_step",
+      message_id: "msg_assistant_net_step",
+      session_id: "ses_open_net_step",
+      time_created: 1777355841852,
+      time_updated: 1777355841866,
+      data: JSON.stringify({
+        type: "step-finish",
+        tokens: {
+          input: 87,
+          output: 79,
+          reasoning: 0,
+          cache: {
+            read: 56704,
+            write: 0
+          }
+        }
+      })
+    };
+
+    const events = normalizeOpenCodePartRow({
+      row: partRow,
+      sessionDirectory: "D:/projects/dev/agent-metrics",
+      sessionModel: "hy3-preview-free",
+      messageRow
+    });
+
+    expect(events).toEqual([
+      expect.objectContaining({
+        type: "token.usage.recorded",
+        input_tokens: 56791,
+        output_tokens: 79,
+        cache_read_input_tokens: 56704,
+        usage_source: "opencode-step-finish"
+      })
+    ]);
+    expect(NormalizedEventV2Schema.safeParse(events[0]).success).toBe(true);
   });
 
   it("supports zcode event namespacing and adapter tagging", () => {
@@ -511,19 +614,20 @@ describe("normalizeOpenCodeToolPartRow", () => {
       partRows: [],
       eventContext: {
         eventNamespace: "zcode",
-        sourceAdapter: "zcode-db"
+        sourceAdapter: "zcode-db",
+        sourceVendor: "zcode"
       }
     });
 
     expect(events).toEqual([
       expect.objectContaining({
-        event_id: "opencode:zcode:message:msg_zcode_usage:assistant",
-        source_vendor: "opencode",
+        source_record_id: "opencode:zcode:message:msg_zcode_usage:assistant",
+        source_vendor: "zcode",
         source_adapter: "zcode-db"
       }),
       expect.objectContaining({
-        event_id: "opencode:zcode:message:msg_zcode_usage:usage",
-        source_vendor: "opencode",
+        source_record_id: "opencode:zcode:message:msg_zcode_usage:usage",
+        source_vendor: "zcode",
         source_adapter: "zcode-db",
         usage_source: "opencode-message"
       })

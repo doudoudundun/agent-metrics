@@ -11,10 +11,18 @@ export type AgentMetricsPaths = {
   transcriptLedgerPath: string;
   opencodeCursorPath: string;
   opencodeLedgerPath: string;
+  zcodeCursorPath: string;
+  zcodeLedgerPath: string;
+  kimicodeCursorPath: string;
+  kimicodeLedgerPath: string;
+  dshCursorPath: string;
+  dshLedgerPath: string;
   cursorIdeStatePath: string;
   cursorIdeLedgerPath: string;
   codexCursorPath: string;
   codexLedgerPath: string;
+  mimoCursorPath: string;
+  mimoLedgerPath: string;
 };
 
 export function getAgentMetricsPaths(repoRoot: string): AgentMetricsPaths {
@@ -59,6 +67,48 @@ export function getAgentMetricsPaths(repoRoot: string): AgentMetricsPaths {
       "state",
       "opencode-ledger.json"
     ),
+    zcodeCursorPath: buildAgentMetricsPath(
+      repoRoot,
+      "data",
+      "sources",
+      "state",
+      "zcode-cursor.json"
+    ),
+    zcodeLedgerPath: buildAgentMetricsPath(
+      repoRoot,
+      "data",
+      "sources",
+      "state",
+      "zcode-ledger.json"
+    ),
+    kimicodeCursorPath: buildAgentMetricsPath(
+      repoRoot,
+      "data",
+      "sources",
+      "state",
+      "kimicode-cursor.json"
+    ),
+    kimicodeLedgerPath: buildAgentMetricsPath(
+      repoRoot,
+      "data",
+      "sources",
+      "state",
+      "kimicode-ledger.json"
+    ),
+    dshCursorPath: buildAgentMetricsPath(
+      repoRoot,
+      "data",
+      "sources",
+      "state",
+      "dsh-cursor.json"
+    ),
+    dshLedgerPath: buildAgentMetricsPath(
+      repoRoot,
+      "data",
+      "sources",
+      "state",
+      "dsh-ledger.json"
+    ),
     cursorIdeStatePath: buildAgentMetricsPath(
       repoRoot,
       "data",
@@ -86,6 +136,20 @@ export function getAgentMetricsPaths(repoRoot: string): AgentMetricsPaths {
       "sources",
       "state",
       "codex-ledger.json"
+    ),
+    mimoCursorPath: buildAgentMetricsPath(
+      repoRoot,
+      "data",
+      "sources",
+      "state",
+      "mimo-cursor.json"
+    ),
+    mimoLedgerPath: buildAgentMetricsPath(
+      repoRoot,
+      "data",
+      "sources",
+      "state",
+      "mimo-ledger.json"
     )
   };
 }

@@ -1,5 +1,13 @@
 import { randomUUID } from "node:crypto";
-import type { AnyEvent, SourceAdapter, SourceVendor } from "@agent-metrics/event-schema";
+import {
+  normalizeNativeId,
+  toNormalizedEventV2,
+  type AnyEvent,
+  type EventNormalizationOptions,
+  type NormalizedEventV2,
+  type SourceAdapter,
+  type SourceVendor
+} from "@agent-metrics/event-schema";
 
 type HookEventName =
   | "SessionStart"
@@ -50,7 +58,10 @@ export function buildClaudeRawEnvelope(payload: ClaudeHookPayload): ClaudeRawEnv
   };
 }
 
-export function normalizeClaudeHookEvent(payload: ClaudeHookPayload): AnyEvent | null {
+export function normalizeClaudeHookEvent(
+  payload: ClaudeHookPayload,
+  options: EventNormalizationOptions = {}
+): NormalizedEventV2 | null {
   const eventName = payload.hook_event_name as HookEventName | undefined;
   const base = {
     event_id: randomUUID(),
@@ -61,45 +72,45 @@ export function normalizeClaudeHookEvent(payload: ClaudeHookPayload): AnyEvent |
     workspace_path: normalizeString(payload.cwd, ".")
   };
 
+  let legacy: AnyEvent | null = null;
+
   if (eventName === "SessionStart") {
-    return {
+    legacy = {
       ...base,
       type: "session.started"
     };
-  }
-
-  if (eventName === "SessionEnd") {
-    return {
+  } else if (eventName === "SessionEnd") {
+    legacy = {
       ...base,
       type: "session.ended",
       exit_code: normalizeOptionalInteger(payload.exit_code),
       duration_ms: normalizeDuration(payload.duration_ms)
     };
-  }
-
-  if (eventName === "PreToolUse") {
-    return {
+  } else if (eventName === "PreToolUse") {
+    const toolCallId = normalizeNativeId(payload.tool_use_id) ?? undefined;
+    legacy = {
       ...base,
+      ...(toolCallId ? { tool_call_id: toolCallId } : {}),
       type: "tool.called",
       tool_name: normalizeString(payload.tool_name, "unknown"),
       status: "started",
       argument_summary: summarizeToolInput(payload.tool_input)
     };
-  }
-
-  if (eventName === "PostToolUse") {
-    return {
+  } else if (eventName === "PostToolUse") {
+    const toolCallId = normalizeNativeId(payload.tool_use_id) ?? undefined;
+    legacy = {
       ...base,
+      ...(toolCallId ? { tool_call_id: toolCallId } : {}),
       type: "tool.succeeded",
       tool_name: normalizeString(payload.tool_name, "unknown"),
       status: "succeeded",
       duration_ms: normalizeDuration(payload.duration_ms)
     };
-  }
-
-  if (eventName === "PostToolUseFailure") {
-    return {
+  } else if (eventName === "PostToolUseFailure") {
+    const toolCallId = normalizeNativeId(payload.tool_use_id) ?? undefined;
+    legacy = {
       ...base,
+      ...(toolCallId ? { tool_call_id: toolCallId } : {}),
       type: "tool.failed",
       tool_name: normalizeString(payload.tool_name, "unknown"),
       status: "failed",
@@ -107,7 +118,23 @@ export function normalizeClaudeHookEvent(payload: ClaudeHookPayload): AnyEvent |
     };
   }
 
-  return null;
+  if (legacy === null) {
+    return null;
+  }
+
+  const toolUseId = typeof payload.tool_use_id === "string" ? payload.tool_use_id.trim() : "";
+  const normalizationOptions: EventNormalizationOptions = {
+    sourceRecordNamespace: options.sourceRecordNamespace ?? "hook",
+    ...options,
+    ...(options.sourceRecordId === undefined && toolUseId.length > 0
+      ? {
+          sourceRecordId: toolUseId,
+          toolCallId: options.toolCallId ?? normalizeNativeId(toolUseId) ?? undefined
+        }
+      : {})
+  };
+
+  return toNormalizedEventV2(legacy, normalizationOptions);
 }
 
 export function extractMutationTargets(input: {

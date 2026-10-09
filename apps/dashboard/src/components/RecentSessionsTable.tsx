@@ -1,20 +1,34 @@
-import type { SessionRow } from "../api";
+export type SessionKey = {
+  sourceInstanceId: string;
+  sessionId: string;
+};
+
+type SessionTableRow = SessionKey & {
+  workspacePath: string;
+  turnCount: number;
+  totalTokens: number;
+  lastModel: string | null;
+};
 
 type RecentSessionsTableProps = {
   errorMessage?: string | null;
   loading?: boolean;
-  rows: SessionRow[];
-  selectedSessionId: string | null;
-  onSelect: (sessionId: string) => void;
+  rows: SessionTableRow[];
+  selectedSession: SessionKey | null;
+  onSelect: (session: SessionKey) => void;
 };
 
 const NUMBER_FORMAT = new Intl.NumberFormat("en-US");
+
+export function sessionIdentity(row: SessionKey): string {
+  return `${row.sourceInstanceId}:${row.sessionId}`;
+}
 
 export function RecentSessionsTable({
   errorMessage,
   loading = false,
   rows,
-  selectedSessionId,
+  selectedSession,
   onSelect
 }: RecentSessionsTableProps) {
   return (
@@ -37,11 +51,16 @@ export function RecentSessionsTable({
             </thead>
             <tbody>
               {rows.map((row) => (
-                <tr data-selected={row.sessionId === selectedSessionId} key={row.sessionId}>
+                <tr
+                  data-selected={
+                    selectedSession !== null && sessionIdentity(row) === sessionIdentity(selectedSession)
+                  }
+                  key={sessionIdentity(row)}
+                >
                   <td>
                     <button
                       className="session-select"
-                      onClick={() => onSelect(row.sessionId)}
+                      onClick={() => onSelect({ sourceInstanceId: row.sourceInstanceId, sessionId: row.sessionId })}
                       type="button"
                     >
                       {row.sessionId}

@@ -4,7 +4,32 @@ type ModelUsagePanelProps = {
   rows: TokensByModelRow[];
 };
 
+type RowSourceVendor = TokensByModelRow["sourceVendor"];
+
+const SOURCE_LABELS: Record<RowSourceVendor, string> = {
+  "claude-code": "Claude Code",
+  codex: "Codex",
+  cursor: "Cursor",
+  opencode: "OpenCode",
+  kimicode: "Kimi Code",
+  mimo: "MiMo",
+  zcode: "ZCode",
+  dsh: "DSH"
+};
+
 const NUMBER_FORMAT = new Intl.NumberFormat("en-US");
+const COST_FORMAT = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2
+});
+const SMALL_COST_FORMAT = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  minimumFractionDigits: 4,
+  maximumFractionDigits: 4
+});
 const MODEL_USAGE_LIMIT = 5;
 
 export function ModelUsagePanel({ rows }: ModelUsagePanelProps) {
@@ -24,10 +49,17 @@ export function ModelUsagePanel({ rows }: ModelUsagePanelProps) {
             const cacheTokens = row.cacheReadTokens + row.cacheCreationTokens;
 
             return (
-              <li className="model-usage-row" key={`${row.model}-${row.totalTokens}`}>
+              <li className="model-usage-row" key={`${row.sourceVendor}-${row.model}`}>
                 <div className="model-usage-main">
                   <strong>{formatModelLabel(row.model)}</strong>
+                  <span className="model-usage-source">{SOURCE_LABELS[row.sourceVendor]}</span>
                   <span>{NUMBER_FORMAT.format(row.totalTokens)} tokens</span>
+                  <span
+                    className="model-usage-cost"
+                    title={row.costUsd === null ? "No official pricing" : undefined}
+                  >
+                    {formatCost(row.costUsd)}
+                  </span>
                 </div>
                 <div className="model-usage-meta">
                   <span>in {NUMBER_FORMAT.format(row.inputTokens)}</span>
@@ -59,4 +91,16 @@ function formatModelLabel(model: string): string {
   }
 
   return model;
+}
+
+function formatCost(costUsd: number | null): string {
+  if (costUsd === null) {
+    return "—";
+  }
+
+  if (costUsd > 0 && costUsd < 0.01) {
+    return SMALL_COST_FORMAT.format(costUsd);
+  }
+
+  return COST_FORMAT.format(costUsd);
 }

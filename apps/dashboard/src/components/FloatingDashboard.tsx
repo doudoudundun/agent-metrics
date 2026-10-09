@@ -1,4 +1,4 @@
-import type { OverviewResponse } from "../api";
+import type { OverviewResponse } from "../legacy-api";
 
 const NUMBER_FORMAT = new Intl.NumberFormat("en-US");
 

@@ -6,7 +6,8 @@ import {
   loadEventLedger,
   rebuildEventLedgerFromLog,
   persistEventLedger,
-  loadEventLedgerWithFallback
+  loadEventLedgerWithFallback,
+  reconcileLedgerSessionsWithEventLog
 } from "./ledger.js";
 
 describe("ledger utilities", () => {
@@ -82,6 +83,36 @@ describe("ledger utilities", () => {
           "opencode:prompt:def",
           "opencode:usage:def"
         ])
+      );
+    });
+
+    it("rebuilds V2 rows from source_record_id while keeping legacy event_id keys", async () => {
+      const eventLogPath = join(root, "events.jsonl");
+      await writeFile(
+        eventLogPath,
+        [
+          JSON.stringify({
+            schema_version: 2,
+            event_id: "v2:opencode:default:message:session.started:abc",
+            source_record_id: "opencode:session:abc:started",
+            type: "session.started"
+          }),
+          JSON.stringify({
+            schema_version: 2,
+            event_id: "v2:cursor:default:cursor:session.started:xyz",
+            source_record_id: "cursor:session:xyz:started",
+            type: "session.started"
+          }),
+          JSON.stringify({
+            event_id: "opencode:prompt:def",
+            type: "prompt.submitted"
+          })
+        ].join("\n")
+      );
+
+      const result = await rebuildEventLedgerFromLog(eventLogPath, "opencode:");
+      expect(result).toEqual(
+        new Set(["opencode:session:abc:started", "opencode:prompt:def"])
       );
     });
 
@@ -185,6 +216,38 @@ describe("ledger utilities", () => {
       });
 
       expect(result).toEqual(new Set());
+    });
+  });
+
+  describe("reconcileLedgerSessionsWithEventLog", () => {
+    it("drops ghost keys for sessions and keeps keys that exist in the log", async () => {
+      const eventLogPath = join(root, "events.jsonl");
+      const sessionId = "019f7d68-67d0-74d2-bbfc-67adbe750b4e";
+      const realKey = `codex:session:${sessionId}:usage:1`;
+      const ghostKey = `codex:session:${sessionId}:usage:missing`;
+      const otherKey = "codex:session:019e5dc9-b10c-7371-8edd-066e8db7e50d:usage:9";
+
+      await writeFile(
+        eventLogPath,
+        JSON.stringify({ source_record_id: realKey, event_id: "v2:x" }) + "\n"
+      );
+
+      const seenEventIds = new Set([realKey, ghostKey, otherKey]);
+      const result = await reconcileLedgerSessionsWithEventLog({
+        eventLogPath,
+        prefix: "codex:",
+        seenEventIds,
+        sessionIds: new Set([sessionId]),
+        sessionIdFromKey: (key) => {
+          const match = key.match(
+            /^codex:session:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}):/i
+          );
+          return match?.[1] ?? null;
+        }
+      });
+
+      expect(result).toEqual({ removed: 1, added: 0 });
+      expect(seenEventIds).toEqual(new Set([realKey, otherKey]));
     });
   });
 });

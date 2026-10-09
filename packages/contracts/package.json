@@ -1,0 +1,16 @@
+{
+  "name": "@agent-metrics/contracts",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node ../../scripts/run-tests.mjs run src"
+  },
+  "dependencies": {
+    "@agent-metrics/event-schema": "workspace:*",
+    "zod": "^3.24.4"
+  }
+}

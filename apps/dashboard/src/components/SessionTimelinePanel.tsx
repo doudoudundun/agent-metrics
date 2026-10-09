@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { SessionDetailResponse, SessionTimelineEntry } from "../api";
+import type { SessionDetailResponse, SessionTimelineEntry } from "@agent-metrics/contracts";
 
 const TIMELINE_PAGE_SIZE = 8;
 const NUMBER_FORMAT = new Intl.NumberFormat("en-US");
@@ -12,35 +12,34 @@ export function SessionTimelinePanel(input: {
   const detail = input.detail;
   const loading = input.loading ?? false;
   const statusMessage = input.statusMessage;
+  const timeline = detail?.timeline.rows ?? [];
   const [pageIndex, setPageIndex] = useState(0);
-  const pageCount = detail ? Math.max(1, Math.ceil(detail.timeline.length / TIMELINE_PAGE_SIZE)) : 1;
+  const pageCount = detail ? Math.max(1, Math.ceil(timeline.length / TIMELINE_PAGE_SIZE)) : 1;
   const safePageIndex = Math.min(pageIndex, pageCount - 1);
-  const visibleTimeline = detail
-    ? detail.timeline.slice(
-      safePageIndex * TIMELINE_PAGE_SIZE,
-      (safePageIndex + 1) * TIMELINE_PAGE_SIZE
-    )
-    : [];
+  const visibleTimeline = timeline.slice(
+    safePageIndex * TIMELINE_PAGE_SIZE,
+    (safePageIndex + 1) * TIMELINE_PAGE_SIZE
+  );
   const pageStart = detail ? safePageIndex * TIMELINE_PAGE_SIZE + 1 : 0;
   const pageEnd = detail
-    ? Math.min((safePageIndex + 1) * TIMELINE_PAGE_SIZE, detail.timeline.length)
+    ? Math.min((safePageIndex + 1) * TIMELINE_PAGE_SIZE, timeline.length)
     : 0;
 
   useEffect(() => {
     setPageIndex(0);
-  }, [detail?.sessionId, detail?.timeline.length]);
+  }, [detail?.sessionId, detail?.sourceInstanceId, timeline.length]);
 
   return (
     <section className="panel timeline-panel">
       <div className="panel-heading">
         <h2>Session Timeline</h2>
-        <span>{detail ? `${detail.timeline.length} events` : "No session selected"}</span>
+        <span>{detail ? `${timeline.length} events` : "No session selected"}</span>
       </div>
       {detail ? (
         <>
           <div className="timeline-context">
             <span>{detail.sourceVendor}</span>
-            <span>{detail.sourceAdapter}</span>
+            <span>{detail.sourceAdapters.join(", ")}</span>
             <span>{detail.workspacePath}</span>
             {detail.context?.executionPath ? <span>{detail.context.executionPath}</span> : null}
             {detail.context?.skillsLoaded
@@ -49,7 +48,7 @@ export function SessionTimelinePanel(input: {
           </div>
           <div className="timeline-list">
             {visibleTimeline.map((entry, index) => (
-              <article className="timeline-row" key={`${entry.type}-${entry.toolName}-${index}`}>
+              <article className="timeline-row" key={`${entry.eventId}-${entry.type}-${index}`}>
                 <div className="timeline-main">
                   <span className="timeline-kind">{buildTimelineKindLabel(entry.type)}</span>
                   <strong>{buildTimelineTitle(entry)}</strong>
@@ -57,16 +56,16 @@ export function SessionTimelinePanel(input: {
                 </div>
                 <div className="timeline-meta">
                   {buildTimelineMeta(entry).map((item) => (
-                    <span key={`${entry.type}-${item}`}>{item}</span>
+                    <span key={`${entry.eventId}-${item}`}>{item}</span>
                   ))}
                 </div>
               </article>
             ))}
           </div>
-          {detail.timeline.length > TIMELINE_PAGE_SIZE ? (
+          {timeline.length > TIMELINE_PAGE_SIZE ? (
             <div className="timeline-pagination">
               <span>
-                {pageStart}-{pageEnd} of {detail.timeline.length}
+                {pageStart}-{pageEnd} of {timeline.length}
               </span>
               <div className="timeline-pagination-actions">
                 <button
@@ -166,8 +165,8 @@ function buildTimelineMeta(entry: SessionTimelineEntry): string[] {
     items.push(entry.status);
   }
 
-  if (entry.durationMs > 0) {
-    items.push(`${NUMBER_FORMAT.format(entry.durationMs)} ms`);
+  if ((entry.durationMs ?? 0) > 0) {
+    items.push(`${NUMBER_FORMAT.format(entry.durationMs ?? 0)} ms`);
   }
 
   if (entry.type.startsWith("prompt.")) {
@@ -226,8 +225,10 @@ function buildTimelineMeta(entry: SessionTimelineEntry): string[] {
       items.push(entry.filesChanged.join(", "));
     }
 
-    if (entry.insertions > 0 || entry.deletions > 0) {
-      items.push(`+${entry.insertions} / -${entry.deletions}`);
+    const insertions = entry.insertions ?? 0;
+    const deletions = entry.deletions ?? 0;
+    if (insertions > 0 || deletions > 0) {
+      items.push(`+${insertions} / -${deletions}`);
     }
 
     return items;

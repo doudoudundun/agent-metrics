@@ -5,13 +5,14 @@ import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as claudeAdapter from "@agent-metrics/adapters-claude";
 import * as codexAdapter from "@agent-metrics/adapters-codex";
 import * as opencodeAdapter from "@agent-metrics/adapters-opencode";
 import { recordClaudeTranscriptReference } from "@agent-metrics/adapters-claude";
 import { getAgentMetricsPaths } from "@agent-metrics/shared-utils";
 import { appendJsonLine } from "@agent-metrics/shared-utils";
+import { isolateSources, type IsolatedSources } from "@agent-metrics/test-utils";
 import {
   buildApp,
   createEventLogSynchronizer,
@@ -21,6 +22,7 @@ import {
 
 let dbPath: string;
 let logPath: string;
+let isolated: IsolatedSources | null = null;
 
 const may25AppInput = {
   now: () => new Date("2026-05-25T09:00:00.000Z"),
@@ -37,27 +39,21 @@ const scopedAppInput = {
 
 beforeEach(async () => {
   vi.restoreAllMocks();
-  delete process.env.AGENT_METRICS_OPENCODE_DB_PATH;
-  delete process.env.AGENT_METRICS_OPENCODE_MODELS_PATH;
-  delete process.env.AGENT_METRICS_CLAUDE_DISCOVERY_ROOTS;
-  delete process.env.AGENT_METRICS_CURSOR_TRACKING_DB_PATH;
-  delete process.env.AGENT_METRICS_CURSOR_WORKSPACE_STORAGE_ROOT;
-  delete process.env.AGENT_METRICS_CURSOR_STORAGE_JSON_PATH;
-  delete process.env.AGENT_METRICS_CODEX_SESSIONS_ROOT;
-  delete process.env.AGENT_METRICS_CODEX_LOGS_DB_PATH;
-  delete process.env.AGENT_METRICS_CODEX_CONFIG_PATH;
-  const root = await mkdtemp(join(tmpdir(), "agent-metrics-core-"));
-  process.env.AGENT_METRICS_OPENCODE_DB_PATH = join(root, "missing-opencode.db");
-  process.env.AGENT_METRICS_OPENCODE_MODELS_PATH = join(root, "missing-models.json");
-  process.env.AGENT_METRICS_CLAUDE_DISCOVERY_ROOTS = join(root, "missing-claude-projects");
-  process.env.AGENT_METRICS_CURSOR_TRACKING_DB_PATH = join(root, "missing-cursor-tracking.db");
-  process.env.AGENT_METRICS_CURSOR_WORKSPACE_STORAGE_ROOT = join(root, "missing-cursor-workspace-storage");
-  process.env.AGENT_METRICS_CURSOR_STORAGE_JSON_PATH = join(root, "missing-cursor-storage.json");
-  process.env.AGENT_METRICS_CODEX_SESSIONS_ROOT = join(root, "missing-codex-sessions");
-  process.env.AGENT_METRICS_CODEX_LOGS_DB_PATH = join(root, "missing-logs_2.sqlite");
-  process.env.AGENT_METRICS_CODEX_CONFIG_PATH = join(root, "missing-config.toml");
+  // Isolate every source-path env var from real developer telemetry. The
+  // shared helper redirects all 15 known source env vars (including the five
+  // this file previously missed: ZCODE_DB_PATH, ZCODE_MODELS_PATH,
+  // KIMICODE_HOME, CURSOR_GLOBAL_STORAGE_DB_PATH, CURSOR_PROJECTS_ROOT) to nonexistent paths
+  // under a temp root, and restores them on cleanup. Tests that need a real
+  // fixture override the specific var on top of this baseline.
+  isolated = await isolateSources();
+  const root = isolated.rootDir;
   dbPath = join(root, "metrics.sqlite");
   logPath = join(root, "events.jsonl");
+});
+
+afterEach(() => {
+  isolated?.cleanup();
+  isolated = null;
 });
 
 describe("ingestEventLog", () => {
@@ -245,6 +241,7 @@ describe("ingestEventLog", () => {
       ingest: async () => {
         ingestCount += 1;
         await waitForRelease;
+        return { atEnd: true };
       }
     });
 
@@ -486,6 +483,9 @@ describe("ingestEventLog", () => {
       ...scopedAppInput
     });
 
+    const initialSync = app.syncCoordinator.startInitialSync();
+    await waitForSyncRuns(app, initialSync.runs.map((run) => run.runId));
+
     const response = await app.inject({ method: "GET", url: "/api/overview?mode=calendar&range=day" });
 
     expect(response.json()).toMatchObject({
@@ -505,17 +505,52 @@ describe("ingestEventLog", () => {
     await app.close();
   });
 
-  it("coalesces concurrent transcript sync requests across API calls", async () => {
+  it("starts initial and periodic synchronization after routes are ready", async () => {
+    const repoRoot = await mkdtemp(join(tmpdir(), "agent-metrics-startup-sync-"));
+    const paths = getAgentMetricsPaths(repoRoot);
+    const app = buildApp({
+      dbPath: join(repoRoot, "metrics.sqlite"),
+      eventLogPath: paths.eventLogPath,
+      repoRoot,
+      ...scopedAppInput
+    });
+
+    await app.ready();
+    await waitForCondition(() => {
+      const states = app.syncCoordinator.getStatus().adapters;
+      return states.every((state) => state.lastStartedAt !== null);
+    });
+
+    const states = app.syncCoordinator.getStatus().adapters;
+    const cursorState = states.find((state) => state.sourceVendor === "cursor");
+    expect(cursorState).toMatchObject({
+      sourceVendor: "cursor",
+      nextScheduledAt: null
+    });
+    expect(cursorState?.lastStartedAt).not.toBeNull();
+    expect(states.find((state) => state.sourceVendor === "claude-code")).toMatchObject({
+      sourceVendor: "claude-code",
+      nextScheduledAt: expect.any(String)
+    });
+    // Cursor / Codex / OpenCode / ZCode / Kimi Code / DSH / MiMo use the light
+    // refresh loop; coordinator only starts them once.
+    for (const vendor of ["cursor", "codex", "opencode", "zcode", "kimicode", "dsh", "mimo"] as const) {
+      expect(states.find((state) => state.sourceVendor === vendor)).toMatchObject({
+        sourceVendor: vendor,
+        lastStartedAt: expect.any(String),
+        nextScheduledAt: null
+      });
+    }
+
+    await app.close();
+  });
+
+  it("does not synchronize adapters from concurrent GET requests", async () => {
     const repoRoot = await mkdtemp(join(tmpdir(), "agent-metrics-transcript-coalesce-"));
     let syncCount = 0;
-    let releaseSync: (() => void) | null = null;
-    const waitForRelease = new Promise<void>((resolve) => {
-      releaseSync = resolve;
-    });
 
     vi.spyOn(claudeAdapter, "syncKnownClaudeTranscripts").mockImplementation(async () => {
       syncCount += 1;
-      await waitForRelease;
       return { sessionContexts: [] };
     });
 
@@ -526,15 +561,20 @@ describe("ingestEventLog", () => {
       ...scopedAppInput
     });
 
+    // Initial discovery is coordinator-owned and no longer starts on HTTP boot
+    // (app.ts onReady only schedules periodic sync). Drive the first sync
+    // explicitly so this test measures GET isolation, not boot-time catch-up.
+    const initialSync = app.syncCoordinator.startInitialSync();
+    await waitForSyncRuns(app, initialSync.runs.map((run) => run.runId));
+    expect(syncCount).toBeGreaterThanOrEqual(1);
+    syncCount = 0;
+
     const firstRequest = app.inject({ method: "GET", url: "/api/overview?mode=calendar&range=day" });
     const secondRequest = app.inject({ method: "GET", url: "/api/tools?mode=calendar&range=day" });
 
-    await waitForCondition(() => syncCount >= 1);
-    releaseSync?.();
-
     const [firstResponse, secondResponse] = await Promise.all([firstRequest, secondRequest]);
 
-    expect(syncCount).toBe(1);
+    expect(syncCount).toBe(0);
     expect(firstResponse.statusCode).toBe(200);
     expect(secondResponse.statusCode).toBe(200);
 
@@ -556,6 +596,9 @@ describe("ingestEventLog", () => {
       repoRoot,
       ...scopedAppInput
     });
+
+    const initialSync = app.syncCoordinator.startInitialSync();
+    await waitForSyncRuns(app, initialSync.runs.map((run) => run.runId));
 
     const overview = await app.inject({ method: "GET", url: "/api/overview?mode=calendar&range=day" });
     const tools = await app.inject({ method: "GET", url: "/api/tools?mode=calendar&range=day" });
@@ -596,6 +639,9 @@ describe("ingestEventLog", () => {
       ...scopedAppInput
     });
 
+    const initialSync = app.syncCoordinator.startInitialSync();
+    await waitForSyncRuns(app, initialSync.runs.map((run) => run.runId));
+
     const response = await app.inject({ method: "GET", url: "/api/tools?mode=calendar&range=day" });
 
     expect(response.statusCode).toBe(200);
@@ -625,6 +671,9 @@ describe("ingestEventLog", () => {
       ...scopedAppInput
     });
 
+    const initialSync = app.syncCoordinator.startInitialSync();
+    await waitForSyncRuns(app, initialSync.runs.map((run) => run.runId));
+
     const overview = await app.inject({ method: "GET", url: "/api/overview?mode=calendar&range=day" });
     const sessions = await app.inject({ method: "GET", url: "/api/sessions?mode=calendar&range=day" });
 
@@ -636,8 +685,8 @@ describe("ingestEventLog", () => {
       failedExecutions: 0,
       turnCount: 1,
       responseCount: 1,
-      totalTokens: 29725,
-      inputTokens: 27470,
+      totalTokens: 27677,
+      inputTokens: 25422,
       outputTokens: 207,
       cacheReadTokens: 2048,
       cacheCreationTokens: 0,
@@ -646,7 +695,7 @@ describe("ingestEventLog", () => {
           sourceVendor: "opencode",
           sessionCount: 1,
           turnCount: 1,
-          totalTokens: 29725,
+          totalTokens: 27677,
           toolCalls: 1
         }
       ],
@@ -654,13 +703,13 @@ describe("ingestEventLog", () => {
         {
           providerId: "opencode",
           providerHost: "opencode.ai",
-          totalTokens: 29725
+          totalTokens: 27677
         }
       ],
       tokensByModel: [
         {
           model: "hy3-preview-free",
-          totalTokens: 29725
+          totalTokens: 27677
         }
       ]
     });
@@ -670,14 +719,85 @@ describe("ingestEventLog", () => {
         {
           sessionId: "ses_open_1",
           sourceVendor: "opencode",
-          sourceAdapter: "opencode-db",
+          sourceAdapters: ["opencode-db"],
           providerId: "opencode",
           providerHost: "opencode.ai",
-          totalTokens: 29725,
+          totalTokens: 27677,
           lastModel: "hy3-preview-free"
         }
       ]
     });
+
+    await app.close();
+  });
+
+  // Phase 2 cross-dimension consistency regression (spec sections 4 and 9.6).
+  //
+  // OpenCode token totals MUST be consistent across every aggregate dimension.
+  // The canonical accounting (spec section 9.6, packages/metrics-engine) for
+  // this fixture's raw row (input=27470 gross, cache_read=2048) is:
+  //   displayed input = 27470 - 2048 = 25422
+  //   total           = 25422 + 207 + 0 + 2048 = 27677
+  //
+  // Phase 0 added this as it.skip because tokensByModel and sessions-list SQL
+  // branched on `source_vendor = 'codex'` only and double-counted cache-read
+  // for opencode (yielding 29725). Phase 2 centralized token accounting on
+  // usage_source via the metrics-engine registry and removed every vendor-keyed
+  // SQL branch, so all six dimensions now agree on 27677.
+  it("OpenCode totals agree across overview, model, source, provider, session, and trend dimensions", async () => {
+    const repoRoot = await mkdtemp(join(tmpdir(), "agent-metrics-opencode-consistency-"));
+    const paths = getAgentMetricsPaths(repoRoot);
+    const fixture = await createOpenCodeFixture(repoRoot);
+    process.env.AGENT_METRICS_OPENCODE_DB_PATH = fixture.dbPath;
+    process.env.AGENT_METRICS_OPENCODE_MODELS_PATH = fixture.modelsPath;
+
+    const app = buildApp({
+      dbPath,
+      eventLogPath: paths.eventLogPath,
+      repoRoot,
+      ...scopedAppInput
+    });
+
+    const initialSync = app.syncCoordinator.startInitialSync();
+    await waitForSyncRuns(app, initialSync.runs.map((run) => run.runId));
+
+    const overview = await app.inject({ method: "GET", url: "/api/overview?mode=calendar&range=day" });
+    const trend = await app.inject({ method: "GET", url: "/api/token-trend?mode=calendar&range=day" });
+    const sessions = await app.inject({ method: "GET", url: "/api/sessions?mode=calendar&range=day" });
+
+    expect(overview.statusCode).toBe(200);
+    expect(trend.statusCode).toBe(200);
+    expect(sessions.statusCode).toBe(200);
+
+    const overviewJson = overview.json();
+    const trendJson = trend.json();
+    const sessionsJson = sessions.json();
+
+    const expectedInputTokens = 25422;
+    const expectedTotalTokens = 27677;
+
+    // Overview (via metrics-engine) -- correct today.
+    expect(overviewJson.inputTokens).toBe(expectedInputTokens);
+    expect(overviewJson.totalTokens).toBe(expectedTotalTokens);
+
+    // All dimensions now agree on the canonical total via the centralized
+    // metrics-engine accounting (usage_source-keyed, not vendor-keyed).
+    expect(overviewJson.tokensByModel[0].totalTokens).toBe(expectedTotalTokens);
+    expect(overviewJson.sourceBreakdown[0].totalTokens).toBe(expectedTotalTokens);
+    expect(overviewJson.providerBreakdown[0].totalTokens).toBe(expectedTotalTokens);
+    expect(sessionsJson.rows[0].totalTokens).toBe(expectedTotalTokens);
+
+    // The opencode fixture's model (hy3-preview-free) is a free tier.
+    expect(overviewJson.tokensByModel[0].sourceVendor).toBe("opencode");
+    expect(overviewJson.tokensByModel[0].costUsd).toBe(0);
+    expect(overviewJson.sourceBreakdown[0].costUsd).toBe(0);
+
+    // Token trend sums to the same total across its buckets.
+    const trendTotal = trendJson.rows.reduce(
+      (sum: number, row: { totalTokens: number }) => sum + row.totalTokens,
+      0
+    );
+    expect(trendTotal).toBe(expectedTotalTokens);
 
     await app.close();
   });
@@ -709,6 +829,9 @@ describe("ingestEventLog", () => {
       ...scopedAppInput
     });
 
+    const initialSync = app.syncCoordinator.startInitialSync();
+    await waitForSyncRuns(app, initialSync.runs.map((run) => run.runId));
+
     const response = await app.inject({ method: "GET", url: "/api/tools?mode=calendar&range=day" });
 
     expect(response.statusCode).toBe(200);
@@ -718,6 +841,53 @@ describe("ingestEventLog", () => {
           toolName: "Read",
           count: 1
         }
+      ]
+    });
+
+    await app.close();
+  });
+
+  it("merges OpenCode-schema tool names that differ only by case", async () => {
+    const repoRoot = await mkdtemp(join(tmpdir(), "agent-metrics-mimo-tool-case-"));
+
+    const toolNames = ["Read", "read", "read", "Bash", "bash", "mcp__jira-mcp__get_projects"];
+    for (const [index, toolName] of toolNames.entries()) {
+      await appendJsonLine(logPath, {
+        event_id: `evt_mimo_tool_${index}`,
+        session_id: "ses_mimo_tool_case",
+        timestamp: "2026-05-27T10:00:00.000Z",
+        source_vendor: "mimo",
+        source_adapter: "mimo-db",
+        workspace_path: "D:/projects/dev/agent-metrics",
+        type: "tool.succeeded",
+        tool_call_id: `call_mimo_tool_${index}`,
+        tool_name: toolName,
+        status: "succeeded",
+        duration_ms: 10
+      });
+    }
+
+    const app = buildApp({
+      dbPath,
+      eventLogPath: logPath,
+      repoRoot,
+      ...scopedAppInput
+    });
+
+    const initialSync = app.syncCoordinator.startInitialSync();
+    await waitForSyncRuns(app, initialSync.runs.map((run) => run.runId));
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/tools?mode=calendar&range=day&sourceVendor=mimo"
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      rows: [
+        { toolName: "Read", count: 3 },
+        { toolName: "Bash", count: 2 },
+        { toolName: "mcp__jira-mcp__get_projects", count: 1 }
       ]
     });
 
@@ -738,6 +908,9 @@ describe("ingestEventLog", () => {
       repoRoot,
       ...scopedAppInput
     });
+
+    const initialSync = app.syncCoordinator.startInitialSync();
+    await waitForSyncRuns(app, initialSync.runs.map((run) => run.runId));
 
     const overview = await app.inject({
       method: "GET",
@@ -794,13 +967,16 @@ describe("ingestEventLog", () => {
         }
       ]
     });
+    expect(overview.json().tokensByModel[0].sourceVendor).toBe("codex");
+    expect(overview.json().tokensByModel[0].costUsd).toBeCloseTo(0.035629, 6);
+    expect(overview.json().totalCostUsd).toBeCloseTo(0.035629, 6);
     expect(sessions.statusCode).toBe(200);
     expect(sessions.json()).toMatchObject({
       rows: [
         {
           sessionId: "019e5dc9-b10c-7371-8edd-066e8db7e50d",
           sourceVendor: "codex",
-          sourceAdapter: "codex-rollout",
+          sourceAdapters: ["codex-rollout"],
           providerId: "ai",
           providerHost: "api.psydo.top",
           turnCount: 1,
@@ -902,6 +1078,9 @@ describe("ingestEventLog", () => {
       repoRoot,
       ...scopedAppInput
     });
+
+    const initialSync = app.syncCoordinator.startInitialSync();
+    await waitForSyncRuns(app, initialSync.runs.map((run) => run.runId));
 
     const response = await app.inject({ method: "GET", url: "/api/tools?mode=calendar&range=day" });
 
@@ -1109,10 +1288,12 @@ describe("core api", () => {
           sessionCount: 2,
           turnCount: 0,
           totalTokens: 0,
-          toolCalls: 2
+          toolCalls: 2,
+          costUsd: 0
         }
       ],
       providerBreakdown: [],
+      totalCostUsd: 0,
       mode: "calendar",
       range: "week",
       timezone: "Asia/Shanghai",
@@ -1618,17 +1799,20 @@ describe("core api", () => {
     expect(response.json()).toEqual({
       rows: [
         {
+          sourceInstanceId: "claude:default",
           sessionId: "ses_today",
           workspacePath: "D:/projects/dev/agent-metrics",
           sourceVendor: "claude-code",
-          sourceAdapter: "claude-hook",
-          providerId: null,
+          sourceAdapters: ["claude-hook"],
+          providerId: "unknown",
           providerHost: null,
           turnCount: 0,
           totalTokens: 0,
-          lastModel: null
+          lastModel: null,
+          lastActivityAt: "2026-05-27T01:02:00.000Z"
         }
       ],
+      nextCursor: null,
       mode: "calendar",
       range: "day",
       timezone: "Asia/Shanghai",
@@ -1640,39 +1824,46 @@ describe("core api", () => {
     expect(month.json()).toEqual({
       rows: [
         {
+          sourceInstanceId: "claude:default",
           sessionId: "ses_today",
           workspacePath: "D:/projects/dev/agent-metrics",
           sourceVendor: "claude-code",
-          sourceAdapter: "claude-hook",
-          providerId: null,
+          sourceAdapters: ["claude-hook"],
+          providerId: "unknown",
           providerHost: null,
           turnCount: 0,
           totalTokens: 0,
-          lastModel: null
+          lastModel: null,
+          lastActivityAt: "2026-05-27T01:02:00.000Z"
         },
         {
+          sourceInstanceId: "claude:default",
           sessionId: "ses_week",
           workspacePath: "D:/projects/dev/agent-metrics",
           sourceVendor: "claude-code",
-          sourceAdapter: "claude-hook",
-          providerId: null,
+          sourceAdapters: ["claude-hook"],
+          providerId: "unknown",
           providerHost: null,
           turnCount: 0,
           totalTokens: 0,
-          lastModel: null
+          lastModel: null,
+          lastActivityAt: "2026-05-25T08:02:00.000Z"
         },
         {
+          sourceInstanceId: "claude:default",
           sessionId: "ses_old",
           workspacePath: "D:/projects/dev/agent-metrics",
           sourceVendor: "claude-code",
-          sourceAdapter: "claude-hook",
-          providerId: null,
+          sourceAdapters: ["claude-hook"],
+          providerId: "unknown",
           providerHost: null,
           turnCount: 0,
           totalTokens: 0,
-          lastModel: null
+          lastModel: null,
+          lastActivityAt: "2026-05-24T15:02:00.000Z"
         }
       ],
+      nextCursor: null,
       mode: "calendar",
       range: "month",
       timezone: "Asia/Shanghai",
@@ -2118,30 +2309,37 @@ describe("core api", () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({
+      totalCostUsd: 0,
       tokensByModel: [
         {
           model: "sonnet-test",
+          sourceVendor: "claude-code",
           totalTokens: 30,
           inputTokens: 20,
           outputTokens: 6,
           cacheReadTokens: 1,
-          cacheCreationTokens: 3
+          cacheCreationTokens: 3,
+          costUsd: null
         },
         {
           model: "unknown",
+          sourceVendor: "claude-code",
           totalTokens: 7,
           inputTokens: 5,
           outputTokens: 2,
           cacheReadTokens: 0,
-          cacheCreationTokens: 0
+          cacheCreationTokens: 0,
+          costUsd: null
         },
         {
           model: "haiku-test",
+          sourceVendor: "claude-code",
           totalTokens: 5,
           inputTokens: 4,
           outputTokens: 1,
           cacheReadTokens: 0,
-          cacheCreationTokens: 0
+          cacheCreationTokens: 0,
+          costUsd: null
         }
       ]
     });
@@ -2174,6 +2372,21 @@ async function waitForCondition(
   }
 
   throw new Error("Condition not met before timeout.");
+}
+
+async function waitForSyncRuns(
+  app: ReturnType<typeof buildApp>,
+  runIds: string[],
+  timeoutMs = 5000
+): Promise<void> {
+  await waitForCondition(
+    () =>
+      runIds.every((runId) => {
+        const status = app.syncCoordinator.getRun(runId)?.status;
+        return status === "succeeded" || status === "failed" || status === "aborted";
+      }),
+    timeoutMs
+  );
 }
 
 async function createOpenCodeFixtureDb(root: string): Promise<string> {

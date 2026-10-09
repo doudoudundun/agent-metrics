@@ -213,10 +213,7 @@ async function syncTranscriptReference(input: {
         continue;
       }
 
-      await appendJsonLine(
-        input.eventLogPath,
-        normalizeClaudeTranscriptObservation(observation)
-      );
+      await appendJsonLine(input.eventLogPath, normalizeClaudeTranscriptObservation(observation));
       input.seenKeys.add(ledgerKey);
       ledgerChanged = true;
     }
@@ -556,7 +553,7 @@ async function createTranscriptReferenceFromFile(
   };
 }
 
-function resolveDefaultClaudeDiscoveryRoots(manifestPath: string): string[] {
+export function resolveDefaultClaudeDiscoveryRoots(manifestPath: string): string[] {
   const configuredRoots = process.env.AGENT_METRICS_CLAUDE_DISCOVERY_ROOTS;
   if (configuredRoots !== undefined) {
     return configuredRoots

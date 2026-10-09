@@ -5,6 +5,7 @@
   "type": "module",
   "main": "dist/server.js",
   "types": "dist/server.d.ts",
+  "files": ["dist/**/*", "package.json"],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsx src/server.ts",
@@ -14,12 +15,19 @@
     "@agent-metrics/adapters-claude": "workspace:*",
     "@agent-metrics/adapters-codex": "workspace:*",
     "@agent-metrics/adapters-cursor": "workspace:*",
+    "@agent-metrics/adapters-dsh": "workspace:*",
+    "@agent-metrics/adapters-kimicode": "workspace:*",
+    "@agent-metrics/adapters-mimo": "workspace:*",
     "@agent-metrics/adapters-opencode": "workspace:*",
+    "@agent-metrics/contracts": "workspace:*",
     "@agent-metrics/event-schema": "workspace:*",
     "@agent-metrics/export-kit": "workspace:*",
     "@agent-metrics/metrics-engine": "workspace:*",
     "@agent-metrics/shared-utils": "workspace:*",
     "better-sqlite3": "^11.10.0",
     "fastify": "^5.3.3"
+  },
+  "devDependencies": {
+    "@agent-metrics/test-utils": "workspace:*"
   }
 }

@@ -9,9 +9,9 @@ describe("stage runtime config", () => {
 
   it("builds every desktop packaging dependency before staging runtime assets", () => {
     expect(BUILD_TARGETS).toEqual([
-      "@agent-metrics/dashboard",
-      "@agent-metrics/core",
-      "@agent-metrics/cli",
+      "@agent-metrics/dashboard...",
+      "@agent-metrics/core...",
+      "@agent-metrics/cli...",
       "@agent-metrics/desktop"
     ]);
   });

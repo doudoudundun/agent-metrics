@@ -40,9 +40,14 @@ export async function loadEventLedger(ledgerPath: string): Promise<Set<string>> 
 }
 
 /**
- * Rebuild the event ledger by scanning an event log file and collecting all
- * event IDs that match the given prefix. This is used as a fallback when the
+ * Rebuild the event ledger by scanning an event log file and collecting stable
+ * ledger keys that match the given prefix. This is used as a fallback when the
  * ledger file is missing or corrupted.
+ *
+ * After schema version 2 migration, domain event logs store `event_id` as
+ * `v2:...` while the sync ledger still keys on the pre-conversion stable id
+ * written to `source_record_id`. Prefer that field when present so a lost
+ * ledger can be rebuilt without re-emitting every V2 row.
  */
 export async function rebuildEventLedgerFromLog(
   eventLogPath: string,
@@ -65,14 +70,23 @@ export async function rebuildEventLedgerFromLog(
       continue;
     }
 
-    if (
-      parsed &&
-      typeof parsed === "object" &&
-      "event_id" in parsed &&
-      typeof parsed.event_id === "string" &&
-      parsed.event_id.startsWith(prefix)
-    ) {
-      eventIds.add(parsed.event_id);
+    if (!parsed || typeof parsed !== "object") {
+      continue;
+    }
+
+    const record = parsed as {
+      event_id?: unknown;
+      source_record_id?: unknown;
+    };
+    const ledgerKey =
+      typeof record.source_record_id === "string" && record.source_record_id.length > 0
+        ? record.source_record_id
+        : typeof record.event_id === "string"
+          ? record.event_id
+          : null;
+
+    if (ledgerKey !== null && ledgerKey.startsWith(prefix)) {
+      eventIds.add(ledgerKey);
     }
   }
 
@@ -122,6 +136,101 @@ export async function loadEventLedgerWithFallback(input: {
   }
 
   return rebuiltIds;
+}
+
+/**
+ * For a set of session IDs, make in-memory ledger keys match the event log:
+ * drop keys that are not actually present (ghosts), and add keys found in the log.
+ *
+ * Used by adapters to recover from "ledger says seen, jsonl never got the row"
+ * without rebuilding the entire ledger on every sync.
+ */
+export async function reconcileLedgerSessionsWithEventLog(input: {
+  eventLogPath: string;
+  prefix: string;
+  seenEventIds: Set<string>;
+  sessionIds: Set<string>;
+  sessionIdFromKey: (ledgerKey: string) => string | null;
+}): Promise<{ removed: number; added: number }> {
+  if (input.sessionIds.size === 0) {
+    return { removed: 0, added: 0 };
+  }
+
+  const logKeys = await collectLedgerKeysFromEventLogForSessions(input);
+
+  let removed = 0;
+  for (const key of [...input.seenEventIds]) {
+    const sessionId = input.sessionIdFromKey(key);
+    if (
+      sessionId !== null &&
+      input.sessionIds.has(sessionId) &&
+      !logKeys.has(key)
+    ) {
+      input.seenEventIds.delete(key);
+      removed += 1;
+    }
+  }
+
+  let added = 0;
+  for (const key of logKeys) {
+    if (!input.seenEventIds.has(key)) {
+      input.seenEventIds.add(key);
+      added += 1;
+    }
+  }
+
+  return { removed, added };
+}
+
+async function collectLedgerKeysFromEventLogForSessions(input: {
+  eventLogPath: string;
+  prefix: string;
+  sessionIds: Set<string>;
+  sessionIdFromKey: (ledgerKey: string) => string | null;
+}): Promise<Set<string>> {
+  const eventIds = new Set<string>();
+
+  let contents: string;
+  try {
+    contents = await readFile(input.eventLogPath, "utf8");
+  } catch {
+    return eventIds;
+  }
+
+  for (const line of contents.split("\n").filter((entry) => entry.length > 0)) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line) as unknown;
+    } catch {
+      continue;
+    }
+
+    if (!parsed || typeof parsed !== "object") {
+      continue;
+    }
+
+    const record = parsed as {
+      event_id?: unknown;
+      source_record_id?: unknown;
+    };
+    const ledgerKey =
+      typeof record.source_record_id === "string" && record.source_record_id.length > 0
+        ? record.source_record_id
+        : typeof record.event_id === "string"
+          ? record.event_id
+          : null;
+
+    if (ledgerKey === null || !ledgerKey.startsWith(input.prefix)) {
+      continue;
+    }
+
+    const sessionId = input.sessionIdFromKey(ledgerKey);
+    if (sessionId !== null && input.sessionIds.has(sessionId)) {
+      eventIds.add(ledgerKey);
+    }
+  }
+
+  return eventIds;
 }
 
 async function writeJsonFileAtomic(filePath: string, value: unknown): Promise<void> {

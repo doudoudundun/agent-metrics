@@ -1,4 +1,5 @@
-import type { AnyEvent, SourceAdapter, SourceVendor } from "@agent-metrics/event-schema";
+import { normalizeNativeId, toNormalizedEventV2 } from "@agent-metrics/event-schema";
+import type { AnyEvent, NormalizedEventV2, SourceAdapter, SourceVendor } from "@agent-metrics/event-schema";
 
 const OPENCODE_SOURCE_VENDOR: SourceVendor = "opencode";
 const OPENCODE_SOURCE_ADAPTER: SourceAdapter = "opencode-db";
@@ -44,6 +45,7 @@ export type OpenCodeProviderRegistry = Record<string, OpenCodeProviderMetadata>;
 export type OpenCodeEventContext = {
   eventNamespace?: string | null;
   sourceAdapter?: SourceAdapter;
+  sourceVendor?: SourceVendor;
 };
 
 type OpenCodeTokenPayload = {
@@ -56,14 +58,14 @@ type OpenCodeTokenPayload = {
 export function normalizeOpenCodeSessionRow(
   row: OpenCodeSessionRow,
   eventContext?: OpenCodeEventContext
-): AnyEvent[] {
+): NormalizedEventV2[] {
   const normalizedEventContext = resolveEventContext(eventContext);
   const events: AnyEvent[] = [
     {
       event_id: buildEventId(normalizedEventContext, `session:${row.id}:started`),
       session_id: row.id,
       timestamp: toIsoTimestamp(row.time_created),
-      source_vendor: OPENCODE_SOURCE_VENDOR,
+      source_vendor: normalizedEventContext.sourceVendor,
       source_adapter: normalizedEventContext.sourceAdapter,
       workspace_path: normalizeWorkspacePath(row.directory),
       type: "session.started"
@@ -75,7 +77,7 @@ export function normalizeOpenCodeSessionRow(
       event_id: buildEventId(normalizedEventContext, `session:${row.id}:ended`),
       session_id: row.id,
       timestamp: toIsoTimestamp(row.time_archived),
-      source_vendor: OPENCODE_SOURCE_VENDOR,
+      source_vendor: normalizedEventContext.sourceVendor,
       source_adapter: normalizedEventContext.sourceAdapter,
       workspace_path: normalizeWorkspacePath(row.directory),
       type: "session.ended",
@@ -83,7 +85,7 @@ export function normalizeOpenCodeSessionRow(
     });
   }
 
-  return events;
+  return toV2Events(events);
 }
 
 export function normalizeOpenCodeMessageRow(input: {
@@ -93,7 +95,7 @@ export function normalizeOpenCodeMessageRow(input: {
   partRows?: OpenCodePartRow[];
   providerRegistry?: OpenCodeProviderRegistry;
   eventContext?: OpenCodeEventContext;
-}): AnyEvent[] {
+}): NormalizedEventV2[] {
   const parsed = parseJsonRecord(input.row.data);
   if (parsed === null) {
     return [];
@@ -111,19 +113,19 @@ export function normalizeOpenCodeMessageRow(input: {
   const eventContext = resolveEventContext(input.eventContext);
 
   if (role === "user") {
-    return [
+    return toV2Events([
       {
         event_id: buildEventId(eventContext, `message:${input.row.id}:prompt`),
         session_id: input.row.session_id,
         timestamp: toIsoTimestamp(createdAt),
-        source_vendor: OPENCODE_SOURCE_VENDOR,
+        source_vendor: eventContext.sourceVendor,
         source_adapter: eventContext.sourceAdapter,
         workspace_path: workspacePath,
         type: "prompt.submitted",
         prompt_id: input.row.id,
         prompt_chars: sumTextPartChars(partRows)
       }
-    ];
+    ]);
   }
 
   const providerId =
@@ -148,7 +150,7 @@ export function normalizeOpenCodeMessageRow(input: {
       event_id: buildEventId(eventContext, `message:${input.row.id}:assistant`),
       session_id: input.row.session_id,
       timestamp: toIsoTimestamp(completedAt),
-      source_vendor: OPENCODE_SOURCE_VENDOR,
+      source_vendor: eventContext.sourceVendor,
       source_adapter: eventContext.sourceAdapter,
       workspace_path: workspacePath,
       type: "assistant.responded",
@@ -168,7 +170,7 @@ export function normalizeOpenCodeMessageRow(input: {
       event_id: buildEventId(eventContext, `message:${input.row.id}:usage`),
       session_id: input.row.session_id,
       timestamp: toIsoTimestamp(completedAt),
-      source_vendor: OPENCODE_SOURCE_VENDOR,
+      source_vendor: eventContext.sourceVendor,
       source_adapter: eventContext.sourceAdapter,
       workspace_path: workspacePath,
       type: "token.usage.recorded",
@@ -186,7 +188,7 @@ export function normalizeOpenCodeMessageRow(input: {
     });
   }
 
-  return events;
+  return toV2Events(events);
 }
 
 export function normalizeOpenCodePartRow(input: {
@@ -196,7 +198,7 @@ export function normalizeOpenCodePartRow(input: {
   messageRow?: OpenCodeMessageRow | null;
   providerRegistry?: OpenCodeProviderRegistry;
   eventContext?: OpenCodeEventContext;
-}): AnyEvent[] {
+}): NormalizedEventV2[] {
   const parsed = parseJsonRecord(input.row.data);
   if (parsed === null) {
     return [];
@@ -204,15 +206,17 @@ export function normalizeOpenCodePartRow(input: {
 
   const partType = normalizeOptionalString(parsed.type);
   if (partType === "step-finish") {
-    return normalizeOpenCodeStepFinishPart({
-      row: input.row,
-      part: parsed,
-      sessionDirectory: input.sessionDirectory,
-      sessionModel: input.sessionModel,
-      messageRow: input.messageRow,
-      providerRegistry: input.providerRegistry,
-      eventContext: input.eventContext
-    });
+    return toV2Events(
+      normalizeOpenCodeStepFinishPart({
+        row: input.row,
+        part: parsed,
+        sessionDirectory: input.sessionDirectory,
+        sessionModel: input.sessionModel,
+        messageRow: input.messageRow,
+        providerRegistry: input.providerRegistry,
+        eventContext: input.eventContext
+      })
+    );
   }
 
   if (partType !== "tool") {
@@ -234,10 +238,11 @@ export function normalizeOpenCodePartRow(input: {
       event_id: buildEventId(eventContext, `part:${input.row.id}:tool:started`),
       session_id: input.row.session_id,
       timestamp: toIsoTimestamp(startAt),
-      source_vendor: OPENCODE_SOURCE_VENDOR,
+      source_vendor: eventContext.sourceVendor,
       source_adapter: eventContext.sourceAdapter,
       workspace_path: workspacePath,
       type: "tool.called",
+      tool_call_id: normalizeNativeId(input.row.id) ?? `native:${input.row.id}`,
       tool_name: toolName,
       status: "started",
       argument_summary: serializeCompactJson(state?.input)
@@ -253,10 +258,11 @@ export function normalizeOpenCodePartRow(input: {
             event_id: buildEventId(eventContext, `part:${input.row.id}:tool:succeeded`),
             session_id: input.row.session_id,
             timestamp: toIsoTimestamp(endAt),
-            source_vendor: OPENCODE_SOURCE_VENDOR,
+            source_vendor: eventContext.sourceVendor,
             source_adapter: eventContext.sourceAdapter,
             workspace_path: workspacePath,
             type: "tool.succeeded",
+            tool_call_id: normalizeNativeId(input.row.id) ?? `native:${input.row.id}`,
             tool_name: toolName,
             status: "succeeded",
             duration_ms: durationMs
@@ -265,10 +271,11 @@ export function normalizeOpenCodePartRow(input: {
             event_id: buildEventId(eventContext, `part:${input.row.id}:tool:failed`),
             session_id: input.row.session_id,
             timestamp: toIsoTimestamp(endAt),
-            source_vendor: OPENCODE_SOURCE_VENDOR,
+            source_vendor: eventContext.sourceVendor,
             source_adapter: eventContext.sourceAdapter,
             workspace_path: workspacePath,
             type: "tool.failed",
+            tool_call_id: normalizeNativeId(input.row.id) ?? `native:${input.row.id}`,
             tool_name: toolName,
             status: "failed",
             duration_ms: durationMs
@@ -276,14 +283,14 @@ export function normalizeOpenCodePartRow(input: {
     );
   }
 
-  return events;
+  return toV2Events(events);
 }
 
 export function normalizeOpenCodeToolPartRow(input: {
   row: OpenCodePartRow;
   sessionDirectory?: string | null;
   eventContext?: OpenCodeEventContext;
-}): AnyEvent[] {
+}): NormalizedEventV2[] {
   return normalizeOpenCodePartRow(input);
 }
 
@@ -304,11 +311,23 @@ function extractTokenPayload(message: Record<string, unknown>): OpenCodeTokenPay
   }
 
   return {
-    inputTokens,
+    inputTokens: toOpenCodeGrossInputTokens(inputTokens, cacheReadTokens),
     outputTokens,
     cacheCreationTokens,
     cacheReadTokens
   };
+}
+
+/**
+ * Registry semantics for `opencode-message` / `opencode-step-finish` are gross
+ * (Codex-like: `input_tokens` includes cache-read). Older OpenCode fixtures
+ * already store that shape. Current OpenCode/Anthropic payloads use net input
+ * (`tokens.input` is uncached) so `tokens.cache.read` can exceed it and fail
+ * Zod. Fold cache-read into input only when the payload cannot already be
+ * gross; displayed input stays `gross - cache_read` = original net input.
+ */
+function toOpenCodeGrossInputTokens(inputTokens: number, cacheReadTokens: number): number {
+  return cacheReadTokens > inputTokens ? inputTokens + cacheReadTokens : inputTokens;
 }
 
 function normalizeOpenCodeStepFinishPart(input: {
@@ -353,7 +372,7 @@ function normalizeOpenCodeStepFinishPart(input: {
       event_id: buildEventId(eventContext, `message:${input.row.message_id}:usage`),
       session_id: input.row.session_id,
       timestamp: toIsoTimestamp(input.row.time_updated),
-      source_vendor: OPENCODE_SOURCE_VENDOR,
+      source_vendor: eventContext.sourceVendor,
       source_adapter: eventContext.sourceAdapter,
       workspace_path: workspacePath,
       type: "token.usage.recorded",
@@ -456,10 +475,20 @@ function toIsoTimestamp(value: number): string {
   return new Date(value).toISOString();
 }
 
+/**
+ * Converts legacy-shaped events into NormalizedEventV2 at the builder
+ * boundary, preserving the pre-conversion event_id as source_record_id so
+ * sync ledgers keep a stable dedup key across V2 event_id recomputation.
+ */
+function toV2Events(events: AnyEvent[]): NormalizedEventV2[] {
+  return events.map((event) => toNormalizedEventV2(event, { sourceRecordId: event.event_id }));
+}
+
 function resolveEventContext(eventContext?: OpenCodeEventContext): Required<OpenCodeEventContext> {
   return {
     eventNamespace: eventContext?.eventNamespace ?? null,
-    sourceAdapter: eventContext?.sourceAdapter ?? OPENCODE_SOURCE_ADAPTER
+    sourceAdapter: eventContext?.sourceAdapter ?? OPENCODE_SOURCE_ADAPTER,
+    sourceVendor: eventContext?.sourceVendor ?? OPENCODE_SOURCE_VENDOR
   };
 }
 

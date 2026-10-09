@@ -1,12 +1,18 @@
 import { readFile, stat } from "node:fs/promises";
 import { resolve } from "node:path";
+import {
+  normalizeNativeId,
+  toNormalizedEventV2,
+  type EventNormalizationOptions
+} from "@agent-metrics/event-schema";
 import { appendJsonLine } from "@agent-metrics/shared-utils";
 import {
   normalizeClaudeHookEvent,
   normalizeClaudeObservation,
   recordClaudeTranscriptReference,
   syncKnownClaudeTranscripts,
-  type ClaudeHookPayload
+  type ClaudeHookPayload,
+  type ClaudeRawEnvelope
 } from "@agent-metrics/adapters-claude";
 import { getHookPaths } from "./paths.js";
 import { loadParserState, saveParserState, tryWithParserStateLock } from "./parser-state.js";
@@ -37,10 +43,12 @@ export async function parseRawHooksOnce(input: { repoRoot: string }): Promise<vo
       const payload = withFallbackTimestamp(envelope.payload, envelope.captured_at);
       const workspacePath = normalizeWorkspacePath(payload.cwd, input.repoRoot);
       const normalizedPayload = withWorkspacePath(payload, workspacePath);
-      const normalizedEvent = normalizeClaudeHookEvent(normalizedPayload);
+      const hookOptions = buildHookNormalizationOptions(normalizedPayload, envelope);
+      const normalizedEvent = normalizeClaudeHookEvent(normalizedPayload, hookOptions);
 
       if (normalizedEvent !== null) {
-        await appendJsonLine(paths.eventLogPath, normalizedEvent);
+        const v2Event = toNormalizedEventV2(normalizedEvent);
+        await appendJsonLine(paths.eventLogPath, v2Event);
       }
 
       if (normalizedPayload.hook_event_name === "PostToolUse") {
@@ -59,24 +67,31 @@ export async function parseRawHooksOnce(input: { repoRoot: string }): Promise<vo
         });
 
         if (changedFiles.length > 0) {
-          await appendJsonLine(
-            paths.eventLogPath,
-            normalizeClaudeObservation({
-              sessionId:
-                typeof normalizedPayload.session_id === "string" && normalizedPayload.session_id.length > 0
-                  ? normalizedPayload.session_id
-                  : "unknown-session",
-              workspacePath,
-              observation: {
-                kind: "edit_applied",
-                toolName:
-                  typeof normalizedPayload.tool_name === "string" && normalizedPayload.tool_name.length > 0
-                    ? normalizedPayload.tool_name
-                    : "unknown",
-                files: changedFiles
+          const v2EditEvent = toNormalizedEventV2(
+            normalizeClaudeObservation(
+              {
+                sessionId:
+                  typeof normalizedPayload.session_id === "string" && normalizedPayload.session_id.length > 0
+                    ? normalizedPayload.session_id
+                    : "unknown-session",
+                workspacePath,
+                observation: {
+                  kind: "edit_applied",
+                  toolName:
+                    typeof normalizedPayload.tool_name === "string" && normalizedPayload.tool_name.length > 0
+                      ? normalizedPayload.tool_name
+                      : "unknown",
+                  files: changedFiles
+                }
+              },
+              {
+                sourceRecordNamespace: "hook",
+                sourceRecordId: normalizedPayload.tool_use_id.trim(),
+                toolCallId: normalizeNativeId(normalizedPayload.tool_use_id) ?? undefined
               }
-            })
+            )
           );
+          await appendJsonLine(paths.eventLogPath, v2EditEvent);
         }
       }
 
@@ -163,6 +178,33 @@ function normalizeTranscriptPath(
 
 function normalizeWorkspacePath(cwd: unknown, repoRoot: string): string {
   return typeof cwd === "string" && cwd.length > 0 ? resolve(repoRoot, cwd) : repoRoot;
+}
+
+/**
+ * Derives write-path V2 identity options for a Claude hook event. Prefers the
+ * hook's own tool_use_id (trimmed, without the native: prefix) as the stable
+ * identity so it lines up with normalizeClaudeHookEvent's tool_call_id;
+ * falls back to the raw envelope id (stable once captured) for hook events
+ * that carry no tool_use_id, such as SessionStart/SessionEnd.
+ */
+function buildHookNormalizationOptions(
+  payload: ClaudeHookPayload,
+  envelope: ClaudeRawEnvelope
+): EventNormalizationOptions {
+  const toolUseId = typeof payload.tool_use_id === "string" ? payload.tool_use_id.trim() : "";
+
+  if (toolUseId.length > 0) {
+    return {
+      sourceRecordNamespace: "hook",
+      sourceRecordId: toolUseId,
+      toolCallId: normalizeNativeId(toolUseId) ?? undefined
+    };
+  }
+
+  return {
+    sourceRecordNamespace: "hook",
+    sourceRecordId: envelope.raw_event_id
+  };
 }
 
 function withWorkspacePath(payload: ClaudeHookPayload, workspacePath: string): ClaudeHookPayload {

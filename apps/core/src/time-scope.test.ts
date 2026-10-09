@@ -75,4 +75,42 @@ describe("resolveTimeScope", () => {
       windowEnd: null
     });
   });
+
+  it("uses explicit startAt/endAt for a custom range", () => {
+    const scope = resolveTimeScope(
+      {
+        mode: "custom",
+        startAt: "2026-08-01T00:00:00.000+08:00",
+        endAt: "2026-08-07T23:59:59.999+08:00"
+      },
+      { now, timezone: "Asia/Shanghai", offsetMinutes: 480 }
+    );
+
+    expect(scope).toMatchObject({
+      mode: "custom",
+      range: null,
+      timezone: "Asia/Shanghai",
+      windowStart: "2026-07-31T16:00:00.000Z",
+      windowEnd: "2026-08-07T15:59:59.999Z"
+    });
+  });
+
+  it("rejects a custom range without timestamps", () => {
+    expect(() =>
+      resolveTimeScope({ mode: "custom" }, { now, timezone: "Asia/Shanghai", offsetMinutes: 480 })
+    ).toThrow("Custom time scope requires startAt and endAt");
+  });
+
+  it("rejects a custom range whose start is not earlier than end", () => {
+    expect(() =>
+      resolveTimeScope(
+        {
+          mode: "custom",
+          startAt: "2026-08-07T00:00:00.000Z",
+          endAt: "2026-08-01T00:00:00.000Z"
+        },
+        { now, timezone: "Asia/Shanghai", offsetMinutes: 480 }
+      )
+    ).toThrow("startAt earlier than endAt");
+  });
 });

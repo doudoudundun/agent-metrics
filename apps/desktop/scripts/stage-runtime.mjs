@@ -4,7 +4,14 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
-import { BUILD_TARGETS, DEPLOY_TARGETS, MANAGED_NODE_VERSION } from "./stage-runtime-config.mjs";
+import { BUILD_TARGETS, DEPLOY_TARGETS } from "./stage-runtime-config.mjs";
+import {
+  assertNativeTarget,
+  managedNodeFolderName,
+  parseTargetArgs,
+  resolveManagedNodeRuntime
+} from "./package-target.mjs";
+import { pruneRuntimeArtifacts } from "./prune-runtime-artifacts.mjs";
 import { sanitizeRuntimeLinks } from "./sanitize-runtime-links.mjs";
 
 const CORE_RUNTIME_CHECK_SCRIPT =
@@ -22,6 +29,9 @@ const corepackExecOptions = {
 };
 
 async function main() {
+  const target = parseTargetArgs();
+  assertNativeTarget(target);
+  const runtime = resolveManagedNodeRuntime(target);
   await ensureBuildArtifacts();
 
   await rm(stagingRoot, { recursive: true, force: true });
@@ -31,24 +41,26 @@ async function main() {
     const destination = join(stagingRoot, target.folderName);
     deployWorkspacePackage(target.packageName, destination);
     await sanitizeRuntimeLinks(destination);
+    await pruneRuntimeArtifacts(destination);
 
     if (target.packageName === "@agent-metrics/core") {
-      await ensureCoreNativeRuntime(destination);
+      await ensureCoreNativeRuntime(destination, runtime);
     }
   }
 
   await cp(dashboardDist, join(stagingRoot, "dashboard"), { recursive: true });
-  await stageManagedNodeRuntime();
+  await pruneRuntimeArtifacts(join(stagingRoot, "dashboard"));
+  await stageManagedNodeRuntime(target, runtime);
 }
 
-async function stageManagedNodeRuntime() {
-  const runtime = resolveManagedNodeRuntime();
-  const runtimeDestination = join(stagingRoot, ".runtime", buildManagedNodeFolderName());
-  const runtimeSource = process.platform === "win32" ? runtime.binDir : dirname(runtime.binDir);
-
+async function stageManagedNodeRuntime(target, runtime) {
+  const runtimeDestination = join(stagingRoot, ".runtime", managedNodeFolderName(target));
   await stat(runtime.nodeCommand);
-  await mkdir(dirname(runtimeDestination), { recursive: true });
-  await cp(runtimeSource, runtimeDestination, { recursive: true });
+  const nodeDestination = target.platform === "win32"
+    ? join(runtimeDestination, "node.exe")
+    : join(runtimeDestination, "bin", "node");
+  await mkdir(dirname(nodeDestination), { recursive: true });
+  await copyFile(runtime.nodeCommand, nodeDestination);
 }
 
 async function ensureBuildArtifacts() {
@@ -75,9 +87,7 @@ function deployWorkspacePackage(packageName, destination) {
   );
 }
 
-async function ensureCoreNativeRuntime(coreRuntimeDir) {
-  const runtime = resolveManagedNodeRuntime();
-
+async function ensureCoreNativeRuntime(coreRuntimeDir, runtime) {
   if (validateCoreRuntime(coreRuntimeDir, runtime.nodeCommand)) {
     return;
   }
@@ -143,42 +153,6 @@ function resolveRuntimePackageRoot(coreRuntimeDir, nodeCommand, packageName) {
   ).trim();
 
   return dirname(packageJsonPath);
-}
-
-function resolveManagedNodeRuntime() {
-  const explicitNodePath = process.env.AGENT_METRICS_NODE_PATH;
-
-  if (explicitNodePath !== undefined && explicitNodePath.trim() !== "") {
-    const nodeCommand = resolve(explicitNodePath);
-    const binDir = dirname(nodeCommand);
-
-    return {
-      binDir,
-      nodeCommand,
-      npmCommand: process.platform === "win32" ? join(binDir, "npm.cmd") : join(binDir, "npm")
-    };
-  }
-
-  const runtimeRoot = join(repoRoot, ".runtime", buildManagedNodeFolderName());
-  const binDir = process.platform === "win32" ? runtimeRoot : join(runtimeRoot, "bin");
-
-  return {
-    binDir,
-    nodeCommand: process.platform === "win32" ? join(runtimeRoot, "node.exe") : join(binDir, "node"),
-    npmCommand: process.platform === "win32" ? join(runtimeRoot, "npm.cmd") : join(binDir, "npm")
-  };
-}
-
-function buildManagedNodeFolderName() {
-  if (process.platform === "win32") {
-    return `node-v${MANAGED_NODE_VERSION}-win-${process.arch === "arm64" ? "arm64" : "x64"}`;
-  }
-
-  if (process.platform === "darwin") {
-    return `node-v${MANAGED_NODE_VERSION}-darwin-${process.arch === "x64" ? "x64" : "arm64"}`;
-  }
-
-  return `node-v${MANAGED_NODE_VERSION}-linux-${process.arch === "arm64" ? "arm64" : "x64"}`;
 }
 
 function prependPath(pathEntry, currentPath) {

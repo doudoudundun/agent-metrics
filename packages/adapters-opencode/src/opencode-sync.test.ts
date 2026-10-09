@@ -3,37 +3,26 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import Database from "better-sqlite3";
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { syncOpenCodeDatabase } from "./opencode-sync.js";
+import { syncOpenCodeDatabase, syncZCodeDatabase } from "./opencode-sync.js";
+import { isolateSources, type IsolatedSources } from "@agent-metrics/test-utils";
 
 describe("syncOpenCodeDatabase", () => {
-  // Isolate these tests from any real zcode/opencode databases installed on the
-  // host machine. syncOpenCodeDatabase reads the zcode DB path from the
-  // AGENT_METRICS_ZCODE_DB_PATH env var (falling back to ~/.zcode/cli/db/db.sqlite);
-  // on a developer machine that real database exists and would pollute the
-  // synthetic event log with thousands of unrelated events. Point it at a path
-  // that never exists. Tests that exercise the zcode source override this var.
-  const previousZcodeDbPath = process.env.AGENT_METRICS_ZCODE_DB_PATH;
-  const previousZcodeModelsPath = process.env.AGENT_METRICS_ZCODE_MODELS_PATH;
+  // Isolate these tests from any real telemetry on the host machine.
+  // syncOpenCodeDatabase resolves OpenCode paths from input args; ZCode is a
+  // separate sync entrypoint that reads AGENT_METRICS_ZCODE_* env vars
+  // (falling back to ~/.zcode/cli/db/db.sqlite). On a developer machine those
+  // real databases exist and would pollute the synthetic event log. The shared helper
+  // redirects ALL source env vars to nonexistent paths; tests that exercise a
+  // real fixture override the specific var on top of this baseline.
+  let isolated: IsolatedSources | null = null;
 
-  beforeEach(() => {
-    process.env.AGENT_METRICS_ZCODE_DB_PATH = join(
-      tmpdir(),
-      `nonexistent-zcode-${Math.random().toString(36).slice(2)}.sqlite`
-    );
-    delete process.env.AGENT_METRICS_ZCODE_MODELS_PATH;
+  beforeEach(async () => {
+    isolated = await isolateSources();
   });
 
   afterEach(() => {
-    if (previousZcodeDbPath === undefined) {
-      delete process.env.AGENT_METRICS_ZCODE_DB_PATH;
-    } else {
-      process.env.AGENT_METRICS_ZCODE_DB_PATH = previousZcodeDbPath;
-    }
-    if (previousZcodeModelsPath === undefined) {
-      delete process.env.AGENT_METRICS_ZCODE_MODELS_PATH;
-    } else {
-      process.env.AGENT_METRICS_ZCODE_MODELS_PATH = previousZcodeModelsPath;
-    }
+    isolated?.cleanup();
+    isolated = null;
   });
 
   it("syncs OpenCode rows into normalized events and dedupes reruns", async () => {
@@ -238,7 +227,7 @@ describe("syncOpenCodeDatabase", () => {
       .split("\n")
       .map((line) => JSON.parse(line));
 
-    expect(events.map((event) => event.event_id)).toEqual([
+    expect(events.map((event) => event.source_record_id)).toEqual([
       "opencode:session:ses_open_1:started",
       "opencode:message:msg_user_1:prompt",
       "opencode:part:prt_tool_1:tool:started",
@@ -249,13 +238,13 @@ describe("syncOpenCodeDatabase", () => {
     expect(events).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          event_id: "opencode:message:msg_assistant_1:assistant",
+          source_record_id: "opencode:message:msg_assistant_1:assistant",
           provider_id: "opencode",
           provider_base_url: "https://opencode.ai/zen/v1",
           provider_host: "opencode.ai"
         }),
         expect.objectContaining({
-          event_id: "opencode:message:msg_assistant_1:usage",
+          source_record_id: "opencode:message:msg_assistant_1:usage",
           provider_id: "opencode",
           provider_base_url: "https://opencode.ai/zen/v1",
           provider_host: "opencode.ai"
@@ -404,7 +393,7 @@ describe("syncOpenCodeDatabase", () => {
       .split("\n")
       .map((line) => JSON.parse(line));
 
-    expect(firstPassEvents.map((event) => event.event_id)).toEqual([
+    expect(firstPassEvents.map((event) => event.source_record_id)).toEqual([
       "opencode:session:ses_open_late_token:started",
       "opencode:message:msg_assistant_late_token:assistant"
     ]);
@@ -452,14 +441,14 @@ describe("syncOpenCodeDatabase", () => {
       .split("\n")
       .map((line) => JSON.parse(line));
 
-    expect(secondPassEvents.map((event) => event.event_id)).toEqual([
+    expect(secondPassEvents.map((event) => event.source_record_id)).toEqual([
       "opencode:session:ses_open_late_token:started",
       "opencode:message:msg_assistant_late_token:assistant",
       "opencode:message:msg_assistant_late_token:usage"
     ]);
     expect(secondPassEvents[2]).toEqual(
       expect.objectContaining({
-        event_id: "opencode:message:msg_assistant_late_token:usage",
+        source_record_id: "opencode:message:msg_assistant_late_token:usage",
         input_tokens: 120,
         output_tokens: 40,
         cache_read_input_tokens: 40,
@@ -603,7 +592,7 @@ describe("syncOpenCodeDatabase", () => {
       .split("\n")
       .map((line) => JSON.parse(line));
 
-    expect(firstPassEvents.map((event) => event.event_id)).toEqual([
+    expect(firstPassEvents.map((event) => event.source_record_id)).toEqual([
       "opencode:session:ses_open_step_finish:started",
       "opencode:message:msg_assistant_step_finish:assistant"
     ]);
@@ -645,14 +634,14 @@ describe("syncOpenCodeDatabase", () => {
       .split("\n")
       .map((line) => JSON.parse(line));
 
-    expect(secondPassEvents.map((event) => event.event_id)).toEqual([
+    expect(secondPassEvents.map((event) => event.source_record_id)).toEqual([
       "opencode:session:ses_open_step_finish:started",
       "opencode:message:msg_assistant_step_finish:assistant",
       "opencode:message:msg_assistant_step_finish:usage"
     ]);
     expect(secondPassEvents[2]).toEqual(
       expect.objectContaining({
-        event_id: "opencode:message:msg_assistant_step_finish:usage",
+        source_record_id: "opencode:message:msg_assistant_step_finish:usage",
         input_tokens: 220,
         output_tokens: 96,
         cache_read_input_tokens: 5,
@@ -662,7 +651,7 @@ describe("syncOpenCodeDatabase", () => {
     );
   });
 
-  it("syncs zcode database rows into the shared opencode event stream", async () => {
+  it("syncs zcode database rows as an independent vendor", async () => {
     const root = await mkdtemp(join(tmpdir(), "agent-metrics-zcode-"));
     const eventLogPath = join(root, "events.jsonl");
     const cursorPath = join(root, "opencode-cursor.json");
@@ -818,11 +807,13 @@ describe("syncOpenCodeDatabase", () => {
     );
     db.close();
 
-    process.env.AGENT_METRICS_OPENCODE_DB_PATH = join(root, "missing-opencode.db");
+    // The baseline isolation (beforeEach) already redirects OPENCODE_DB_PATH
+    // to a missing path and ZCODE_MODELS_PATH away from real data. Point only
+    // the zcode DB at this test's fixture; the afterEach cleanup restores the
+    // baseline so no env mutation escapes the test.
     process.env.AGENT_METRICS_ZCODE_DB_PATH = zcodeDbPath;
-    delete process.env.AGENT_METRICS_ZCODE_MODELS_PATH;
 
-    await syncOpenCodeDatabase({
+    await syncZCodeDatabase({
       eventLogPath,
       cursorPath,
       ledgerPath
@@ -833,7 +824,7 @@ describe("syncOpenCodeDatabase", () => {
       .split("\n")
       .map((line) => JSON.parse(line));
 
-    expect(events.map((event) => event.event_id)).toEqual([
+    expect(events.map((event) => event.source_record_id)).toEqual([
       "opencode:zcode:session:sess_zcode_1:started",
       "opencode:zcode:message:msg_zcode_user:prompt",
       "opencode:zcode:part:prt_zcode_tool_1:tool:started",
@@ -844,21 +835,94 @@ describe("syncOpenCodeDatabase", () => {
     expect(events).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          event_id: "opencode:zcode:message:msg_zcode_assistant:assistant",
-          source_vendor: "opencode",
+          source_record_id: "opencode:zcode:message:msg_zcode_assistant:assistant",
+          source_vendor: "zcode",
           source_adapter: "zcode-db",
           provider_id: "builtin:zai-coding-plan"
         }),
         expect.objectContaining({
-          event_id: "opencode:zcode:message:msg_zcode_assistant:usage",
-          source_vendor: "opencode",
+          source_record_id: "opencode:zcode:message:msg_zcode_assistant:usage",
+          source_vendor: "zcode",
           source_adapter: "zcode-db",
           usage_source: "opencode-message"
         })
       ])
     );
+  });
 
-    delete process.env.AGENT_METRICS_OPENCODE_DB_PATH;
-    delete process.env.AGENT_METRICS_ZCODE_DB_PATH;
+  it("syncs zcode databases whose message IN lists exceed SQLite's bind limit", { timeout: 60_000 }, async () => {
+    const root = await mkdtemp(join(tmpdir(), "agent-metrics-zcode-chunk-"));
+    const zcodeDbPath = join(root, "zcode.db");
+    const eventLogPath = join(root, "events.jsonl");
+    const cursorPath = join(root, "zcode-cursor.json");
+    const ledgerPath = join(root, "zcode-ledger.json");
+    const db = new Database(zcodeDbPath);
+    const messageCount = 1001;
+
+    db.exec(`
+      CREATE TABLE session (
+        id TEXT PRIMARY KEY,
+        directory TEXT NOT NULL,
+        time_created INTEGER NOT NULL,
+        time_updated INTEGER NOT NULL,
+        time_archived INTEGER
+      );
+      CREATE TABLE message (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        time_created INTEGER NOT NULL,
+        time_updated INTEGER NOT NULL,
+        data TEXT NOT NULL
+      );
+      CREATE TABLE part (
+        id TEXT PRIMARY KEY,
+        message_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        time_created INTEGER NOT NULL,
+        time_updated INTEGER NOT NULL,
+        data TEXT NOT NULL
+      );
+    `);
+    db.prepare(
+      "INSERT INTO session (id, directory, time_created, time_updated, time_archived) VALUES (?, ?, ?, ?, NULL)"
+    ).run("sess_chunk", "C:/tmp/zcode-chunk", 1, messageCount);
+    const insertMessage = db.prepare(
+      "INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?)"
+    );
+    const insertPart = db.prepare(
+      "INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?, ?)"
+    );
+    for (let index = 1; index <= messageCount; index += 1) {
+      const messageId = `msg_chunk_${index}`;
+      insertMessage.run(
+        messageId,
+        "sess_chunk",
+        index,
+        index,
+        JSON.stringify({ role: "user", time: { created: index } })
+      );
+      insertPart.run(
+        `prt_chunk_${index}`,
+        messageId,
+        "sess_chunk",
+        index,
+        index,
+        JSON.stringify({ type: "text", text: `chunk ${index}` })
+      );
+    }
+    db.close();
+
+    process.env.AGENT_METRICS_ZCODE_DB_PATH = zcodeDbPath;
+
+    await expect(
+      syncZCodeDatabase({
+        eventLogPath,
+        cursorPath,
+        ledgerPath
+      })
+    ).resolves.toBeUndefined();
+
+    const events = (await readFile(eventLogPath, "utf8")).trim().split("\n");
+    expect(events.length).toBeGreaterThan(messageCount);
   });
 });

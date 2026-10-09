@@ -4,7 +4,7 @@ import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
-import type { SourceAdapter } from "@agent-metrics/event-schema";
+import { type NormalizedEventV2, type SourceAdapter, type SourceVendor } from "@agent-metrics/event-schema";
 import {
   appendJsonLine,
   loadEventLedgerWithFallback,
@@ -44,12 +44,19 @@ type ReadOnlyDatabase = {
   };
 };
 
-type OpenCodeSourceDefinition = {
+type OpenCodeSourceDefinition = OpenCodeFamilySource;
+
+/**
+ * One SQLite database that uses the OpenCode schema. Exported so sibling
+ * adapters (ZCode, MiMo) can reuse this sync pipeline instead of duplicating it.
+ */
+export type OpenCodeFamilySource = {
   key: string;
   dbPath: string;
   modelsPath: string;
   eventNamespace: string | null;
   sourceAdapter: SourceAdapter;
+  sourceVendor: SourceVendor;
 };
 
 const EMPTY_CURSOR: SyncCursor = {
@@ -60,6 +67,8 @@ const EMPTY_CURSOR: SyncCursor = {
 };
 
 const LEGACY_CURSOR_KEY = "opencode";
+/** Stay under SQLite's default 999 bound-parameter limit. */
+const SQLITE_IN_CHUNK_SIZE = 400;
 
 function asSourceAdapter(value: string): SourceAdapter {
   return value as SourceAdapter;
@@ -81,6 +90,44 @@ export function resolveDefaultZCodeModelsPath(): string {
   return join(homedir(), ".cache", "zcode", "models.json");
 }
 
+export function resolveOpenCodeSourcePaths(input: {
+  dbPath?: string;
+  modelsPath?: string;
+} = {}): {
+  primaryDbPath: string;
+  primaryModelsPath: string;
+} {
+  return {
+    primaryDbPath:
+      input.dbPath ??
+      process.env.AGENT_METRICS_OPENCODE_DB_PATH ??
+      resolveDefaultOpenCodeDbPath(),
+    primaryModelsPath:
+      input.modelsPath ??
+      process.env.AGENT_METRICS_OPENCODE_MODELS_PATH ??
+      resolveDefaultOpenCodeModelsPath()
+  };
+}
+
+export function resolveZCodeSourcePaths(input: {
+  dbPath?: string;
+  modelsPath?: string;
+} = {}): {
+  dbPath: string;
+  modelsPath: string;
+} {
+  return {
+    dbPath:
+      input.dbPath ??
+      process.env.AGENT_METRICS_ZCODE_DB_PATH ??
+      resolveDefaultZCodeDbPath(),
+    modelsPath:
+      input.modelsPath ??
+      process.env.AGENT_METRICS_ZCODE_MODELS_PATH ??
+      resolveDefaultZCodeModelsPath()
+  };
+}
+
 export async function syncOpenCodeDatabase(input: {
   eventLogPath: string;
   cursorPath: string;
@@ -93,46 +140,71 @@ export async function syncOpenCodeDatabase(input: {
     modelsPath?: string;
     eventNamespace?: string | null;
     sourceAdapter?: SourceAdapter;
+    sourceVendor?: SourceVendor;
   }>;
 }): Promise<void> {
-  const primaryDbPath =
-    input.dbPath ??
-    process.env.AGENT_METRICS_OPENCODE_DB_PATH ??
-    resolveDefaultOpenCodeDbPath();
-  const primaryModelsPath =
-    input.modelsPath ??
-    process.env.AGENT_METRICS_OPENCODE_MODELS_PATH ??
-    resolveDefaultOpenCodeModelsPath();
-  const zcodeDbPath =
-    process.env.AGENT_METRICS_ZCODE_DB_PATH ??
-    resolveDefaultZCodeDbPath();
-  const zcodeModelsPath =
-    process.env.AGENT_METRICS_ZCODE_MODELS_PATH ??
-    resolveDefaultZCodeModelsPath();
-  const sourceDefinitions: OpenCodeSourceDefinition[] = [
-    {
-      key: LEGACY_CURSOR_KEY,
-      dbPath: primaryDbPath,
-      modelsPath: primaryModelsPath,
-      eventNamespace: null,
-      sourceAdapter: asSourceAdapter("opencode-db")
-    },
-    {
-      key: "zcode",
-      dbPath: zcodeDbPath,
-      modelsPath: zcodeModelsPath,
-      eventNamespace: "zcode",
-      sourceAdapter: asSourceAdapter("zcode-db")
-    },
-    ...(input.extraSources ?? []).map((source): OpenCodeSourceDefinition => ({
-      key: source.key,
-      dbPath: source.dbPath,
-      modelsPath: source.modelsPath ?? primaryModelsPath,
-      eventNamespace: source.eventNamespace ?? source.key,
-      sourceAdapter: source.sourceAdapter ?? asSourceAdapter("opencode-db")
-    }))
-  ].filter((source, index, allSources) =>
-    allSources.findIndex((entry) => entry.key === source.key) === index
+  const { primaryDbPath, primaryModelsPath } = resolveOpenCodeSourcePaths(input);
+  await syncOpenCodeFamilyDatabase({
+    eventLogPath: input.eventLogPath,
+    cursorPath: input.cursorPath,
+    ledgerPath: input.ledgerPath,
+    ledgerPrefix: "opencode:",
+    sources: [
+      {
+        key: LEGACY_CURSOR_KEY,
+        dbPath: primaryDbPath,
+        modelsPath: primaryModelsPath,
+        eventNamespace: null,
+        sourceAdapter: asSourceAdapter("opencode-db"),
+        sourceVendor: "opencode"
+      },
+      ...(input.extraSources ?? []).map((source): OpenCodeSourceDefinition => ({
+        key: source.key,
+        dbPath: source.dbPath,
+        modelsPath: source.modelsPath ?? primaryModelsPath,
+        eventNamespace: source.eventNamespace ?? source.key,
+        sourceAdapter: source.sourceAdapter ?? asSourceAdapter("opencode-db"),
+        sourceVendor: source.sourceVendor ?? "opencode"
+      }))
+    ]
+  });
+}
+
+export async function syncZCodeDatabase(input: {
+  eventLogPath: string;
+  cursorPath: string;
+  ledgerPath: string;
+  dbPath?: string;
+  modelsPath?: string;
+}): Promise<void> {
+  const { dbPath, modelsPath } = resolveZCodeSourcePaths(input);
+  await syncOpenCodeFamilyDatabase({
+    eventLogPath: input.eventLogPath,
+    cursorPath: input.cursorPath,
+    ledgerPath: input.ledgerPath,
+    ledgerPrefix: "opencode:zcode:",
+    sources: [
+      {
+        key: "zcode",
+        dbPath,
+        modelsPath,
+        eventNamespace: "zcode",
+        sourceAdapter: asSourceAdapter("zcode-db"),
+        sourceVendor: "zcode"
+      }
+    ]
+  });
+}
+
+export async function syncOpenCodeFamilyDatabase(input: {
+  eventLogPath: string;
+  cursorPath: string;
+  ledgerPath: string;
+  ledgerPrefix: string;
+  sources: OpenCodeFamilySource[];
+}): Promise<void> {
+  const sourceDefinitions = input.sources.filter(
+    (source, index, allSources) => allSources.findIndex((entry) => entry.key === source.key) === index
   );
 
   if (!sourceDefinitions.some((source) => existsSync(source.dbPath))) {
@@ -143,7 +215,7 @@ export async function syncOpenCodeDatabase(input: {
   const seenEventIds = await loadEventLedgerWithFallback({
     ledgerPath: input.ledgerPath,
     eventLogPath: input.eventLogPath,
-    prefix: "opencode:"
+    prefix: input.ledgerPrefix
   });
   const baselineEventCount = seenEventIds.size;
 
@@ -192,7 +264,8 @@ async function syncSingleSource(input: {
 }): Promise<SyncCursor> {
   const db = new Database(input.source.dbPath, {
     readonly: true,
-    fileMustExist: true
+    fileMustExist: true,
+    timeout: 5_000
   }) as ReadOnlyDatabase;
 
   try {
@@ -271,13 +344,14 @@ async function syncSingleSource(input: {
     }
 
     const events = [
-      ...sessionRows.flatMap((row) =>
+      ...collectNormalizedEvents(sessionRows, (row) =>
         normalizeOpenCodeSessionRow(row, {
           eventNamespace: input.source.eventNamespace,
-          sourceAdapter: input.source.sourceAdapter
+          sourceAdapter: input.source.sourceAdapter,
+          sourceVendor: input.source.sourceVendor
         })
       ),
-      ...allMessageRows.flatMap((row) => {
+      ...collectNormalizedEvents(allMessageRows, (row) => {
         const session = sessionLookup.get(row.session_id);
 
         return normalizeOpenCodeMessageRow({
@@ -288,11 +362,12 @@ async function syncSingleSource(input: {
           providerRegistry: input.providerRegistry,
           eventContext: {
             eventNamespace: input.source.eventNamespace,
-            sourceAdapter: input.source.sourceAdapter
+            sourceAdapter: input.source.sourceAdapter,
+            sourceVendor: input.source.sourceVendor
           }
         });
       }),
-      ...updatedToolRows.flatMap((row) => {
+      ...collectNormalizedEvents(updatedToolRows, (row) => {
         const session = sessionLookup.get(row.session_id);
         const message = messageLookup.get(row.message_id) ?? null;
 
@@ -304,23 +379,28 @@ async function syncSingleSource(input: {
           providerRegistry: input.providerRegistry,
           eventContext: {
             eventNamespace: input.source.eventNamespace,
-            sourceAdapter: input.source.sourceAdapter
+            sourceAdapter: input.source.sourceAdapter,
+            sourceVendor: input.source.sourceVendor
           }
         });
       })
     ].sort((left, right) =>
       left.timestamp === right.timestamp
-        ? left.event_id.localeCompare(right.event_id)
+        ? ledgerKeyFor(left).localeCompare(ledgerKeyFor(right))
         : left.timestamp.localeCompare(right.timestamp)
     );
 
     for (const event of events) {
-      if (input.seenEventIds.has(event.event_id)) {
+      // Builders already emit NormalizedEventV2; source_record_id carries the
+      // stable pre-conversion legacy event_id that the ledger has always keyed
+      // on, so dedup keeps working even though event_id is now hash-based.
+      const ledgerKey = ledgerKeyFor(event);
+      if (input.seenEventIds.has(ledgerKey)) {
         continue;
       }
 
       await appendJsonLine(input.eventLogPath, event);
-      input.seenEventIds.add(event.event_id);
+      input.seenEventIds.add(ledgerKey);
     }
 
     return {
@@ -334,27 +414,52 @@ async function syncSingleSource(input: {
   }
 }
 
+function collectNormalizedEvents<T>(
+  rows: T[],
+  normalize: (row: T) => NormalizedEventV2[]
+): NormalizedEventV2[] {
+  const events: NormalizedEventV2[] = [];
+  for (const row of rows) {
+    try {
+      events.push(...normalize(row));
+    } catch {
+      // One invalid usage/message row must not abort the whole OpenCode/ZCode tick.
+    }
+  }
+  return events;
+}
+
+function selectByIdChunks<T>(
+  db: ReadOnlyDatabase,
+  ids: string[],
+  sqlForPlaceholders: (placeholders: string) => string
+): T[] {
+  const rows: T[] = [];
+  for (let offset = 0; offset < ids.length; offset += SQLITE_IN_CHUNK_SIZE) {
+    const chunk = ids.slice(offset, offset + SQLITE_IN_CHUNK_SIZE);
+    const placeholders = chunk.map(() => "?").join(", ");
+    rows.push(...db.prepare<T>(sqlForPlaceholders(placeholders)).all(...chunk));
+  }
+  return rows;
+}
+
 function selectPartsByMessageIds(db: ReadOnlyDatabase, messageIds: string[]): OpenCodePartRow[] {
   if (messageIds.length === 0) {
     return [];
   }
 
-  const placeholders = messageIds.map(() => "?").join(", ");
-
-  return db
-    .prepare<OpenCodePartRow>(
-      `SELECT
-        id,
-        message_id,
-        session_id,
-        time_created,
-        time_updated,
-        data
-      FROM part
-      WHERE message_id IN (${placeholders})
-      ORDER BY time_created ASC, id ASC`
-    )
-    .all(...messageIds);
+  return selectByIdChunks(db, messageIds, (placeholders) =>
+    `SELECT
+      id,
+      message_id,
+      session_id,
+      time_created,
+      time_updated,
+      data
+    FROM part
+    WHERE message_id IN (${placeholders})
+    ORDER BY time_created ASC, id ASC`
+  );
 }
 
 function selectMessagesByIds(
@@ -367,21 +472,17 @@ function selectMessagesByIds(
     return [];
   }
 
-  const placeholders = ids.map(() => "?").join(", ");
-
-  return db
-    .prepare<OpenCodeMessageRow>(
-      `SELECT
-        id,
-        session_id,
-        time_created,
-        time_updated,
-        data
-      FROM message
-      WHERE id IN (${placeholders})
-      ORDER BY time_updated ASC, id ASC`
-    )
-    .all(...ids);
+  return selectByIdChunks(db, ids, (placeholders) =>
+    `SELECT
+      id,
+      session_id,
+      time_created,
+      time_updated,
+      data
+    FROM message
+    WHERE id IN (${placeholders})
+    ORDER BY time_updated ASC, id ASC`
+  );
 }
 
 function dedupeMessageRows(rows: OpenCodeMessageRow[]): OpenCodeMessageRow[] {
@@ -403,13 +504,9 @@ function loadSessionLookup(db: ReadOnlyDatabase, sessionIds: Set<string>): Map<s
     return new Map();
   }
 
-  const values = [...sessionIds];
-  const placeholders = values.map(() => "?").join(", ");
-  const rows = db
-    .prepare<SessionLookupRow>(
-      `SELECT id, directory, NULL AS model FROM session WHERE id IN (${placeholders})`
-    )
-    .all(...values);
+  const rows = selectByIdChunks<SessionLookupRow>(db, [...sessionIds], (placeholders) =>
+    `SELECT id, directory, NULL AS model FROM session WHERE id IN (${placeholders})`
+  );
 
   return new Map(rows.map((row) => [row.id, row]));
 }
@@ -648,4 +745,8 @@ function normalizeInteger(value: unknown): number | null {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function ledgerKeyFor(event: NormalizedEventV2): string {
+  return event.source_record_id ?? event.event_id;
 }

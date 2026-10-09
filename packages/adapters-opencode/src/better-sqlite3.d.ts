@@ -17,6 +17,7 @@ declare module "better-sqlite3" {
       options?: {
         readonly?: boolean;
         fileMustExist?: boolean;
+        timeout?: number;
       }
     ): Database;
   }

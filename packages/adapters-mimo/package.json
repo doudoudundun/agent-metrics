@@ -1,0 +1,20 @@
+{
+  "name": "@agent-metrics/adapters-mimo",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node ../../scripts/run-tests.mjs run src"
+  },
+  "dependencies": {
+    "@agent-metrics/adapters-opencode": "workspace:*",
+    "@agent-metrics/event-schema": "workspace:*"
+  },
+  "devDependencies": {
+    "@agent-metrics/test-utils": "workspace:*",
+    "better-sqlite3": "^11.10.0"
+  }
+}

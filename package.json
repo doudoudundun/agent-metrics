@@ -5,9 +5,11 @@
   "scripts": {
     "build": "corepack pnpm -r build",
     "dev": "corepack pnpm --parallel --filter @agent-metrics/core --filter @agent-metrics/dashboard dev",
-    "dev:desktop": "corepack pnpm --parallel --filter @agent-metrics/dashboard --filter @agent-metrics/desktop dev",
-    "lint": "corepack pnpm -r exec tsc --noEmit",
+    "dev:desktop": "corepack pnpm --filter @agent-metrics/cli... --filter @agent-metrics/core build && corepack pnpm --parallel --filter @agent-metrics/dashboard --filter @agent-metrics/desktop dev",
+    "typecheck": "corepack pnpm -r exec tsc --noEmit",
+    "lint": "corepack pnpm typecheck",
     "test": "corepack pnpm -r test",
+    "test:dashboard:e2e": "corepack pnpm --filter @agent-metrics/dashboard test:e2e",
     "test:desktop": "corepack pnpm --filter @agent-metrics/desktop test",
     "package:desktop:mac": "corepack pnpm --filter @agent-metrics/desktop package:mac",
     "package:desktop:mac:x64": "corepack pnpm --filter @agent-metrics/desktop package:mac:x64",
@@ -20,6 +22,8 @@
     "onlyBuiltDependencies": ["better-sqlite3", "electron", "esbuild"]
   },
   "devDependencies": {
+    "@playwright/test": "^1.52.0",
+    "axe-core": "^4.10.3",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.3.0",
     "@types/node": "^22.15.29",

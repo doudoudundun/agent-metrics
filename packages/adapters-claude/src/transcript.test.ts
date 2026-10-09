@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AnyEventSchema } from "@agent-metrics/event-schema";
+import { NormalizedEventV2Schema } from "@agent-metrics/event-schema";
 import {
   extractClaudeTranscriptObservations,
   normalizeClaudeTranscriptObservation
@@ -361,7 +361,7 @@ describe("extractClaudeTranscriptObservations", () => {
     );
   });
 
-  it("normalizes transcript observations into AnyEvent-compatible payloads", () => {
+  it("normalizes transcript observations into NormalizedEventV2 payloads", () => {
     const [promptObservation] = extractClaudeTranscriptObservations({
       type: "user",
       sessionId: "ses_1",
@@ -398,19 +398,45 @@ describe("extractClaudeTranscriptObservations", () => {
     const promptEvent = normalizeClaudeTranscriptObservation(promptObservation);
     const usageEvent = normalizeClaudeTranscriptObservation(usageObservation);
 
-    expect(AnyEventSchema.safeParse(promptEvent).success).toBe(true);
+    expect(NormalizedEventV2Schema.safeParse(promptEvent).success).toBe(true);
     expect(promptEvent).toMatchObject({
+      schema_version: 2,
       type: "prompt.submitted",
       prompt_id: "prompt_1",
-      prompt_chars: 8
+      prompt_chars: 8,
+      source_record_id: "prompt_1"
     });
-    expect(AnyEventSchema.safeParse(usageEvent).success).toBe(true);
+    expect(NormalizedEventV2Schema.safeParse(usageEvent).success).toBe(true);
     expect(usageEvent).toMatchObject({
+      schema_version: 2,
       type: "token.usage.recorded",
       message_id: "msg_1",
       model: "sonnet-test",
       server_tool_use: "{\"web_search_requests\":0}",
-      usage_source: "claude-transcript"
+      usage_source: "claude-transcript",
+      source_record_id: "msg_1"
     });
+  });
+
+  it("preserves the transcript tool use identity in normalized tool events", () => {
+    const event = normalizeClaudeTranscriptObservation({
+      kind: "tool_called",
+      sessionId: "ses_1",
+      workspacePath: "D:/projects/dev/agent-metrics",
+      timestamp: "2026-05-27T10:00:05.000Z",
+      toolUseId: "toolu_1",
+      toolName: "Read",
+      argumentSummary: "Read package.json"
+    });
+
+    expect(event).toMatchObject({
+      schema_version: 2,
+      type: "tool.called",
+      tool_name: "Read",
+      tool_call_id: "native:toolu_1",
+      source_record_id: "toolu_1"
+    });
+
+    expect(NormalizedEventV2Schema.safeParse(event).success).toBe(true);
   });
 });
