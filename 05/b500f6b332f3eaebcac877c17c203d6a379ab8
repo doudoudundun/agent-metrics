@@ -1,0 +1,85 @@
+packages/adapters-kimicode/src/kimicode-sync.test.ts
+  s_19657070d46139::t_687c6e3d55b3c7 1,10,14,17,20,93-137,140-157
+packages/metrics-engine/src/index.ts
+  s_19657070d46139::t_e5ffef9e263035 49-53,254-255,261-263
+apps/dashboard/src/DashboardPage.test.tsx
+  s_19657070d46139::t_bbfd1d450eb92e 442-443,447,450
+  s_19657070d46139::t_88b3991095849b 131,139,143,146,150,214
+apps/core/src/query-plan.test.ts
+  s_19657070d46139::t_7a68ca2198bde5 90-107
+  s_19657070d46139::t_f7c0f6162351a4 108-126
+apps/dashboard/src/query-client.test.ts
+  s_19657070d46139::t_bbfd1d450eb92e 40-96
+apps/core/src/domain-migrations.test.ts
+  s_19657070d46139::t_7a68ca2198bde5 168-169
+  s_19657070d46139::t_bbfd1d450eb92e 186
+apps/core/src/event-log-projector.test.ts
+  s_19657070d46139::t_bbfd1d450eb92e 53-61
+apps/dashboard/src/DashboardPage.tsx
+  s_19657070d46139::t_16bc9bce08c5fd 206-207,268,310-312
+packages/adapters-opencode/src/opencode.ts
+  s_19657070d46139::t_41d3d6b0141680 3
+packages/adapters-kimicode/src/kimicode-sync.ts
+  s_19657070d46139::t_9dd73a081e20e6 270-298,300-313,317-320
+  s_19657070d46139::t_57ebf385c40917 3,6,261,263-265,269,321-323
+apps/core/src/canonical-queries.test.ts
+  s_19657070d46139::t_8f823df95dc960 296
+packages/contracts/src/overview.ts
+  s_19657070d46139::t_9ea0f01151ccde 94-95
+apps/core/src/session-queries.ts
+  s_19657070d46139::t_94cef97ba60af5 277
+  s_19657070d46139::t_57ebf385c40917 13,34,192-193,209-211,247,250,260,284
+  s_19657070d46139::t_5a2350feafcd7c 304-305,310,313-314,324-325,342,344-345
+apps/core/src/domain-schema.ts
+  s_19657070d46139::t_16bc9bce08c5fd 211-222,238-240
+  s_19657070d46139::t_7a68ca2198bde5 223-237
+apps/core/src/event-log-projector.ts
+  s_19657070d46139::t_16bc9bce08c5fd 62
+packages/metrics-engine/src/index.test.ts
+  s_19657070d46139::t_463a80e57c261a 5-21
+apps/core/src/cursor-account-usage.test.ts
+  s_19657070d46139::t_463a80e57c261a 13-25
+packages/shared-utils/src/ledger.test.ts
+  s_19657070d46139::t_bbfd1d450eb92e 61-76,239-251
+apps/core/src/domain-migrations.ts
+  s_19657070d46139::t_7a68ca2198bde5 17,39-41,108-113
+  s_19657070d46139::t_16bc9bce08c5fd 16,37-38,91-107,114-115
+apps/core/src/core-routes.ts
+  s_19657070d46139::t_5a2350feafcd7c 212,226-227
+  s_19657070d46139::t_e5ffef9e263035 219
+packages/adapters-dsh/src/dsh.ts
+  s_19657070d46139::t_101a934a842ddf 3,18,139
+apps/core/src/tool-query-support.ts
+  s_19657070d46139::t_e5ffef9e263035 2,12,14,45,49-50,53-55,58,61-62,65-73,156,160,164,180,182
+  s_19657070d46139::t_16bc9bce08c5fd 5,42
+  s_19657070d46139::t_07b7ca6fd09a07 88-92,95
+packages/shared-utils/src/ledger.ts
+  s_19657070d46139::t_16bc9bce08c5fd 2,5,61-64,66-67,170-174,176,182-185,211-216,228
+  s_19657070d46139::t_5a2350feafcd7c 186-210
+apps/core/src/canonical-queries.ts
+  s_19657070d46139::t_b668917480f18d 150,177-189,251-252
+apps/dashboard/src/query-client.ts
+  s_19657070d46139::t_16bc9bce08c5fd 20,50,56,69-72,75,82-85,99,119,163-164,192-193,211
+apps/core/src/aggregate-queries.ts
+  s_19657070d46139::t_57ebf385c40917 35,43-45,109,146-147
+  s_19657070d46139::t_5a2350feafcd7c 150,173,176
+  s_19657070d46139::t_e5ffef9e263035 8,13,82-83,97,108,134-135
+apps/core/src/cursor-account-usage.ts
+  s_19657070d46139::t_e5ffef9e263035 7-12,439
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.8",
+  "base_commit_sha": "05b500f6b332f3eaebcac877c17c203d6a379ab8",
+  "prompts": {},
+  "sessions": {
+    "s_19657070d46139": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a11f72-6658-76d3-8573-5b02bc368d49",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Anonymous <anonymous@users.noreply.github.com>"
+    }
+  }
+}
