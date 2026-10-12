@@ -712,57 +712,67 @@ body[data-desktop-surface="desktop-widget"] .app-shell--floating {
   margin-top: 24px;
 }
 
-.cursor-account-usage-grid {
+.cursor-quota-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
 }
 
-.cursor-account-usage-strip {
+.cursor-quota-card {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid rgba(16, 32, 48, 0.12);
+  border-radius: 12px;
+  background: rgba(16, 32, 48, 0.02);
+}
+
+.cursor-quota-card__head {
   display: flex;
-  flex-wrap: wrap;
-  gap: 10px 16px;
   align-items: baseline;
-  font-size: 13px;
-  color: rgba(255, 255, 255, 0.72);
+  justify-content: space-between;
+  gap: 8px;
 }
 
-.cursor-account-usage-strip strong {
-  color: rgba(209, 255, 77, 0.95);
-  font-size: 15px;
-  margin-right: 4px;
-}
-
-.cursor-account-usage-card {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 14px 16px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.03);
-}
-
-.cursor-account-usage-card--primary {
-  border-color: rgba(209, 255, 77, 0.35);
-  background: rgba(209, 255, 77, 0.08);
-}
-
-.cursor-account-usage-card__label {
+.cursor-quota-card__label {
   font-size: 12px;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.62);
+  color: var(--ink-soft, #5f7087);
 }
 
-.cursor-account-usage-card strong {
-  font-size: 22px;
-  line-height: 1.1;
+.cursor-quota-card__percent {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink, #102030);
 }
 
-.cursor-account-usage-card__meta {
+.cursor-quota-card__bar {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(16, 32, 48, 0.08);
+  overflow: hidden;
+}
+
+.cursor-quota-card__fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #4f9cf5;
+}
+
+.cursor-quota-card__fill[data-tone="warn"] {
+  background: #d99a16;
+}
+
+.cursor-quota-card__fill[data-tone="danger"] {
+  background: #d95540;
+}
+
+.cursor-quota-note {
+  margin: 10px 0 0;
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.72);
+  color: var(--ink-soft, #5f7087);
 }
 
 .cursor-model-usage {
@@ -2237,14 +2247,6 @@ tbody tr[data-selected="true"] .session-select {
 
 .dashboard-page .key-usage-window__fill[data-tone="danger"] {
   background: #d95540;
-}
-
-.dashboard-page .cursor-account-usage-strip {
-  color: var(--ink-soft);
-}
-
-.dashboard-page .cursor-account-usage-strip strong {
-  color: var(--ink);
 }
 
 .dashboard-page .cursor-model-usage__toggle,

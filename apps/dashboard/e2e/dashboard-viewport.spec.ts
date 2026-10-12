@@ -154,6 +154,34 @@ async function installDashboardApiMocks(page: Page): Promise<void> {
       });
       return;
     }
+    if (pathname.endsWith("/api/cursor/account-usage")) {
+      await route.fulfill({
+        json: {
+          sourceInstanceId: "cursor:default",
+          email: null,
+          planName: "Pro",
+          planTier: "pro",
+          subscriptionStatus: null,
+          hostname: null,
+          machineId: null,
+          billingCycleStart: "2026-05-01T00:00:00.000Z",
+          billingCycleEnd: "2026-05-31T00:00:00.000Z",
+          totalSpendCents: 6200,
+          includedSpendCents: 5000,
+          bonusSpendCents: 0,
+          limitCents: 2000,
+          remainingCents: 800,
+          autoPercentUsed: 66,
+          apiPercentUsed: 4,
+          totalPercentUsed: 70,
+          displayMessage: null,
+          syncedAt: overviewFixture.updatedAt,
+          modelAggregations: [],
+          modelUsageTotalCostCents: 0
+        }
+      });
+      return;
+    }
     if (pathname.endsWith("/api/key-usage")) {
       await route.fulfill({
         json: { updatedAt: overviewFixture.updatedAt, entries: [] }

@@ -74,31 +74,27 @@ export function CursorAccountUsagePanel({
       <header className="panel__header">
         <div>
           <span className="panel__eyebrow">Cursor Usage</span>
-          <h2>Official account quota</h2>
+          <h2>
+            Official account quota
+            {usage?.planName ?? usage?.planTier ? ` · ${usage.planName ?? usage.planTier}` : ""}
+          </h2>
         </div>
-        <span className="panel__meta">Billing-cycle reference · Synced from Cursor API</span>
+        <span className="panel__meta">
+          {usage ? `${formatDate(usage.billingCycleStart)} – ${formatDate(usage.billingCycleEnd)} · ` : ""}
+          Synced from Cursor API
+        </span>
       </header>
 
       {loading ? <p className="panel__state">Loading official usage...</p> : null}
       {!loading && errorMessage ? <p className="panel__state panel__state--error">{errorMessage}</p> : null}
       {!loading && !errorMessage && usage ? (
         <>
-          <div className="cursor-account-usage-strip" aria-label="Quota summary">
-            <span>
-              <strong>{formatPercent(usage.totalPercentUsed)}</strong> total
-            </span>
-            <span>
-              <strong>{formatPercent(usage.autoPercentUsed)}</strong> auto
-            </span>
-            <span>
-              <strong>{formatPercent(usage.apiPercentUsed)}</strong> api
-            </span>
-            <span>{usage.planName ?? usage.planTier ?? "Unknown"}</span>
-            <span>
-              {formatDate(usage.billingCycleStart)} – {formatDate(usage.billingCycleEnd)}
-            </span>
-            {usage.displayMessage ? <span>{usage.displayMessage}</span> : null}
+          <div className="cursor-quota-grid" aria-label="Quota summary">
+            <QuotaCard label="Total" percent={usage.totalPercentUsed} />
+            <QuotaCard label="Auto" percent={usage.autoPercentUsed} />
+            <QuotaCard label="API" percent={usage.apiPercentUsed} />
           </div>
+          {usage.displayMessage ? <p className="cursor-quota-note">{usage.displayMessage}</p> : null}
 
           <div className="cursor-model-usage cursor-model-usage--compact">
             <button
@@ -139,5 +135,29 @@ export function CursorAccountUsagePanel({
         </>
       ) : null}
     </section>
+  );
+}
+
+function QuotaCard({ label, percent }: { label: string; percent: number }) {
+  const value = Math.max(0, percent);
+  const width = Math.min(100, value);
+  const tone = value >= 90 ? "danger" : value >= 70 ? "warn" : "ok";
+  return (
+    <div className="cursor-quota-card">
+      <div className="cursor-quota-card__head">
+        <span className="cursor-quota-card__label">{label}</span>
+        <span className="cursor-quota-card__percent">{formatPercent(value)}</span>
+      </div>
+      <div
+        className="cursor-quota-card__bar"
+        role="progressbar"
+        aria-label={`${label} quota used`}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={Math.round(width)}
+      >
+        <span className="cursor-quota-card__fill" data-tone={tone} style={{ width: `${width}%` }} />
+      </div>
+    </div>
   );
 }
