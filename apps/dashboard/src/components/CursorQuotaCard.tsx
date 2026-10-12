@@ -72,12 +72,14 @@ export function CursorQuotaCard({ usage, loading, errorMessage }: CursorQuotaCar
       <div className="key-usage-card__head">
         <strong className="key-usage-card__vendor">Cursor</strong>
         <span className="key-usage-card__limit">{planLabel}</span>
-        <span
-          className="key-usage-card__credits"
-          data-state={remainingCents !== null && remainingCents > 0 ? "available" : "none"}
-        >
-          {remainingCents !== null ? `${formatCents(remainingCents)} left` : "Balance unknown"}
-        </span>
+        {remainingCents !== null ? (
+          <span
+            className="key-usage-card__credits"
+            data-state={remainingCents > 0 ? "available" : "none"}
+          >
+            {formatCents(remainingCents)} left
+          </span>
+        ) : null}
       </div>
 
       {loading ? <p className="key-usage-card__empty">Loading Cursor usage...</p> : null}

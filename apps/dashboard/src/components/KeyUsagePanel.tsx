@@ -64,9 +64,11 @@ export function KeyUsagePanel({ data, loading = false, errorMessage = null, lead
                 <span className="key-usage-card__limit">
                   {entry.limitName ?? entry.limitId ?? "Default limit"}
                 </span>
-                <span className="key-usage-card__credits" data-state={creditsState(entry)}>
-                  {formatCredits(entry)}
-                </span>
+                {creditsState(entry) === "available" || creditsState(entry) === "unlimited" ? (
+                  <span className="key-usage-card__credits" data-state={creditsState(entry)}>
+                    {formatCredits(entry)}
+                  </span>
+                ) : null}
               </div>
               <div className="key-usage-card__windows">
                 {entry.primary !== null ? (

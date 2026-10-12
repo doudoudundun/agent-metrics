@@ -62,8 +62,7 @@ describe("KeyUsagePanel", () => {
     expect(screen.getByText(/Resets in 3h 20m/)).toBeInTheDocument();
     expect(screen.getByText(/Resets in 4d 16h/)).toBeInTheDocument();
 
-    const credits = screen.getByText("No extra credits");
-    expect(credits).toHaveAttribute("data-state", "none");
+    expect(screen.queryByText("No extra credits")).not.toBeInTheDocument();
     expect(screen.getByText(/Updated/)).toBeInTheDocument();
   });
 
@@ -172,7 +171,7 @@ describe("KeyUsagePanel", () => {
 
     expect(screen.getByText("Default limit")).toBeInTheDocument();
     expect(screen.getByText("No quota windows reported.")).toBeInTheDocument();
-    expect(screen.getByText("Credits unknown")).toBeInTheDocument();
+    expect(screen.queryByText("Credits unknown")).not.toBeInTheDocument();
     expect(screen.getByText("Synced from provider sources")).toBeInTheDocument();
   });
 
