@@ -192,7 +192,10 @@ describe("syncCursorArtifacts", () => {
           output_tokens: 5,
           cache_read_input_tokens: 2,
           cache_creation_input_tokens: 0,
-          usage_source: "cursor-generation"
+          usage_source: "cursor-generation",
+          // Cursor sources expose no per-request timing, so both stay explicit nulls.
+          first_token_latency_ms: null,
+          decode_duration_ms: null
         }),
         expect.objectContaining({
           source_record_id: `cursor:edit:cmp_1:${createdAt}`,
@@ -1096,7 +1099,10 @@ describe("syncCursorArtifacts", () => {
           output_tokens: 0,
           cache_read_input_tokens: 0,
           cache_creation_input_tokens: 0,
-          usage_source: "cursor-composer-context"
+          usage_source: "cursor-composer-context",
+          // The composer-context fallback has no timing either.
+          first_token_latency_ms: null,
+          decode_duration_ms: null
         })
       ])
     );

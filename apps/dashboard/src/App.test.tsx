@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import {
   fetchCursorAccountUsage,
+  fetchKeyUsage,
   fetchOverview,
   fetchSessions,
   fetchSyncStatus,
@@ -28,6 +29,7 @@ const apiMocks = vi.hoisted(() => ({
   fetchTools: vi.fn(),
   fetchSessions: vi.fn(),
   fetchCursorAccountUsage: vi.fn(),
+  fetchKeyUsage: vi.fn(),
   fetchSyncStatus: vi.fn(),
   fetchWidgetSnapshot: vi.fn(),
   fetchSessionDetail: vi.fn(),
@@ -57,6 +59,7 @@ describe("App surface router", () => {
     vi.mocked(fetchTools).mockReset();
     vi.mocked(fetchSessions).mockReset();
     vi.mocked(fetchCursorAccountUsage).mockReset();
+    vi.mocked(fetchKeyUsage).mockReset();
     vi.mocked(fetchSyncStatus).mockReset();
     apiMocks.fetchWidgetSnapshot.mockReset();
     apiMocks.fetchSessionDetail.mockReset();
@@ -200,6 +203,7 @@ function seedMainDashboardMocks(): void {
     nextCursor: null
   });
   vi.mocked(fetchCursorAccountUsage).mockResolvedValue(null);
+  vi.mocked(fetchKeyUsage).mockResolvedValue({ updatedAt: null, entries: [] });
   vi.mocked(fetchSyncStatus).mockResolvedValue({
     generatedAt: "2026-05-27T10:30:00.000Z",
     shuttingDown: false,

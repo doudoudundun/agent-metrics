@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [master, "feat/**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    # Unit tests are platform-neutral; run on Windows to match the primary
+    # dev environment and the managed Node runtime staged for packaging.
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: corepack pnpm install
+
+      - name: Typecheck
+        run: corepack pnpm lint
+
+      - name: Run unit tests
+        run: corepack pnpm test

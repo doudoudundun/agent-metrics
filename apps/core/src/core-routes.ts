@@ -5,6 +5,7 @@ import {
   ApiErrorResponseSchema,
   CursorAccountUsageResponseSchema,
   HealthResponseSchema,
+  KeyUsageResponseSchema,
   ManualSyncRequestSchema,
   ManualSyncResponseSchema,
   OverviewResponseSchema,
@@ -29,6 +30,10 @@ import {
   selectCursorAccountUsage,
   toCursorAccountUsageResponse
 } from "./cursor-account-usage.js";
+import {
+  selectOfficialKeyUsage,
+  toKeyUsageResponse
+} from "./official-key-usage.js";
 import {
   selectOverviewRows,
   selectTokensByModel,
@@ -259,6 +264,19 @@ export function registerCoreRoutes({ app, db, input, syncCoordinator }: RouteInp
     }
 
     return CursorAccountUsageResponseSchema.parse(toCursorAccountUsageResponse(row));
+  });
+
+  app.get("/api/key-usage", async (request, reply) => {
+    reply.header("cache-control", "no-store");
+    const query = request.query as { vendor?: string };
+    const vendor =
+      typeof query.vendor === "string" && query.vendor.length > 0 ? query.vendor : undefined;
+    const snapshots = selectOfficialKeyUsage(
+      db as unknown as SqliteDatabaseLike,
+      vendor === undefined ? {} : { vendor }
+    );
+    // An unsynced database is not an error: the panel renders its empty state.
+    return KeyUsageResponseSchema.parse(toKeyUsageResponse(snapshots));
   });
 
   app.get("/api/token-trend", async (request, reply) => {

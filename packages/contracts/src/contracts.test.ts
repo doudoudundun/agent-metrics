@@ -219,6 +219,65 @@ describe("overview / tools / trend / widget", () => {
     ).toBe(true);
   });
 
+  it("parses trend buckets on rows and on the envelope", () => {
+    const parsed = TokenTrendResponseSchema.safeParse({
+      ...aggregateMeta,
+      bucket: "week",
+      rows: [
+        {
+          bucketStart: "2026-03-02T00:00:00.000Z",
+          bucket: "week",
+          label: "3/2-3/8",
+          ...tokenComponents,
+          cacheHitRate: 0.2
+        },
+        {
+          bucketStart: "2026-03-09T00:00:00.000Z",
+          bucket: "week",
+          label: "3/9-3/15",
+          ...tokenComponents,
+          cacheHitRate: 0.3
+        }
+      ]
+    });
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data.bucket).toBe("week");
+    expect(parsed.success && parsed.data.rows[0]?.bucket).toBe("week");
+
+    // Every granularity the core can emit is accepted, and unknown ones are not.
+    for (const bucket of ["hour", "day", "week", "month"]) {
+      expect(
+        TokenTrendResponseSchema.safeParse({
+          ...aggregateMeta,
+          rows: [
+            {
+              bucketStart: "2026-03-02T00:00:00.000Z",
+              bucket,
+              label: "3/2-3/8",
+              ...tokenComponents,
+              cacheHitRate: 0.2
+            }
+          ]
+        }).success
+      ).toBe(true);
+    }
+    expect(
+      TokenTrendResponseSchema.safeParse({
+        ...aggregateMeta,
+        rows: [
+          {
+            bucketStart: "2026-03-02T00:00:00.000Z",
+            bucket: "quarter",
+            label: "Q1",
+            ...tokenComponents,
+            cacheHitRate: 0.2
+          }
+        ]
+      }).success
+    ).toBe(false);
+  });
+
   it("parses widget snapshot with fixed calendar day scope", () => {
     const result = WidgetSnapshotResponseSchema.safeParse({
       generatedAt: "2026-05-25T12:00:00.000Z",

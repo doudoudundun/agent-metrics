@@ -10,6 +10,7 @@ import {
   type OverviewResponse,
   type SessionDetailResponse
 } from "./legacy-api";
+import { fetchKeyUsage } from "./api";
 
 function stubFetchJson(payload: unknown): void {
   vi.stubGlobal(
@@ -493,5 +494,47 @@ describe("api client", () => {
     stubFetchJson(payload);
     await expect(fetchSessionDetail("ses_1")).resolves.toEqual(payload);
     expect(fetch).toHaveBeenCalledWith("/api/sessions/ses_1");
+  });
+});
+
+describe("key usage api client", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("requests the key usage envelope and returns parsed entries", async () => {
+    const payload = {
+      updatedAt: "2026-10-10T01:50:16.475Z",
+      entries: [
+        {
+          vendor: "codex",
+          source: "codex-rollout",
+          limitId: "codex",
+          limitName: null,
+          primary: {
+            usedPercent: 44,
+            windowMinutes: 300,
+            resetsAt: "2026-10-10T09:30:11.000Z"
+          },
+          secondary: {
+            usedPercent: 41,
+            windowMinutes: 10080,
+            resetsAt: "2026-10-15T01:19:16.000Z"
+          },
+          credits: { hasCredits: false, unlimited: false }
+        }
+      ]
+    };
+
+    stubFetchJson(payload);
+
+    await expect(fetchKeyUsage()).resolves.toEqual(payload);
+    expect(fetch).toHaveBeenCalledWith("/api/key-usage", expect.anything());
+  });
+
+  it("rejects payloads that do not match the key usage contract", async () => {
+    stubFetchJson({ updatedAt: "not-a-date", entries: [] });
+
+    await expect(fetchKeyUsage()).rejects.toThrow("invalid response for /api/key-usage");
   });
 });

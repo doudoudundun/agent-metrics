@@ -574,7 +574,13 @@ function buildCursorEvents(input: {
         usage_source: generation.usageSource ?? "cursor-generation",
         provider_id: null,
         provider_base_url: null,
-        provider_host: null
+        provider_host: null,
+        // Cursor exposes one `createdAt` per generation (or the transcript file's
+        // mtime) and no per-request start/end, so both timing fields stay null.
+        // ai_code_hashes does carry a request window, but nothing joins its
+        // requestId back to a generation id, so no value can be derived here.
+        first_token_latency_ms: null,
+        decode_duration_ms: null
       });
     }
   }

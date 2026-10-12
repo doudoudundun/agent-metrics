@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   buildExportUrl,
   fetchCursorAccountUsage,
+  fetchKeyUsage,
   fetchOverview,
   fetchSessionDetail,
   fetchSessions,
@@ -12,6 +13,7 @@ import {
   triggerSync,
   type OverviewResponse,
   type CursorAccountUsageResponse,
+  type KeyUsageResponse,
   type SessionDetailResponse,
   type SessionRow as ContractSessionRow,
   type SourceBreakdownRow,
@@ -20,13 +22,16 @@ import {
   type ToolRow
 } from "./api";
 import { CursorAccountUsagePanel } from "./components/CursorAccountUsagePanel";
+import { KeyUsagePanel } from "./components/KeyUsagePanel";
 import { KpiGrid } from "./components/KpiGrid";
 import { ModelUsagePanel } from "./components/ModelUsagePanel";
+import { ProviderBreakdownPanel } from "./components/ProviderBreakdownPanel";
 import { RecentSessionsTable, type SessionKey } from "./components/RecentSessionsTable";
 import { SessionTimelinePanel } from "./components/SessionTimelinePanel";
 import { TimeScopeToolbar } from "./components/TimeScopeToolbar";
 import { TokenTrendPanel } from "./components/TokenTrendPanel";
 import { ToolRankingTable } from "./components/ToolRankingTable";
+import { TrendChart } from "./components/TrendChart";
 import {
   deriveDashboardStatus,
   formatDashboardStatusLabel,
@@ -195,6 +200,10 @@ export function DashboardPage() {
     (signal: AbortSignal) => fetchCursorAccountUsage(signal),
     []
   );
+  const keyUsageLoader = useCallback(
+    (signal: AbortSignal) => fetchKeyUsage(signal),
+    []
+  );
   const syncStatusLoader = useCallback(
     (signal: AbortSignal) => fetchSyncStatus(signal),
     []
@@ -229,6 +238,11 @@ export function DashboardPage() {
     queryClient,
     "cursor-account-usage",
     cursorUsageLoader
+  );
+  const keyUsageQuery = useQuery<KeyUsageResponse>(
+    queryClient,
+    "key-usage",
+    keyUsageLoader
   );
   const syncQuery = useQuery(queryClient, "sync-status", syncStatusLoader);
 
@@ -270,6 +284,7 @@ export function DashboardPage() {
           tokenTrendQuery.refresh(),
           sessionsQuery.refresh(),
           cursorUsageQuery.refresh(),
+          keyUsageQuery.refresh(),
           syncQuery.refresh(),
           selectedSession ? sessionDetailQuery.refresh() : Promise.resolve()
         ]);
@@ -479,6 +494,15 @@ export function DashboardPage() {
             statusMessage={tokenTrendQuery.error?.message ?? null}
             emptyMessage={pendingEmptyMessage(tokenTrendQuery, "Loading token trend...")}
           />
+          <TrendChart
+            rows={tools}
+            scope={scope}
+            scopeLabel={scopeLabel}
+            override={rankingOverride}
+            onOverrideChange={setRankingOverride}
+            statusMessage={toolsQuery.error?.message ?? null}
+            emptyMessage={pendingEmptyMessage(toolsQuery, "Loading tool activity...")}
+          />
           <ToolRankingTable
             rows={tools}
             scope={scope}
@@ -498,6 +522,7 @@ export function DashboardPage() {
             onSelect={setSelectedSession}
           />
           <ModelUsagePanel rows={overview?.tokensByModel ?? []} />
+          <ProviderBreakdownPanel rows={overview?.providerBreakdown ?? []} />
           <SessionTimelinePanel
             detail={sessionDetailQuery.data}
             loading={selectedSession !== null && isQueryPending(sessionDetailQuery)}
@@ -519,6 +544,16 @@ export function DashboardPage() {
             : null
         }
         visible={showCursorOfficialUsage}
+      />
+
+      <KeyUsagePanel
+        data={keyUsageQuery.data ?? null}
+        loading={keyUsageQuery.status === "loading"}
+        errorMessage={
+          keyUsageQuery.status === "error"
+            ? keyUsageQuery.error?.message ?? "Unable to load official key usage."
+            : null
+        }
       />
 
       <footer className="dashboard-footer">

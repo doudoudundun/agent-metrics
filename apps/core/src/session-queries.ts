@@ -1,3 +1,4 @@
+import type { TokenTrendBucket } from "@agent-metrics/contracts";
 import type { SourceVendor } from "@agent-metrics/event-schema";
 import {
   estimateCostUsd,
@@ -5,7 +6,7 @@ import {
   resolveDisplayedInputTokens,
   resolveTotalTokens
 } from "@agent-metrics/metrics-engine";
-import type { ResolvedTimeScope } from "./time-scope.js";
+import type { ResolvedTimeScope, TimeScopeRange } from "./time-scope.js";
 import type { MetricsDatabase, SourceVendorFilter } from "./core-types.js";
 import { dropCursorGenerationShadowedByOfficial } from "./cursor-account-usage.js";
 import { buildTimeWindow } from "./query-support.js";
@@ -42,6 +43,7 @@ type ProviderBreakdownRow = {
 
 type TokenTrendRow = {
   bucketStart: string;
+  bucket: TokenTrendBucket;
   label: string;
   totalTokens: number;
   inputTokens: number;
@@ -384,9 +386,8 @@ export function selectTokenTrend(
     return [];
   }
 
-  // Hourly buckets only for a single-day scope (Today / Last 24h).
-  // Lifetime still sends range=day as a placeholder — force daily buckets there,
-  // otherwise years of hourly points make the chart unusable.
+  // Bucket granularity follows the window span: hour <= 48h, day <= 45d,
+  // week <= 400d, natural month beyond that (including lifetime).
   const bucketType = resolveTokenTrendBucketType(scope);
   const formatter = new Intl.DateTimeFormat("sv-SE", {
     timeZone: scope?.timezone ?? "UTC",
@@ -404,9 +405,7 @@ export function selectTokenTrend(
     if (row.usageSource === "cursor-composer-context") {
       continue;
     }
-    const bucket = resolveTokenTrendBucket(row.createdAt, formatter, bucketType, {
-      includeYearInDayLabel: shouldIncludeYearInDayLabel(scope)
-    });
+    const bucket = resolveTokenTrendBucket(row.createdAt, formatter, bucketType);
     const displayedInputTokens = resolveDisplayedInputTokens({
       source_vendor: row.sourceVendor,
       usage_source: row.usageSource,
@@ -417,6 +416,7 @@ export function selectTokenTrend(
     });
     const current = buckets.get(bucket.key) ?? {
       bucketStart: row.createdAt,
+      bucket: bucket.bucket,
       label: bucket.label,
       totalTokens: 0,
       inputTokens: 0,
@@ -448,55 +448,116 @@ export function selectTokenTrend(
   });
 }
 
-function shouldIncludeYearInDayLabel(scope?: ResolvedTimeScope): boolean {
-  if (!scope || scope.mode === "lifetime") {
-    return scope?.mode === "lifetime";
-  }
-  if (scope.mode === "custom" && scope.windowStart && scope.windowEnd) {
-    const spanMs = Date.parse(scope.windowEnd) - Date.parse(scope.windowStart);
-    return Number.isFinite(spanMs) && spanMs > 366 * 24 * 60 * 60 * 1000;
-  }
-  return false;
-}
+const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * HOUR_MS;
+const HOUR_BUCKET_MAX_MS = 48 * HOUR_MS;
+const DAY_BUCKET_MAX_MS = 45 * DAY_MS;
+const WEEK_BUCKET_MAX_MS = 400 * DAY_MS;
 
-function resolveTokenTrendBucketType(scope?: ResolvedTimeScope): "hour" | "day" {
-  if (!scope || scope.mode === "lifetime") {
+// Calendar and rolling windows are partial while they are still running (a
+// calendar week is only hours old on Monday morning), so presets bucket on
+// their nominal duration to keep one granularity across the whole range.
+const PRESET_RANGE_MS: Record<TimeScopeRange, number> = {
+  day: DAY_MS,
+  week: 7 * DAY_MS,
+  month: 30 * DAY_MS
+};
+
+function resolveTokenTrendBucketType(scope?: ResolvedTimeScope): TokenTrendBucket {
+  const spanMs = resolveTokenTrendSpanMs(scope);
+
+  if (spanMs <= HOUR_BUCKET_MAX_MS) {
+    return "hour";
+  }
+  if (spanMs <= DAY_BUCKET_MAX_MS) {
     return "day";
   }
-  if (scope.mode === "custom") {
-    if (!scope.windowStart || !scope.windowEnd) {
-      return "day";
-    }
-    const spanMs = Date.parse(scope.windowEnd) - Date.parse(scope.windowStart);
-    return Number.isFinite(spanMs) && spanMs <= 36 * 60 * 60 * 1000 ? "hour" : "day";
+  if (spanMs <= WEEK_BUCKET_MAX_MS) {
+    return "week";
   }
-  return scope.range === "day" ? "hour" : "day";
+  return "month";
+}
+
+function resolveTokenTrendSpanMs(scope?: ResolvedTimeScope): number {
+  if (!scope || scope.mode === "lifetime") {
+    // Unbounded windows (lifetime, unscoped) take the coarsest bucket.
+    return Number.POSITIVE_INFINITY;
+  }
+
+  const nominalMs = scope.range ? PRESET_RANGE_MS[scope.range] : 0;
+  if (!scope.windowStart || !scope.windowEnd) {
+    return scope.mode === "custom" ? Number.POSITIVE_INFINITY : nominalMs;
+  }
+
+  const actualMs = Date.parse(scope.windowEnd) - Date.parse(scope.windowStart);
+  return Number.isFinite(actualMs) ? Math.max(actualMs, nominalMs) : Number.POSITIVE_INFINITY;
 }
 
 function resolveTokenTrendBucket(
   createdAt: string,
   formatter: Intl.DateTimeFormat,
-  bucketType: "hour" | "day",
-  options: { includeYearInDayLabel?: boolean } = {}
-): { key: string; label: string } {
+  bucketType: TokenTrendBucket
+): { key: string; label: string; bucket: TokenTrendBucket } {
   const date = new Date(createdAt);
   const parts = formatter.formatToParts(date);
   const year = readDatePart(parts, "year");
   const month = readDatePart(parts, "month");
   const day = readDatePart(parts, "day");
-  const hour = readDatePart(parts, "hour");
 
   if (bucketType === "hour") {
+    const hour = readDatePart(parts, "hour");
+
     return {
       key: `${year}-${month}-${day} ${hour}`,
-      label: `${month}-${day} ${hour}:00`
+      label: `${month}-${day} ${hour}:00`,
+      bucket: "hour"
+    };
+  }
+
+  if (bucketType === "week") {
+    const week = resolveLocalWeek(year, month, day);
+
+    return { key: week.key, label: week.label, bucket: "week" };
+  }
+
+  if (bucketType === "month") {
+    return {
+      key: `${year}-${month}`,
+      label: `${year}-${month}`,
+      bucket: "month"
     };
   }
 
   return {
     key: `${year}-${month}-${day}`,
-    label: options.includeYearInDayLabel ? `${year}-${month}-${day}` : `${month}-${day}`
+    label: `${month}-${day}`,
+    bucket: "day"
   };
+}
+
+/**
+ * Monday-start week of the scope-local calendar date. The part values are
+ * already local, so the weekday comes from the date rather than the UTC instant.
+ */
+function resolveLocalWeek(year: string, month: string, day: string): { key: string; label: string } {
+  const localDayMs = Date.UTC(Number(year), Number(month) - 1, Number(day));
+  const mondayOffsetDays = (new Date(localDayMs).getUTCDay() + 6) % 7;
+  const weekStartMs = localDayMs - mondayOffsetDays * DAY_MS;
+  const start = new Date(weekStartMs);
+  const end = new Date(weekStartMs + 6 * DAY_MS);
+  const startMonth = start.getUTCMonth() + 1;
+  const startDay = start.getUTCDate();
+  const endMonth = end.getUTCMonth() + 1;
+  const endDay = end.getUTCDate();
+
+  return {
+    key: `${start.getUTCFullYear()}-${padTwo(startMonth)}-${padTwo(startDay)}`,
+    label: `${startMonth}/${startDay}-${endMonth}/${endDay}`
+  };
+}
+
+function padTwo(value: number): string {
+  return String(value).padStart(2, "0");
 }
 
 function readDatePart(

@@ -197,6 +197,26 @@ export function createCanonicalSchema(db: SqliteDatabaseLike): void {
       model_aggregations_json TEXT NOT NULL DEFAULT '[]',
       model_usage_total_cost_cents REAL NOT NULL DEFAULT 0
     );
+
+    CREATE TABLE IF NOT EXISTS official_key_usage (
+      vendor TEXT NOT NULL,
+      limit_key TEXT NOT NULL,
+      window_key TEXT NOT NULL,
+      source TEXT NOT NULL,
+      limit_id TEXT,
+      limit_name TEXT,
+      primary_used_percent REAL,
+      primary_window_minutes INTEGER,
+      primary_resets_at TEXT,
+      secondary_used_percent REAL,
+      secondary_window_minutes INTEGER,
+      secondary_resets_at TEXT,
+      credits_has_credits INTEGER,
+      credits_unlimited INTEGER,
+      observed_at TEXT NOT NULL,
+      collected_at TEXT NOT NULL,
+      PRIMARY KEY (vendor, limit_key, window_key)
+    );
   `);
   createSyncRunSchema(db);
 }

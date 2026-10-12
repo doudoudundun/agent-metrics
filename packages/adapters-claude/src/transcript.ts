@@ -46,8 +46,14 @@ export type ClaudeTranscriptObservation =
       providerId: string | null;
       providerBaseUrl: string | null;
       providerHost: string | null;
-      // Estimated from the gap to the previous transcript record; includes tool time.
+      // Streaming window of the message: first assistant row -> last assistant row,
+      // both of which belong to this message, so tool execution is out of scope.
+      // Left null when the message produced a single row (no observable window).
       decodeDurationMs?: number | null;
+      // Time from the user row that triggered the message to its first assistant row.
+      // The row is written when the first content block completes (often a thinking
+      // block), so this is an upper bound on the real first-token latency.
+      firstTokenLatencyMs?: number | null;
     }
   | {
       kind: "tool_called";
@@ -104,7 +110,7 @@ export function extractClaudeTranscriptObservations(record: unknown): ClaudeTran
   const rowType = normalizeOptionalString(row.type);
   const role = normalizeOptionalString(message.role);
 
-  if (rowType === "user" || role === "user") {
+  if (isClaudeUserTranscriptRecord(row)) {
     const observations: ClaudeTranscriptObservation[] = [];
     const promptText = flattenClaudeContent(message.content);
     const promptId = normalizeOptionalString(row.promptId ?? row.prompt_id ?? row.uuid);
@@ -237,6 +243,18 @@ export function extractClaudeTranscriptObservations(record: unknown): ClaudeTran
   return observations;
 }
 
+export function isClaudeUserTranscriptRecord(record: unknown): boolean {
+  const row = asRecord(record);
+  if (row === null) {
+    return false;
+  }
+
+  const rowType = normalizeOptionalString(row.type);
+  const role = normalizeOptionalString(asRecord(row.message)?.role);
+
+  return rowType === "user" || role === "user";
+}
+
 export function extractClaudeTranscriptSessionContext(record: unknown): ClaudeSessionContext | null {
   const row = asRecord(record);
   if (row === null) {
@@ -347,7 +365,7 @@ export function normalizeClaudeTranscriptObservation(
       provider_id: observation.providerId,
       provider_base_url: observation.providerBaseUrl,
       provider_host: observation.providerHost,
-      first_token_latency_ms: null,
+      first_token_latency_ms: observation.firstTokenLatencyMs ?? null,
       decode_duration_ms: observation.decodeDurationMs ?? null
     };
   }

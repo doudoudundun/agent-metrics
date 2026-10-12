@@ -12,6 +12,7 @@ import { DashboardPage } from "./DashboardPage";
 import {
   buildExportUrl,
   fetchCursorAccountUsage,
+  fetchKeyUsage,
   fetchOverview,
   fetchSessionDetail,
   fetchSessions,
@@ -37,6 +38,7 @@ const apiMocks = vi.hoisted(() => ({
   fetchSessions: vi.fn(),
   fetchSessionDetail: vi.fn(),
   fetchCursorAccountUsage: vi.fn(),
+  fetchKeyUsage: vi.fn(),
   fetchSyncRun: vi.fn(),
   fetchSyncStatus: vi.fn(),
   triggerSync: vi.fn(),
@@ -159,6 +161,7 @@ function seedContractApiMocks(): void {
     nextCursor: null
   });
   vi.mocked(fetchCursorAccountUsage).mockResolvedValue(null);
+  vi.mocked(fetchKeyUsage).mockResolvedValue({ updatedAt: null, entries: [] });
   vi.mocked(fetchSessionDetail).mockResolvedValue(null as never);
   vi.mocked(fetchSyncStatus).mockResolvedValue({
     generatedAt: "2026-05-27T10:30:00.000Z",

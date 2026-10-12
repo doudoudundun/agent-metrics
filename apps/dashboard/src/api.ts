@@ -1,6 +1,7 @@
 import {
   ApiErrorResponseSchema,
   CursorAccountUsageResponseSchema,
+  KeyUsageResponseSchema,
   ManualSyncResponseSchema,
   OverviewResponseSchema,
   SessionDetailResponseSchema,
@@ -12,6 +13,7 @@ import {
   WidgetSnapshotResponseSchema,
   type ManualSyncResponse,
   type CursorAccountUsageResponse,
+  type KeyUsageResponse,
   type SourceVendor as EventSourceVendor,
   type OverviewResponse,
   type SessionDetailResponse,
@@ -33,6 +35,7 @@ export type SourceVendor = "all" | EventSourceVendor;
 export type {
   ManualSyncResponse,
   CursorAccountUsageResponse,
+  KeyUsageResponse,
   OverviewResponse,
   SessionDetailResponse,
   SessionsResponse,
@@ -203,6 +206,14 @@ export async function fetchCursorAccountUsage(signal?: AbortSignal): Promise<Cur
     }
     throw error;
   }
+}
+
+export async function fetchKeyUsage(signal?: AbortSignal): Promise<KeyUsageResponse> {
+  return parseContractResponse(
+    await fetchContractJson("/api/key-usage", { signal }),
+    KeyUsageResponseSchema,
+    "/api/key-usage"
+  );
 }
 
 export async function fetchSyncStatus(signal?: AbortSignal): Promise<SyncStatusResponse> {

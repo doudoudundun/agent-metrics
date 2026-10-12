@@ -7,6 +7,7 @@ import { appendJsonLine } from "@agent-metrics/shared-utils";
 import {
   extractClaudeTranscriptObservations,
   extractClaudeTranscriptSessionContext,
+  isClaudeUserTranscriptRecord,
   type ClaudeSessionContext,
   normalizeClaudeTranscriptObservation,
   type ClaudeTranscriptObservation
@@ -29,7 +30,20 @@ type TranscriptLedger = {
   keys: string[];
 };
 
+type ClaudeUsageObservation = Extract<ClaudeTranscriptObservation, { kind: "token_usage_recorded" }>;
+
+type PendingUsage = {
+  observation: ClaudeUsageObservation;
+  firstRowMs: number | null;
+  lastRowMs: number | null;
+  triggeringUserMs: number | null;
+};
+
 const STALE_TRANSCRIPT_LOCK_MS = 30_000;
+// An assistant row that follows its user row by more than this was not produced by
+// that prompt (the turn sat idle, was aborted, or was resumed much later), so the
+// latency is left unknown instead of being reported as a very slow first token.
+const MAX_FIRST_TOKEN_LATENCY_MS = 600_000;
 
 export async function recordClaudeTranscriptReference(input: {
   manifestPath: string;
@@ -189,7 +203,40 @@ async function syncTranscriptReference(input: {
   // Maps tool_use ids encountered in this transcript to their human-readable tool names so that
   // tool_result observations (which only carry tool_use_id) can recover the original tool name.
   const toolUseIdToName = new Map<string, string>();
-  let lastRecordMs: number | null = null;
+  // Assistant rows of one message id (thinking / text / tool_use blocks) are written
+  // one at a time as each block completes, and every one of them repeats the same flat
+  // usage snapshot. The usage event is therefore held back until the message stops
+  // streaming so that it can carry the timings only a closed window provides:
+  //   first_token_latency_ms = first assistant row - the user row that triggered it
+  //   decode_duration_ms     = last assistant row - first assistant row
+  // The window closes on the next user row, on another message's usage row, or at the
+  // end of the batch. A message split across batches keeps the rows observed so far, so its decode
+  // may be understated, but the event is never emitted twice or with a foreign anchor.
+  const pendingUsage = new Map<string, PendingUsage>();
+  let triggeringUserMs: number | null = null;
+
+  const flushPendingUsage = async (): Promise<void> => {
+    const pending = [...pendingUsage.values()];
+    pendingUsage.clear();
+
+    for (const entry of pending) {
+      const ledgerKey = buildLedgerKey(entry.observation);
+      if (input.seenKeys.has(ledgerKey)) {
+        continue;
+      }
+
+      await appendJsonLine(
+        input.eventLogPath,
+        normalizeClaudeTranscriptObservation({
+          ...entry.observation,
+          firstTokenLatencyMs: resolveFirstTokenLatencyMs(entry),
+          decodeDurationMs: resolveDecodeDurationMs(entry)
+        })
+      );
+      input.seenKeys.add(ledgerKey);
+      ledgerChanged = true;
+    }
+  };
 
   for (const line of completeLines) {
     const record = parseTranscriptLine(line, input.reference);
@@ -197,26 +244,40 @@ async function syncTranscriptReference(input: {
       continue;
     }
 
-    // Claude transcript lines only carry a completion timestamp, so the decode
-    // window is approximated by the gap to the previous record (tool time
-    // included). Left null when the gap is unknown.
-    const rawTimestamp = record.timestamp;
-    const recordMs =
-      typeof rawTimestamp === "string" ? Date.parse(rawTimestamp) : Number.NaN;
-    const decodeDurationMs =
-      lastRecordMs !== null && Number.isFinite(recordMs) && recordMs >= lastRecordMs
-        ? recordMs - lastRecordMs
-        : null;
-    if (Number.isFinite(recordMs)) {
-      lastRecordMs = recordMs;
+    const observations = extractClaudeTranscriptObservations(record);
+    const recordMs = resolveTranscriptRecordMs(record);
+    const isUserRecord = isClaudeUserTranscriptRecord(record);
+    const nextUsage = observations.find(
+      (observation): observation is ClaudeUsageObservation =>
+        observation.kind === "token_usage_recorded"
+    );
+
+    if (isUserRecord || (nextUsage !== undefined && !pendingUsage.has(nextUsage.messageId))) {
+      await flushPendingUsage();
     }
 
-    const observations = extractClaudeTranscriptObservations(record);
+    if (isUserRecord) {
+      // The user row in front of a message anchors its first-token latency. A row
+      // without a usable timestamp clears the anchor instead of reusing a stale one.
+      triggeringUserMs = recordMs;
+    }
 
     for (const observation of observations) {
       if (observation.kind === "token_usage_recorded") {
-        observation.decodeDurationMs = decodeDurationMs;
+        const pending = pendingUsage.get(observation.messageId);
+        if (pending === undefined) {
+          pendingUsage.set(observation.messageId, {
+            observation,
+            firstRowMs: recordMs,
+            lastRowMs: recordMs,
+            triggeringUserMs
+          });
+        } else if (recordMs !== null) {
+          pending.lastRowMs = recordMs;
+        }
+        continue;
       }
+
       if (observation.kind === "tool_called") {
         toolUseIdToName.set(observation.toolUseId, observation.toolName);
       } else if (observation.kind === "tool_finished" && observation.toolName === null) {
@@ -236,6 +297,10 @@ async function syncTranscriptReference(input: {
       ledgerChanged = true;
     }
   }
+
+  // Rows of a message whose window never closed (the session ended, or the file is
+  // still being written) must still reach the event log exactly once.
+  await flushPendingUsage();
 
   const nextCursor = {
     offset: fileContents.length,
@@ -319,6 +384,33 @@ function buildLedgerKey(observation: ClaudeTranscriptObservation): string {
   }
 
   return `tool_finished:${observation.sessionId}:${observation.toolUseId}`;
+}
+
+function resolveTranscriptRecordMs(record: Record<string, unknown>): number | null {
+  const rawTimestamp = record.timestamp;
+  const parsed = typeof rawTimestamp === "string" ? Date.parse(rawTimestamp) : Number.NaN;
+
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function resolveFirstTokenLatencyMs(pending: PendingUsage): number | null {
+  const { firstRowMs, triggeringUserMs } = pending;
+  if (firstRowMs === null || triggeringUserMs === null) {
+    return null;
+  }
+
+  const latencyMs = firstRowMs - triggeringUserMs;
+
+  return latencyMs >= 0 && latencyMs <= MAX_FIRST_TOKEN_LATENCY_MS ? latencyMs : null;
+}
+
+function resolveDecodeDurationMs(pending: PendingUsage): number | null {
+  const { firstRowMs, lastRowMs } = pending;
+  if (firstRowMs === null || lastRowMs === null || lastRowMs <= firstRowMs) {
+    return null;
+  }
+
+  return lastRowMs - firstRowMs;
 }
 
 async function loadTranscriptManifest(manifestPath: string): Promise<ClaudeTranscriptReference[]> {

@@ -65,13 +65,25 @@ export const ToolsResponseSchema = AggregateMetaSchema.extend({
   rows: z.array(ToolRowSchema)
 });
 
+/**
+ * Trend granularity, mirroring the core bucket mapping
+ * (hour <= 48h, day <= 45d, week <= 400d, month beyond that incl. lifetime).
+ */
+export const TokenTrendBucketSchema = z.enum(["hour", "day", "week", "month"]);
+
+/**
+ * `bucket` stays optional so responses and fixtures written before week/month
+ * buckets existed remain valid; the core always sends it now.
+ */
 export const TokenTrendPointSchema = TokenComponentsSchema.extend({
   bucketStart: z.string().datetime(),
+  bucket: TokenTrendBucketSchema.optional(),
   label: z.string().min(1),
   cacheHitRate: FiniteRate
 });
 
 export const TokenTrendResponseSchema = AggregateMetaSchema.extend({
+  bucket: TokenTrendBucketSchema.optional(),
   rows: z.array(TokenTrendPointSchema)
 });
 
@@ -104,6 +116,7 @@ export type ProviderBreakdownRow = z.infer<typeof ProviderBreakdownRowSchema>;
 export type OverviewResponse = z.infer<typeof OverviewResponseSchema>;
 export type ToolRow = z.infer<typeof ToolRowSchema>;
 export type ToolsResponse = z.infer<typeof ToolsResponseSchema>;
+export type TokenTrendBucket = z.infer<typeof TokenTrendBucketSchema>;
 export type TokenTrendPoint = z.infer<typeof TokenTrendPointSchema>;
 export type TokenTrendResponse = z.infer<typeof TokenTrendResponseSchema>;
 export type WidgetSnapshotResponse = z.infer<typeof WidgetSnapshotResponseSchema>;

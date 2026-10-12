@@ -920,6 +920,70 @@ body[data-desktop-surface="desktop-widget"] .app-shell--floating {
   font-size: 10px;
 }
 
+.provider-breakdown-panel {
+  min-height: 180px;
+}
+
+.provider-breakdown-list {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.provider-breakdown-row {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid rgba(226, 236, 247, 0.08);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.provider-breakdown-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px 12px;
+}
+
+.provider-breakdown-main strong {
+  font-size: 0.92rem;
+}
+
+.provider-breakdown-main span {
+  color: #c4d3e5;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.provider-breakdown-main .provider-breakdown-host {
+  color: #8ea6c0;
+  font-size: 10px;
+}
+
+.provider-breakdown-main .provider-breakdown-share {
+  color: var(--aqua);
+  font-weight: 600;
+}
+
+.provider-breakdown-track {
+  overflow: hidden;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.provider-breakdown-bar {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #d1ff4d, #5cc7ff);
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
@@ -2075,6 +2139,23 @@ tbody tr[data-selected="true"] .session-select {
 .dashboard-page .kpi-chip:hover {
   border-color: rgba(16, 32, 48, 0.22);
   box-shadow: none;
+}
+
+.dashboard-page .provider-breakdown-row {
+  border-color: rgba(16, 32, 48, 0.12);
+  background: rgba(16, 32, 48, 0.02);
+}
+
+.dashboard-page .provider-breakdown-main span {
+  color: var(--ink-soft);
+}
+
+.dashboard-page .provider-breakdown-main .provider-breakdown-share {
+  color: var(--ink);
+}
+
+.dashboard-page .provider-breakdown-track {
+  background: rgba(16, 32, 48, 0.08);
 }
 
 @media (max-width: 1024px) {

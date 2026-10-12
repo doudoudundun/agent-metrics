@@ -7,6 +7,7 @@ import {
   XAxis,
   YAxis
 } from "recharts";
+import type { TokenTrendBucket } from "@agent-metrics/contracts";
 import type { TokenTrendPoint } from "../api";
 import type { TimeScopeSelection } from "../time-scope";
 import { PanelScopeControls } from "./PanelScopeControls";
@@ -26,6 +27,17 @@ const TOKEN_FORMATTER = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 1
 });
 
+const BUCKET_LABELS: Record<TokenTrendBucket, string> = {
+  hour: "Hour",
+  day: "Day",
+  week: "Week",
+  month: "Month"
+};
+
+// Weekly and monthly buckets can span years (lifetime scope), so their tick
+// labels are thinned; hourly and daily rows keep the Recharts default spacing.
+const MAX_WEEK_MONTH_TICKS = 8;
+
 export function TokenTrendPanel({
   rows,
   scope,
@@ -35,6 +47,7 @@ export function TokenTrendPanel({
   statusMessage,
   emptyMessage
 }: TokenTrendPanelProps) {
+  const bucket = rows[0]?.bucket;
   const totalTokens = rows.reduce((sum, row) => sum + row.totalTokens, 0);
   const totalCacheRead = rows.reduce((sum, row) => sum + row.cacheReadTokens, 0);
   const totalCacheableInput = rows.reduce(
@@ -91,7 +104,13 @@ export function TokenTrendPanel({
             <ResponsiveContainer width="100%" height={248}>
               <LineChart data={rows} margin={{ top: 8, right: 8, bottom: 4, left: 0 }}>
                 <CartesianGrid stroke="rgba(225, 232, 242, 0.12)" vertical={false} />
-                <XAxis dataKey="label" stroke="#95a7c0" tickLine={false} axisLine={false} />
+                <XAxis
+                  dataKey="label"
+                  stroke="#95a7c0"
+                  tickLine={false}
+                  axisLine={false}
+                  interval={resolveTickInterval(bucket, rows.length)}
+                />
                 <YAxis
                   yAxisId="tokens"
                   stroke="#95a7c0"
@@ -122,7 +141,7 @@ export function TokenTrendPanel({
 
                     return [value.toLocaleString(), name];
                   }}
-                  labelFormatter={(label) => `Bucket ${label}`}
+                  labelFormatter={(label) => formatBucketLabel(bucket, String(label))}
                 />
                 <Line
                   yAxisId="tokens"
@@ -192,4 +211,21 @@ function formatCompactTokens(value: number): string {
 
 function formatPercent(value: number): string {
   return `${(value * 100).toFixed(2)}%`;
+}
+
+function formatBucketLabel(bucket: TokenTrendBucket | undefined, label: string): string {
+  return bucket ? `${BUCKET_LABELS[bucket]} ${label}` : `Bucket ${label}`;
+}
+
+function resolveTickInterval(
+  bucket: TokenTrendBucket | undefined,
+  pointCount: number
+): number | undefined {
+  if (bucket !== "week" && bucket !== "month") {
+    return undefined;
+  }
+
+  return pointCount <= MAX_WEEK_MONTH_TICKS
+    ? 0
+    : Math.ceil(pointCount / MAX_WEEK_MONTH_TICKS) - 1;
 }

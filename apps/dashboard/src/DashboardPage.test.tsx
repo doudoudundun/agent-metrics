@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   buildExportUrl,
   fetchCursorAccountUsage,
+  fetchKeyUsage,
   fetchOverview,
   fetchSessionDetail,
   fetchSessions,
@@ -36,6 +37,7 @@ const apiMocks = vi.hoisted(() => ({
   fetchSessions: vi.fn(),
   fetchSessionDetail: vi.fn(),
   fetchCursorAccountUsage: vi.fn(),
+  fetchKeyUsage: vi.fn(),
   fetchSyncRun: vi.fn(),
   fetchSyncStatus: vi.fn(),
   buildExportUrl: vi.fn(),
@@ -58,6 +60,7 @@ describe("DashboardPage", () => {
     vi.mocked(fetchSessions).mockReset();
     vi.mocked(fetchSessionDetail).mockReset();
     vi.mocked(fetchCursorAccountUsage).mockReset();
+    vi.mocked(fetchKeyUsage).mockReset();
     vi.mocked(fetchSyncRun).mockReset();
     vi.mocked(fetchSyncStatus).mockReset();
     vi.mocked(triggerSync).mockReset();
@@ -84,6 +87,47 @@ describe("DashboardPage", () => {
     expect(screen.getByRole("link", { name: "Export CSV" })).toHaveAttribute("href", "/api/exports/csv");
     expect(screen.getByRole("link", { name: "Export JSON" })).toHaveAttribute("href", "/api/exports/json");
     expect(fetchSyncStatus).toHaveBeenCalled();
+
+    view.unmount();
+  });
+
+  it("renders the provider breakdown shares and the activity snapshot chart", async () => {
+    const view = render(<DashboardPage />);
+    await screen.findByRole("region", { name: "Overview metrics for Today" });
+
+    expect(screen.getByRole("heading", { name: "Provider Breakdown" })).toBeInTheDocument();
+    const providerRows = within(
+      screen.getByRole("list", { name: "Provider token breakdown" })
+    ).getAllByRole("listitem");
+
+    expect(providerRows).toHaveLength(3);
+    expect(providerRows[0]).toHaveTextContent("anthropic");
+    expect(providerRows[0]).toHaveTextContent("api.anthropic.com");
+    expect(providerRows[0]).toHaveTextContent("43.8%");
+    expect(providerRows[1]).toHaveTextContent("openai");
+    expect(providerRows[1]).toHaveTextContent("32.8%");
+    expect(providerRows[2]).toHaveTextContent("unknown");
+    expect(providerRows[2]).toHaveTextContent("gateway.internal");
+    expect(providerRows[2]).toHaveTextContent("23.4%");
+
+    const snapshot = screen.getByRole("heading", { name: "Activity Snapshot" }).closest("section");
+    expect(snapshot).not.toBeNull();
+    expect(within(snapshot as HTMLElement).getByText("Top 5 by calls")).toBeInTheDocument();
+    expect(within(snapshot as HTMLElement).getByText("6 calls total")).toBeInTheDocument();
+    expect(within(snapshot as HTMLElement).getByText("Following global: Today")).toBeInTheDocument();
+    // Snapshot chart and tool ranking table share one tools query.
+    await waitFor(() => expect(fetchTools).toHaveBeenCalledTimes(1));
+
+    view.unmount();
+  });
+
+  it("shows the provider breakdown empty state when the overview carries no provider rows", async () => {
+    vi.mocked(fetchOverview).mockResolvedValue(buildZeroOverview());
+
+    const view = render(<DashboardPage />);
+
+    expect(await screen.findByText("No provider token usage in this scope.")).toBeInTheDocument();
+    expect(screen.getByText("0 providers")).toBeInTheDocument();
 
     view.unmount();
   });
@@ -618,6 +662,7 @@ function seedApiMocks(): void {
     }]
   });
   vi.mocked(fetchCursorAccountUsage).mockResolvedValue(null);
+  vi.mocked(fetchKeyUsage).mockResolvedValue({ updatedAt: null, entries: [] });
   vi.mocked(fetchSessionDetail).mockResolvedValue(buildSessionDetail());
   vi.mocked(fetchSyncRun).mockImplementation(async (runId) => buildSyncRun(runId, "succeeded"));
   vi.mocked(buildExportUrl).mockImplementation((format: "csv" | "json") => `/api/exports/${format}`);
@@ -748,7 +793,11 @@ function buildReadyOverview() {
         costUsd: 12.34
       }
     ],
-    providerBreakdown: [],
+    providerBreakdown: [
+      { providerId: "openai", providerHost: null, totalTokens: 15000 },
+      { providerId: "unknown", providerHost: "gateway.internal", totalTokens: 10678 },
+      { providerId: "anthropic", providerHost: "api.anthropic.com", totalTokens: 20000 }
+    ],
     totalCostUsd: 12.34
   };
 }

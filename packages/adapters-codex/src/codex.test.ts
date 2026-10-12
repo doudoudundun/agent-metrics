@@ -983,6 +983,163 @@ describe("extractCodexEventsFromRollout", () => {
     ]);
   });
 
+  it("derives first-token latency from the turn start for the turn's first token_count report", () => {
+    const tokenCount = (timestamp: string, totalTokens: number, output: number) =>
+      JSON.stringify({
+        timestamp,
+        type: "event_msg",
+        payload: {
+          type: "token_count",
+          info: {
+            total_token_usage: {
+              input_tokens: 1000,
+              cached_input_tokens: 0,
+              output_tokens: output,
+              reasoning_output_tokens: 0,
+              total_tokens: totalTokens
+            },
+            last_token_usage: {
+              input_tokens: 1000,
+              cached_input_tokens: 0,
+              output_tokens: output,
+              reasoning_output_tokens: 0,
+              total_tokens: totalTokens
+            }
+          }
+        }
+      });
+    const taskStarted = (timestamp: string) =>
+      JSON.stringify({
+        timestamp,
+        type: "event_msg",
+        payload: {
+          type: "task_started",
+          started_at: Math.floor(Date.parse(timestamp) / 1000)
+        }
+      });
+
+    const events = extractCodexEventsFromRollout({
+      filePath: "C:/Users/test/.codex/sessions/2026/05/27/rollout-2026-05-27T10-00-00-019e5dc9-b10c-7371-8edd-066e8db7e50d.jsonl",
+      contents: [
+        JSON.stringify({
+          timestamp: "2026-05-27T10:00:00.000Z",
+          type: "session_meta",
+          payload: {
+            id: "019e5dc9-b10c-7371-8edd-066e8db7e50d",
+            timestamp: "2026-05-27T10:00:00.000Z",
+            cwd: "D:/projects/dev"
+          }
+        }),
+        taskStarted("2026-05-27T10:00:00.000Z"),
+        tokenCount("2026-05-27T10:00:12.000Z", 1100, 100),
+        tokenCount("2026-05-27T10:00:20.500Z", 1300, 200)
+      ].join("\n")
+    });
+
+    const usageEvents = events.filter((event) => event.type === "token.usage.recorded");
+    expect(usageEvents).toHaveLength(2);
+    // The turn start comes from started_at (unix seconds); the first report carries
+    // the latency and has no predecessor to measure a decode window against.
+    expect(usageEvents[0]).toEqual(
+      expect.objectContaining({ first_token_latency_ms: 12000, decode_duration_ms: null })
+    );
+    // A later report in the same turn is a mid-stream snapshot, so only decode moves.
+    expect(usageEvents[1]).toEqual(
+      expect.objectContaining({ first_token_latency_ms: null, decode_duration_ms: 8500 })
+    );
+
+    for (const event of events) {
+      expect(NormalizedEventV2Schema.safeParse(event).success).toBe(true);
+    }
+  });
+
+  it("resets the first-token anchor per turn and drops implausible latencies", () => {
+    const tokenCount = (timestamp: string, totalTokens: number, output: number) =>
+      JSON.stringify({
+        timestamp,
+        type: "event_msg",
+        payload: {
+          type: "token_count",
+          info: {
+            total_token_usage: {
+              input_tokens: 1000,
+              cached_input_tokens: 0,
+              output_tokens: output,
+              reasoning_output_tokens: 0,
+              total_tokens: totalTokens
+            },
+            last_token_usage: {
+              input_tokens: 1000,
+              cached_input_tokens: 0,
+              output_tokens: output,
+              reasoning_output_tokens: 0,
+              total_tokens: totalTokens
+            }
+          }
+        }
+      });
+    const taskStartedWithoutStartedAt = (timestamp: string) =>
+      JSON.stringify({
+        timestamp,
+        type: "event_msg",
+        payload: { type: "task_started" }
+      });
+    const taskStarted = (timestamp: string) =>
+      JSON.stringify({
+        timestamp,
+        type: "event_msg",
+        payload: {
+          type: "task_started",
+          started_at: Math.floor(Date.parse(timestamp) / 1000)
+        }
+      });
+
+    const events = extractCodexEventsFromRollout({
+      filePath: "C:/Users/test/.codex/sessions/2026/05/27/rollout-2026-05-27T10-00-00-019e5dc9-b10c-7371-8edd-066e8db7e50d.jsonl",
+      contents: [
+        JSON.stringify({
+          timestamp: "2026-05-27T10:00:00.000Z",
+          type: "session_meta",
+          payload: {
+            id: "019e5dc9-b10c-7371-8edd-066e8db7e50d",
+            timestamp: "2026-05-27T10:00:00.000Z",
+            cwd: "D:/projects/dev"
+          }
+        }),
+        // No turn has started yet, so this report has no anchor at all.
+        tokenCount("2026-05-27T10:00:10.000Z", 1100, 100),
+        // Rollouts without started_at fall back to the row timestamp.
+        taskStartedWithoutStartedAt("2026-05-27T10:05:00.000Z"),
+        tokenCount("2026-05-27T10:05:08.000Z", 1300, 200),
+        tokenCount("2026-05-27T10:05:15.000Z", 1500, 300),
+        // A new turn whose first report is 20 minutes late: idle, not a slow start.
+        taskStarted("2026-05-27T10:30:00.000Z"),
+        tokenCount("2026-05-27T10:50:00.000Z", 1700, 400),
+        tokenCount("2026-05-27T10:50:07.000Z", 1900, 500)
+      ].join("\n")
+    });
+
+    const usageEvents = events.filter((event) => event.type === "token.usage.recorded");
+    expect(usageEvents.map((event) => event.first_token_latency_ms)).toEqual([
+      null,
+      8000,
+      null,
+      null,
+      null
+    ]);
+    expect(usageEvents.map((event) => event.decode_duration_ms)).toEqual([
+      null,
+      null,
+      7000,
+      null,
+      7000
+    ]);
+
+    for (const event of events) {
+      expect(NormalizedEventV2Schema.safeParse(event).success).toBe(true);
+    }
+  });
+
   it("tags Multica rollouts via path and originator as codex:multica", () => {
     const byPath = extractCodexEventsFromRollout({
       filePath:

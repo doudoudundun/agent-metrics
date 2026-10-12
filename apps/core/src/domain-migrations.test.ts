@@ -149,6 +149,7 @@ describe("runDomainMigrations", () => {
       "event_diagnostics",
       "event_observations",
       "normalized_events",
+      "official_key_usage",
       "pending_usage_migrations",
       "projection_watermarks",
       "schema_migrations",

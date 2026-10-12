@@ -418,6 +418,44 @@ describe("extractClaudeTranscriptObservations", () => {
     });
   });
 
+  it("carries transcript-derived usage timings into the normalized usage event", () => {
+    const observation = {
+      kind: "token_usage_recorded",
+      sessionId: "ses_1",
+      workspacePath: "D:/projects/dev/agent-metrics",
+      timestamp: "2026-05-27T10:00:10.000Z",
+      messageId: "msg_1",
+      model: "sonnet-test",
+      inputTokens: 12,
+      outputTokens: 5,
+      cacheCreationInputTokens: 0,
+      cacheReadInputTokens: 1,
+      serverToolUse: "{}",
+      providerId: null,
+      providerBaseUrl: null,
+      providerHost: null
+    } as const;
+
+    expect(
+      normalizeClaudeTranscriptObservation({
+        ...observation,
+        firstTokenLatencyMs: 3000,
+        decodeDurationMs: 4500
+      })
+    ).toMatchObject({
+      type: "token.usage.recorded",
+      first_token_latency_ms: 3000,
+      decode_duration_ms: 4500
+    });
+
+    // Observations that carry no timing must still emit explicit nulls.
+    expect(normalizeClaudeTranscriptObservation(observation)).toMatchObject({
+      type: "token.usage.recorded",
+      first_token_latency_ms: null,
+      decode_duration_ms: null
+    });
+  });
+
   it("preserves the transcript tool use identity in normalized tool events", () => {
     const event = normalizeClaudeTranscriptObservation({
       kind: "tool_called",

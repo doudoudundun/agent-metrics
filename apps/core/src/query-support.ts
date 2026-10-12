@@ -1,5 +1,6 @@
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
+import { TokenTrendBucketSchema, type TokenTrendBucket } from "@agent-metrics/contracts";
 import { resolveTimeScope, type ResolvedTimeScope } from "./time-scope.js";
 import type { MetricsDatabase, SourceVendorFilter } from "./core-types.js";
 
@@ -85,10 +86,14 @@ export function withScopeMetadata<T extends object>(
   timezone: string;
   windowStart: string | null;
   windowEnd: string | null;
+  bucket?: TokenTrendBucket;
   updatedAt: string;
 } {
+  const bucket = readRowBucket(payload);
+
   return {
     ...payload,
+    ...(bucket ? { bucket } : {}),
     mode: scope.mode,
     range: scope.range,
     timezone: scope.timezone,
@@ -96,6 +101,26 @@ export function withScopeMetadata<T extends object>(
     windowEnd: scope.windowEnd,
     updatedAt: scope.updatedAt
   };
+}
+
+/**
+ * Trend rows carry their own granularity; promote it to the envelope when every
+ * row agrees so clients can size axis density without re-deriving the window.
+ */
+function readRowBucket(payload: object): TokenTrendBucket | null {
+  const rows = (payload as { rows?: unknown }).rows;
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return null;
+  }
+  const bucket = (rows[0] as { bucket?: unknown } | undefined)?.bucket;
+  const parsed = TokenTrendBucketSchema.safeParse(bucket);
+  if (!parsed.success) {
+    return null;
+  }
+
+  return rows.every((row) => (row as { bucket?: unknown }).bucket === parsed.data)
+    ? parsed.data
+    : null;
 }
 
 export function queryRecord(query: unknown): Record<string, unknown> {

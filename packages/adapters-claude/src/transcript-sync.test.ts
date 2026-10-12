@@ -79,13 +79,13 @@ describe("syncKnownClaudeTranscripts", () => {
       "assistant.responded",
       "token.usage.recorded"
     ]);
-    // The usage record carries the gap to the previous transcript record as an
-    // estimated decode window (10:00:00 user -> 10:00:05 assistant).
+    // The usage record carries the first-token latency measured from the user row
+    // (10:00:00 -> 10:00:05); a single assistant row has no observable window, so decode stays null.
     expect(eventLines[2]).toEqual(
       expect.objectContaining({
         type: "token.usage.recorded",
-        first_token_latency_ms: null,
-        decode_duration_ms: 5000
+        first_token_latency_ms: 5000,
+        decode_duration_ms: null
       })
     );
   });
@@ -481,7 +481,269 @@ describe("syncKnownClaudeTranscripts", () => {
     ]);
     await expect(readFile(lockPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
+
+  it("derives first-token latency and the streaming window from a message's assistant rows", async () => {
+    const repoRoot = await mkdtemp(join(tmpdir(), "agent-metrics-transcript-sync-"));
+    const transcriptPath = join(repoRoot, "claude-session.jsonl");
+    const paths = getAgentMetricsPaths(repoRoot);
+
+    await writeClaudeTranscript(transcriptPath, [
+      claudeUserRow("prompt_1", "2026-05-27T10:00:00.000Z"),
+      claudeAssistantRow("msg_1", "2026-05-27T10:00:03.000Z", [CLAUDE_THINKING_BLOCK]),
+      claudeAssistantRow("msg_1", "2026-05-27T10:00:07.500Z", [CLAUDE_TEXT_BLOCK], "end_turn"),
+      claudeUserRow("prompt_2", "2026-05-27T10:01:00.000Z"),
+      claudeAssistantRow("msg_2", "2026-05-27T10:01:04.000Z", [CLAUDE_TEXT_BLOCK]),
+      claudeAssistantRow("msg_2", "2026-05-27T10:01:09.000Z", [CLAUDE_TEXT_BLOCK], "end_turn")
+    ]);
+
+    await recordClaudeTranscriptReference({
+      manifestPath: paths.transcriptManifestPath,
+      transcriptPath,
+      workspacePath: repoRoot,
+      sessionId: "ses_1"
+    });
+
+    await syncKnownClaudeTranscripts({
+      manifestPath: paths.transcriptManifestPath,
+      eventLogPath: paths.eventLogPath,
+      transcriptCursorPath: paths.transcriptCursorPath,
+      transcriptLedgerPath: paths.transcriptLedgerPath,
+      discoveryRoots: []
+    });
+
+    const usageEvents = (await readJsonLines(paths.eventLogPath)).filter(
+      (line) => line.type === "token.usage.recorded"
+    );
+
+    // Every assistant row of a message repeats the same flat usage snapshot, so the
+    // message yields one event that keeps the first row's timestamp.
+    expect(usageEvents).toHaveLength(2);
+    expect(usageEvents[0]).toEqual(
+      expect.objectContaining({
+        message_id: "msg_1",
+        timestamp: "2026-05-27T10:00:03.000Z",
+        first_token_latency_ms: 3000,
+        decode_duration_ms: 4500
+      })
+    );
+    expect(usageEvents[1]).toEqual(
+      expect.objectContaining({
+        message_id: "msg_2",
+        timestamp: "2026-05-27T10:01:04.000Z",
+        first_token_latency_ms: 4000,
+        decode_duration_ms: 5000
+      })
+    );
+  });
+
+  it("emits a message's usage event once when its streaming window spans two sync batches", async () => {
+    const repoRoot = await mkdtemp(join(tmpdir(), "agent-metrics-transcript-sync-"));
+    const transcriptPath = join(repoRoot, "claude-session.jsonl");
+    const paths = getAgentMetricsPaths(repoRoot);
+
+    await writeClaudeTranscript(transcriptPath, [
+      claudeUserRow("prompt_1", "2026-05-27T10:00:00.000Z"),
+      claudeAssistantRow("msg_1", "2026-05-27T10:00:02.000Z", [CLAUDE_THINKING_BLOCK])
+    ]);
+
+    await recordClaudeTranscriptReference({
+      manifestPath: paths.transcriptManifestPath,
+      transcriptPath,
+      workspacePath: repoRoot,
+      sessionId: "ses_1"
+    });
+
+    await syncKnownClaudeTranscripts({
+      manifestPath: paths.transcriptManifestPath,
+      eventLogPath: paths.eventLogPath,
+      transcriptCursorPath: paths.transcriptCursorPath,
+      transcriptLedgerPath: paths.transcriptLedgerPath,
+      discoveryRoots: []
+    });
+
+    await appendClaudeTranscript(transcriptPath, [
+      claudeAssistantRow("msg_1", "2026-05-27T10:00:08.000Z", [CLAUDE_TEXT_BLOCK], "end_turn"),
+      claudeUserRow("prompt_2", "2026-05-27T10:01:00.000Z")
+    ]);
+
+    await syncKnownClaudeTranscripts({
+      manifestPath: paths.transcriptManifestPath,
+      eventLogPath: paths.eventLogPath,
+      transcriptCursorPath: paths.transcriptCursorPath,
+      transcriptLedgerPath: paths.transcriptLedgerPath,
+      discoveryRoots: []
+    });
+
+    const eventLines = await readJsonLines(paths.eventLogPath);
+    const usageEvents = eventLines.filter((line) => line.type === "token.usage.recorded");
+
+    // The first batch closed the window with a single row, so decode stays null and
+    // the later rows of the same message must not produce a second usage event.
+    expect(usageEvents).toHaveLength(1);
+    expect(usageEvents[0]).toEqual(
+      expect.objectContaining({
+        message_id: "msg_1",
+        first_token_latency_ms: 2000,
+        decode_duration_ms: null
+      })
+    );
+    expect(eventLines.filter((line) => line.type === "assistant.responded")).toHaveLength(1);
+  });
+
+  it("leaves first-token latency null when the anchor is implausible or unusable", async () => {
+    const repoRoot = await mkdtemp(join(tmpdir(), "agent-metrics-transcript-sync-"));
+    const transcriptPath = join(repoRoot, "claude-session.jsonl");
+    const paths = getAgentMetricsPaths(repoRoot);
+
+    await writeClaudeTranscript(transcriptPath, [
+      claudeUserRow("prompt_1", "2026-05-27T09:00:00.000Z"),
+      // Twenty minutes later: the turn sat idle, so the gap is not a first-token latency.
+      claudeAssistantRow("msg_1", "2026-05-27T09:20:00.000Z", [CLAUDE_THINKING_BLOCK]),
+      claudeAssistantRow("msg_1", "2026-05-27T09:20:05.000Z", [CLAUDE_TEXT_BLOCK], "end_turn"),
+      // A user row without a usable timestamp clears the anchor instead of reusing it.
+      claudeUserRow("prompt_2", "not-a-timestamp"),
+      claudeAssistantRow("msg_2", "2026-05-27T09:21:00.000Z", [CLAUDE_THINKING_BLOCK]),
+      claudeAssistantRow("msg_2", "2026-05-27T09:21:02.000Z", [CLAUDE_TEXT_BLOCK], "end_turn")
+    ]);
+
+    await recordClaudeTranscriptReference({
+      manifestPath: paths.transcriptManifestPath,
+      transcriptPath,
+      workspacePath: repoRoot,
+      sessionId: "ses_1"
+    });
+
+    await syncKnownClaudeTranscripts({
+      manifestPath: paths.transcriptManifestPath,
+      eventLogPath: paths.eventLogPath,
+      transcriptCursorPath: paths.transcriptCursorPath,
+      transcriptLedgerPath: paths.transcriptLedgerPath,
+      discoveryRoots: []
+    });
+
+    const usageEvents = (await readJsonLines(paths.eventLogPath)).filter(
+      (line) => line.type === "token.usage.recorded"
+    );
+
+    // The streaming window survives an unusable anchor: only the latency is dropped.
+    expect(usageEvents[0]).toEqual(
+      expect.objectContaining({
+        message_id: "msg_1",
+        first_token_latency_ms: null,
+        decode_duration_ms: 5000
+      })
+    );
+    expect(usageEvents[1]).toEqual(
+      expect.objectContaining({
+        message_id: "msg_2",
+        first_token_latency_ms: null,
+        decode_duration_ms: 2000
+      })
+    );
+  });
+
+  it("ignores out-of-order and zero-length rows when deriving the decode window", async () => {
+    const repoRoot = await mkdtemp(join(tmpdir(), "agent-metrics-transcript-sync-"));
+    const transcriptPath = join(repoRoot, "claude-session.jsonl");
+    const paths = getAgentMetricsPaths(repoRoot);
+
+    await writeClaudeTranscript(transcriptPath, [
+      claudeUserRow("prompt_1", "2026-05-27T10:00:00.000Z"),
+      claudeAssistantRow("msg_1", "2026-05-27T10:00:10.000Z", [CLAUDE_THINKING_BLOCK]),
+      // Timestamps that run backwards describe no forwarding window.
+      claudeAssistantRow("msg_1", "2026-05-27T10:00:04.000Z", [CLAUDE_TEXT_BLOCK], "end_turn"),
+      claudeUserRow("prompt_2", "2026-05-27T10:01:00.000Z"),
+      claudeAssistantRow("msg_2", "2026-05-27T10:01:03.000Z", [CLAUDE_TEXT_BLOCK]),
+      claudeAssistantRow("msg_2", "2026-05-27T10:01:03.000Z", [CLAUDE_TEXT_BLOCK], "end_turn")
+    ]);
+
+    await recordClaudeTranscriptReference({
+      manifestPath: paths.transcriptManifestPath,
+      transcriptPath,
+      workspacePath: repoRoot,
+      sessionId: "ses_1"
+    });
+
+    await syncKnownClaudeTranscripts({
+      manifestPath: paths.transcriptManifestPath,
+      eventLogPath: paths.eventLogPath,
+      transcriptCursorPath: paths.transcriptCursorPath,
+      transcriptLedgerPath: paths.transcriptLedgerPath,
+      discoveryRoots: []
+    });
+
+    const usageEvents = (await readJsonLines(paths.eventLogPath)).filter(
+      (line) => line.type === "token.usage.recorded"
+    );
+
+    expect(usageEvents[0]).toEqual(
+      expect.objectContaining({
+        message_id: "msg_1",
+        first_token_latency_ms: 10000,
+        decode_duration_ms: null
+      })
+    );
+    expect(usageEvents[1]).toEqual(
+      expect.objectContaining({
+        message_id: "msg_2",
+        first_token_latency_ms: 3000,
+        decode_duration_ms: null
+      })
+    );
+  });
 });
+
+const CLAUDE_USAGE_SNAPSHOT: Record<string, unknown> = {
+  input_tokens: 12,
+  output_tokens: 5,
+  cache_creation_input_tokens: 0,
+  cache_read_input_tokens: 1,
+  server_tool_use: { web_search_requests: 0 }
+};
+
+const CLAUDE_THINKING_BLOCK: Record<string, unknown> = {
+  type: "thinking",
+  thinking: "weighing options"
+};
+
+const CLAUDE_TEXT_BLOCK: Record<string, unknown> = {
+  type: "text",
+  text: "Done."
+};
+
+function claudeUserRow(promptId: string, timestamp: string): Record<string, unknown> {
+  return {
+    type: "user",
+    sessionId: "ses_1",
+    promptId,
+    timestamp,
+    message: {
+      role: "user",
+      content: "Ship it."
+    }
+  };
+}
+
+function claudeAssistantRow(
+  messageId: string,
+  timestamp: string,
+  content: Array<Record<string, unknown>>,
+  stopReason?: string
+): Record<string, unknown> {
+  return {
+    type: "assistant",
+    sessionId: "ses_1",
+    timestamp,
+    message: {
+      id: messageId,
+      role: "assistant",
+      model: "sonnet-test",
+      ...(stopReason === undefined ? {} : { stop_reason: stopReason }),
+      content,
+      usage: CLAUDE_USAGE_SNAPSHOT
+    }
+  };
+}
 
 async function writeClaudeTranscript(
   transcriptPath: string,

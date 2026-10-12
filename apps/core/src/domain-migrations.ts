@@ -68,7 +68,7 @@ const CANONICAL_TABLES = [
   "sync_runs"
 ] as const;
 
-const OPTIONAL_CANONICAL_TABLES = ["cursor_account_usage"] as const;
+const OPTIONAL_CANONICAL_TABLES = ["cursor_account_usage", "official_key_usage"] as const;
 
 
 export function runDomainMigrations(db: SqliteDatabaseLike, now: MigrationNow = new Date()): void {

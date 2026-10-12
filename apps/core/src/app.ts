@@ -32,6 +32,7 @@ import { installHttpSecurity } from "./http-security.js";
 import { registerCoreRoutes } from "./core-routes.js";
 import { persistCursorAccountUsage } from "./cursor-account-usage.js";
 import { startCursorOfficialRefreshLoop } from "./cursor-official-refresh.js";
+import { collectCodexKeyUsage } from "./official-key-usage.js";
 import { runIsolatedSourceRefreshTasks, startSourceLightRefreshLoop } from "./source-light-refresh.js";
 import type { BuildAppInput, MetricsDatabase } from "./core-types.js";
 
@@ -331,6 +332,13 @@ export function buildApp(input: BuildAppInput): MetricsApp {
           log: metricsApp.log
         }
       );
+      // Seed official key usage (Codex rate limits) at startup; the light
+      // refresh loop below keeps the snapshots current afterwards.
+      void collectCodexKeyUsage(db as unknown as import("./domain-types.js").SqliteDatabaseLike, {
+        log: metricsApp.log
+      }).catch((error: unknown) => {
+        metricsApp.log.warn(`official key usage collection failed: ${String(error)}`);
+      });
       if (agentPaths !== null && canonicalEventLogPath !== undefined) {
         const eventLogPath = canonicalEventLogPath;
         const paths = agentPaths;
@@ -422,6 +430,15 @@ export function buildApp(input: BuildAppInput): MetricsApp {
             });
             for (const adapterId of succeededAdapterIds) {
               syncCoordinator.markBackgroundSuccess(adapterId);
+            }
+            // Keep official key usage snapshots fresh alongside the rollout sync.
+            try {
+              await collectCodexKeyUsage(
+                db as unknown as import("./domain-types.js").SqliteDatabaseLike,
+                { log: metricsApp.log }
+              );
+            } catch (error) {
+              metricsApp.log.warn(`official key usage collection failed: ${String(error)}`);
             }
           },
           { log: metricsApp.log }

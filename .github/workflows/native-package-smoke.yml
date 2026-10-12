@@ -1,6 +1,9 @@
 name: Native package smoke
 
 on:
+  push:
+    branches: [master, "feat/**"]
+  pull_request:
   workflow_dispatch:
 
 jobs:

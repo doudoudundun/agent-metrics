@@ -7,6 +7,11 @@ const CODEX_ROLLOUT_ADAPTER: SourceAdapter = "codex-rollout";
 // Consecutive token_count gaps beyond this still include unobserved tool runs
 // or idle time even within a turn; treat them as unknown rather than decode.
 const MAX_DECODE_GAP_MS = 120_000;
+// The first token_count of a turn is written on the periodic reporting tick that
+// follows the first generated token, so the measured latency is an upper bound
+// quantized by that interval. A first report later than this means the turn sat
+// idle or was abandoned, which must not be reported as a slow first token.
+const MAX_FIRST_TOKEN_LATENCY_MS = 600_000;
 
 export type CodexProviderConfig = {
   baseUrl: string | null;
@@ -32,6 +37,10 @@ export function extractCodexEventsFromRollout(input: {
   const events: AnyEvent[] = [];
   const pendingToolCalls = new Map<string, PendingCodexToolCall>();
   let lastTokenEventMs: number | null = null;
+  // Turn start anchor (task_started) and whether this turn already spent its
+  // first-token observation on a token_count report.
+  let turnStartedMs: number | null = null;
+  let turnFirstTokenReported = false;
   let sourceInstanceId =
     input.sourceInstanceId ??
     (isMulticaRolloutPath(input.filePath) ? "codex:multica" : undefined);
@@ -469,6 +478,10 @@ export function extractCodexEventsFromRollout(input: {
       // Turn boundary: the wait between turns (user thinking, overnight gaps)
       // must never be attributed to decoding, so drop the previous anchor.
       lastTokenEventMs = null;
+      // task_started carries the turn start in unix seconds; older rollouts omit
+      // it, so fall back to the row timestamp.
+      turnStartedMs = resolveTurnStartedMs(payload, parsed.timestamp);
+      turnFirstTokenReported = false;
       continue;
     }
 
@@ -543,6 +556,18 @@ export function extractCodexEventsFromRollout(input: {
       lastTokenEventMs = usageMs;
     }
 
+    // Only the turn's first token_count report can be a first-token observation:
+    // later reports are periodic snapshots of an already decoding response.
+    const firstTokenLatencyMs =
+      !turnFirstTokenReported &&
+      turnStartedMs !== null &&
+      Number.isFinite(usageMs) &&
+      usageMs >= turnStartedMs &&
+      usageMs - turnStartedMs <= MAX_FIRST_TOKEN_LATENCY_MS
+        ? usageMs - turnStartedMs
+        : null;
+    turnFirstTokenReported = true;
+
     events.push({
       event_id: `codex:session:${sessionId}:usage:${totalTokens}`,
       session_id: sessionId,
@@ -562,7 +587,7 @@ export function extractCodexEventsFromRollout(input: {
       provider_id: providerId,
       provider_base_url: providerConfig?.baseUrl ?? null,
       provider_host: providerConfig?.host ?? null,
-      first_token_latency_ms: null,
+      first_token_latency_ms: firstTokenLatencyMs,
       decode_duration_ms: decodeDurationMs
     });
   }
@@ -605,6 +630,18 @@ function normalizeOptionalString(value: unknown): string | null {
 
 function normalizeInteger(value: unknown): number | null {
   return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null;
+}
+
+function resolveTurnStartedMs(payload: Record<string, unknown>, lineTimestamp: unknown): number | null {
+  const startedAtSeconds = payload.started_at;
+  if (typeof startedAtSeconds === "number" && Number.isFinite(startedAtSeconds) && startedAtSeconds > 0) {
+    // Round to whole milliseconds: the schema requires an integer latency, and a
+    // fractional unix-seconds value would otherwise leak into the subtraction.
+    return Math.round(startedAtSeconds * 1000);
+  }
+
+  const lineMs = typeof lineTimestamp === "string" ? Date.parse(lineTimestamp) : Number.NaN;
+  return Number.isFinite(lineMs) ? lineMs : null;
 }
 
 function buildEventKey(
