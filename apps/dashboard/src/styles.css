@@ -707,16 +707,12 @@ body[data-desktop-surface="desktop-widget"] .app-shell--floating {
 .cursor-quota-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
+  gap: 12px;
 }
 
 .cursor-quota-card {
   display: grid;
-  gap: 8px;
-  padding: 10px 12px;
-  border: 1px solid rgba(16, 32, 48, 0.12);
-  border-radius: 12px;
-  background: rgba(16, 32, 48, 0.02);
+  gap: 4px;
 }
 
 .cursor-quota-card__head {
@@ -762,9 +758,9 @@ body[data-desktop-surface="desktop-widget"] .app-shell--floating {
 }
 
 .cursor-quota-note {
-  margin: 10px 0 0;
+  margin: 8px 0 0;
   font-size: 12px;
-  color: var(--ink-soft, #5f7087);
+  color: #a64937;
 }
 
 .cursor-model-usage {
@@ -775,7 +771,7 @@ body[data-desktop-surface="desktop-widget"] .app-shell--floating {
 }
 
 .cursor-model-usage--compact {
-  margin-top: 12px;
+  margin-top: 8px;
 }
 
 .cursor-model-usage__toggle {
@@ -2226,14 +2222,21 @@ tbody tr[data-selected="true"] .session-select {
   background: #d95540;
 }
 
-.dashboard-page .cursor-model-usage__toggle,
-.dashboard-page .cursor-model-usage__row {
-  border-color: rgba(16, 32, 48, 0.12);
-  background: rgba(16, 32, 48, 0.02);
+.dashboard-page .cursor-model-usage__toggle {
+  padding: 4px 0;
+  border-color: transparent;
+  background: transparent;
+  color: var(--ink-soft);
 }
 
 .dashboard-page .cursor-model-usage__toggle:hover {
-  border-color: rgba(16, 32, 48, 0.22);
+  border-color: transparent;
+  color: var(--ink);
+}
+
+.dashboard-page .cursor-model-usage__row {
+  border-color: rgba(16, 32, 48, 0.12);
+  background: rgba(16, 32, 48, 0.02);
 }
 
 .dashboard-page .cursor-model-usage__header span,
