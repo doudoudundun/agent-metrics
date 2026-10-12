@@ -173,7 +173,7 @@ describe("KeyUsagePanel", () => {
     expect(screen.getByText("Default limit")).toBeInTheDocument();
     expect(screen.getByText("No quota windows reported.")).toBeInTheDocument();
     expect(screen.getByText("Credits unknown")).toBeInTheDocument();
-    expect(screen.getByText("Synced from local rollout logs")).toBeInTheDocument();
+    expect(screen.getByText("Synced from provider sources")).toBeInTheDocument();
   });
 
   it("renders a friendly empty state before any snapshot exists", () => {

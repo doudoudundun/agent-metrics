@@ -1,11 +1,10 @@
 import { useState } from "react";
 import type { CursorAccountUsageResponse } from "@agent-metrics/contracts";
 
-type CursorAccountUsagePanelProps = {
+type CursorQuotaCardProps = {
   usage: CursorAccountUsageResponse | null;
   loading: boolean;
   errorMessage: string | null;
-  visible: boolean;
 };
 
 const PERCENT_FORMAT = new Intl.NumberFormat("en-US", {
@@ -38,17 +37,9 @@ function formatTokens(value: number): string {
   return TOKEN_FORMAT.format(value);
 }
 
-export function CursorAccountUsagePanel({
-  usage,
-  loading,
-  errorMessage,
-  visible
-}: CursorAccountUsagePanelProps) {
+/** Cursor official account quota as one card inside the unified key usage grid. */
+export function CursorQuotaCard({ usage, loading, errorMessage }: CursorQuotaCardProps) {
   const [modelsExpanded, setModelsExpanded] = useState(false);
-
-  if (!visible) {
-    return null;
-  }
 
   const modelRows = [...(usage?.modelAggregations ?? [])]
     .sort((left, right) => {
@@ -66,33 +57,39 @@ export function CursorAccountUsagePanel({
     0
   );
 
-  return (
-    <section
-      className="panel cursor-account-usage-panel cursor-account-usage-panel--footer"
-      aria-label="Cursor official account usage"
-    >
-      <header className="panel__header">
-        <div>
-          <span className="panel__eyebrow">Cursor Usage</span>
-          <h2>
-            Official account quota
-            {usage?.planName ?? usage?.planTier ? ` · ${usage.planName ?? usage.planTier}` : ""}
-          </h2>
-        </div>
-        <span className="panel__meta">
-          {usage ? `${formatDate(usage.billingCycleStart)} – ${formatDate(usage.billingCycleEnd)} · ` : ""}
-          Synced from Cursor API
-        </span>
-      </header>
+  const remainingCents = usage?.remainingCents ?? null;
+  const planLabel = usage
+    ? [
+        usage.planName ?? usage.planTier,
+        `${formatDate(usage.billingCycleStart)} – ${formatDate(usage.billingCycleEnd)}`
+      ]
+        .filter((part): part is string => typeof part === "string" && part.length > 0)
+        .join(" · ")
+    : "Official account";
 
-      {loading ? <p className="panel__state">Loading official usage...</p> : null}
-      {!loading && errorMessage ? <p className="panel__state panel__state--error">{errorMessage}</p> : null}
+  return (
+    <li className="key-usage-card key-usage-card--cursor" aria-label="Cursor official account usage">
+      <div className="key-usage-card__head">
+        <strong className="key-usage-card__vendor">Cursor</strong>
+        <span className="key-usage-card__limit">{planLabel}</span>
+        <span
+          className="key-usage-card__credits"
+          data-state={remainingCents !== null && remainingCents > 0 ? "available" : "none"}
+        >
+          {remainingCents !== null ? `${formatCents(remainingCents)} left` : "Balance unknown"}
+        </span>
+      </div>
+
+      {loading ? <p className="key-usage-card__empty">Loading Cursor usage...</p> : null}
+      {!loading && errorMessage ? (
+        <p className="key-usage-panel__error">{errorMessage}</p>
+      ) : null}
       {!loading && !errorMessage && usage ? (
         <>
           <div className="cursor-quota-grid" aria-label="Quota summary">
-            <QuotaCard label="Total" percent={usage.totalPercentUsed} />
-            <QuotaCard label="Auto" percent={usage.autoPercentUsed} />
-            <QuotaCard label="API" percent={usage.apiPercentUsed} />
+            <QuotaBar label="Total" percent={usage.totalPercentUsed} />
+            <QuotaBar label="Auto" percent={usage.autoPercentUsed} />
+            <QuotaBar label="API" percent={usage.apiPercentUsed} />
           </div>
           {usage.displayMessage ? <p className="cursor-quota-note">{usage.displayMessage}</p> : null}
 
@@ -134,11 +131,11 @@ export function CursorAccountUsagePanel({
           </div>
         </>
       ) : null}
-    </section>
+    </li>
   );
 }
 
-function QuotaCard({ label, percent }: { label: string; percent: number }) {
+function QuotaBar({ label, percent }: { label: string; percent: number }) {
   const value = Math.max(0, percent);
   const width = Math.min(100, value);
   const tone = value >= 90 ? "danger" : value >= 70 ? "warn" : "ok";

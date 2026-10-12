@@ -704,14 +704,6 @@ body[data-desktop-surface="desktop-widget"] .app-shell--floating {
   max-height: 240px;
 }
 
-.cursor-account-usage-panel {
-  margin-top: 16px;
-}
-
-.cursor-account-usage-panel--footer {
-  margin-top: 24px;
-}
-
 .cursor-quota-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -2097,21 +2089,6 @@ tbody tr[data-selected="true"] .session-select {
   align-content: start;
   gap: 8px;
   min-width: 0;
-}
-
-.dashboard-bottom-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr);
-  gap: 8px;
-  margin-top: 8px;
-}
-
-.dashboard-bottom-grid--single {
-  grid-template-columns: minmax(0, 1fr);
-}
-
-.dashboard-bottom-grid .cursor-account-usage-panel--footer {
-  margin-top: 0;
 }
 
 .dashboard-footer {

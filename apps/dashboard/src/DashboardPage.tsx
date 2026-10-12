@@ -17,7 +17,7 @@ import {
   type TokenTrendPoint,
   type ToolRow
 } from "./api";
-import { CursorAccountUsagePanel } from "./components/CursorAccountUsagePanel";
+import { CursorQuotaCard } from "./components/CursorQuotaCard";
 import { KeyUsagePanel } from "./components/KeyUsagePanel";
 import { KpiGrid } from "./components/KpiGrid";
 import { ModelUsagePanel } from "./components/ModelUsagePanel";
@@ -467,34 +467,28 @@ export function DashboardPage() {
         </div>
       </section>
 
-      <section
-        className={
-          showCursorOfficialUsage
-            ? "dashboard-bottom-grid"
-            : "dashboard-bottom-grid dashboard-bottom-grid--single"
+      <KeyUsagePanel
+        data={keyUsageQuery.data ?? null}
+        loading={keyUsageQuery.status === "loading"}
+        errorMessage={
+          keyUsageQuery.status === "error"
+            ? keyUsageQuery.error?.message ?? "Unable to load official key usage."
+            : null
         }
-      >
-        <CursorAccountUsagePanel
-          usage={cursorUsageQuery.data ?? null}
-          loading={cursorUsageQuery.status === "loading" && showCursorOfficialUsage}
-          errorMessage={
-            showCursorOfficialUsage && cursorUsageQuery.status === "error"
-              ? cursorUsageQuery.error?.message ?? "Unable to load Cursor official usage."
-              : null
-          }
-          visible={showCursorOfficialUsage}
-        />
-
-        <KeyUsagePanel
-          data={keyUsageQuery.data ?? null}
-          loading={keyUsageQuery.status === "loading"}
-          errorMessage={
-            keyUsageQuery.status === "error"
-              ? keyUsageQuery.error?.message ?? "Unable to load official key usage."
-              : null
-          }
-        />
-      </section>
+        leadCards={
+          showCursorOfficialUsage ? (
+            <CursorQuotaCard
+              usage={cursorUsageQuery.data ?? null}
+              loading={cursorUsageQuery.status === "loading"}
+              errorMessage={
+                cursorUsageQuery.status === "error"
+                  ? cursorUsageQuery.error?.message ?? "Unable to load Cursor official usage."
+                  : null
+            }
+            />
+          ) : null
+        }
+      />
 
       <footer className="dashboard-footer">
         <span>Local data stays on this device.</span>

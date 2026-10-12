@@ -3,7 +3,7 @@
   "arch": "x64",
   "hostPlatform": "win32",
   "hostArch": "x64",
-  "timestamp": "2026-10-12T09:39:16.135Z",
+  "timestamp": "2026-10-12T10:00:10.712Z",
   "artifact": "D:\\projects\\dev\\agent-metrics\\apps\\desktop\\release\\win-unpacked",
   "checks": {
     "verifyPackage": "passed",

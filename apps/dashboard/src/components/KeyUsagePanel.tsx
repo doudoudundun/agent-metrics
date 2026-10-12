@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type { KeyUsageEntry, KeyUsageResponse, KeyUsageWindow } from "@agent-metrics/contracts";
 import "./key-usage.css";
 
@@ -5,6 +6,8 @@ export type KeyUsagePanelProps = {
   data?: KeyUsageResponse | null;
   loading?: boolean;
   errorMessage?: string | null;
+  /** Extra cards (e.g. the Cursor account quota) rendered before the entries. */
+  leadCards?: ReactNode;
   /** Injection point for deterministic countdown rendering in tests. */
   now?: Date | (() => Date);
 };
@@ -27,9 +30,10 @@ const ABSOLUTE_TIME_FORMAT: Intl.DateTimeFormatOptions = {
   timeStyle: "short"
 };
 
-export function KeyUsagePanel({ data, loading = false, errorMessage = null, now }: KeyUsagePanelProps) {
+export function KeyUsagePanel({ data, loading = false, errorMessage = null, leadCards, now }: KeyUsagePanelProps) {
   const entries = data?.entries ?? [];
   const displayEntries = mergeVendorWindowEntries(entries);
+  const hasCards = displayEntries.length > 0 || leadCards != null;
   const resolvedNow = typeof now === "function" ? now() : now ?? new Date();
 
   return (
@@ -46,12 +50,13 @@ export function KeyUsagePanel({ data, loading = false, errorMessage = null, now 
 
       {loading ? <p className="panel-empty">Loading key usage...</p> : null}
       {!loading && errorMessage ? <p className="panel-empty key-usage-panel__error">{errorMessage}</p> : null}
-      {!loading && !errorMessage && displayEntries.length === 0 ? (
+      {!loading && !errorMessage && !hasCards ? (
         <p className="panel-empty">No official key usage data yet.</p>
       ) : null}
 
-      {!loading && !errorMessage && displayEntries.length > 0 ? (
+      {!loading && !errorMessage && hasCards ? (
         <ul className="key-usage-list" aria-label="Official key quota windows">
+          {leadCards}
           {displayEntries.map((entry, index) => (
             <li className="key-usage-card" key={`${entry.vendor}-${entry.limitId ?? "default"}-${index}`}>
               <div className="key-usage-card__head">
@@ -238,13 +243,13 @@ function formatLocalTime(value: Date): string {
 
 function formatUpdatedAt(updatedAt: string | null): string {
   if (updatedAt === null) {
-    return "Synced from local rollout logs";
+    return "Synced from provider sources";
   }
   const parsed = new Date(updatedAt);
   if (Number.isNaN(parsed.getTime())) {
-    return "Synced from local rollout logs";
+    return "Synced from provider sources";
   }
-  return `Synced from local rollout logs · Updated ${formatLocalTime(parsed)}`;
+  return `Synced from provider sources · Updated ${formatLocalTime(parsed)}`;
 }
 
 function creditsState(entry: KeyUsageEntry): string {
