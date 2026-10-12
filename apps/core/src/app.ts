@@ -33,6 +33,8 @@ import { registerCoreRoutes } from "./core-routes.js";
 import { persistCursorAccountUsage } from "./cursor-account-usage.js";
 import { startCursorOfficialRefreshLoop } from "./cursor-official-refresh.js";
 import { collectCodexKeyUsage } from "./official-key-usage.js";
+import { collectZCodeKeyUsage } from "./official-key-usage-zcode.js";
+import { startOfficialKeyUsageRefreshLoop } from "./key-usage-refresh.js";
 import { runIsolatedSourceRefreshTasks, startSourceLightRefreshLoop } from "./source-light-refresh.js";
 import type { BuildAppInput, MetricsDatabase } from "./core-types.js";
 
@@ -295,12 +297,15 @@ export function buildApp(input: BuildAppInput): MetricsApp {
   metricsApp.syncCoordinator = syncCoordinator;
   let cursorOfficialRefresh: ReturnType<typeof startCursorOfficialRefreshLoop> | null = null;
   let sourceLightRefresh: ReturnType<typeof startSourceLightRefreshLoop> | null = null;
+  let keyUsageRefresh: ReturnType<typeof startOfficialKeyUsageRefreshLoop> | null = null;
 
   app.addHook("onClose", async () => {
     cursorOfficialRefresh?.stop();
     cursorOfficialRefresh = null;
     sourceLightRefresh?.stop();
     sourceLightRefresh = null;
+    keyUsageRefresh?.stop();
+    keyUsageRefresh = null;
     await syncCoordinator.shutdown();
     db.close();
   });
@@ -332,12 +337,21 @@ export function buildApp(input: BuildAppInput): MetricsApp {
           log: metricsApp.log
         }
       );
-      // Seed official key usage (Codex rate limits) at startup; the light
-      // refresh loop below keeps the snapshots current afterwards.
-      void collectCodexKeyUsage(db as unknown as import("./domain-types.js").SqliteDatabaseLike, {
+      // Seed official key usage (Codex/ZCode local sources) at startup; the
+      // refresh loops below keep the snapshots current afterwards.
+      const keyUsageDb = db as unknown as import("./domain-types.js").SqliteDatabaseLike;
+      void collectCodexKeyUsage(keyUsageDb, {
         log: metricsApp.log
       }).catch((error: unknown) => {
         metricsApp.log.warn(`official key usage collection failed: ${String(error)}`);
+      });
+      void collectZCodeKeyUsage(keyUsageDb, {
+        log: metricsApp.log
+      }).catch((error: unknown) => {
+        metricsApp.log.warn(`zcode key usage collection failed: ${String(error)}`);
+      });
+      keyUsageRefresh = startOfficialKeyUsageRefreshLoop(keyUsageDb, {
+        log: metricsApp.log
       });
       if (agentPaths !== null && canonicalEventLogPath !== undefined) {
         const eventLogPath = canonicalEventLogPath;
@@ -439,6 +453,14 @@ export function buildApp(input: BuildAppInput): MetricsApp {
               );
             } catch (error) {
               metricsApp.log.warn(`official key usage collection failed: ${String(error)}`);
+            }
+            try {
+              await collectZCodeKeyUsage(
+                db as unknown as import("./domain-types.js").SqliteDatabaseLike,
+                { log: metricsApp.log }
+              );
+            } catch (error) {
+              metricsApp.log.warn(`zcode key usage collection failed: ${String(error)}`);
             }
           },
           { log: metricsApp.log }
