@@ -250,6 +250,37 @@ describe("official key usage storage", () => {
     expect(KeyUsageResponseSchema.parse(response)).toEqual({ updatedAt: null, entries: [] });
   });
 
+  it("drops entries that carry no window and no usable credits", () => {
+    const db = createDb();
+    persistOfficialKeyUsage(db, [
+      snapshot({
+        observedAt: "2026-10-10T02:00:00.000Z",
+        limitId: "no-signal",
+        primary: null,
+        secondary: null,
+        credits: { hasCredits: false, unlimited: false }
+      }),
+      snapshot({
+        observedAt: "2026-10-10T02:01:00.000Z",
+        limitId: "null-credits",
+        primary: null,
+        secondary: null,
+        credits: null
+      }),
+      snapshot({
+        observedAt: "2026-10-10T02:02:00.000Z",
+        limitId: "with-credits",
+        primary: null,
+        secondary: null,
+        credits: { hasCredits: true, unlimited: false }
+      }),
+      snapshot({ observedAt: "2026-10-10T02:03:00.000Z", limitId: "with-window" })
+    ]);
+
+    const response = toKeyUsageResponse(selectOfficialKeyUsage(db));
+    expect(response.entries.map((entry) => entry.limitId)).toEqual(["with-credits", "with-window"]);
+  });
+
   it("keeps a null window when the source omitted it", () => {
     const db = createDb();
     persistOfficialKeyUsage(db, [

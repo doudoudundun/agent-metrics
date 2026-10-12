@@ -86,7 +86,9 @@ export function parseZCodeQuotaLimits(
       continue;
     }
     const type = readNonEmptyString(limit.type);
-    if (type === null) {
+    // The panel tracks token quota windows; tool-call counters (TIME_LIMIT)
+    // like monthly search/web-reader budgets are out of scope.
+    if (type !== "TOKENS_LIMIT") {
       continue;
     }
     const unit = readFiniteNumber(limit.unit);

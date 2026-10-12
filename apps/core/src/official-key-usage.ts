@@ -307,16 +307,18 @@ export function selectOfficialKeyUsage(
 }
 
 export function toKeyUsageResponse(snapshots: OfficialKeyUsageSnapshot[]): KeyUsageResponse {
-  const entries: KeyUsageEntry[] = snapshots.map((snapshot) => ({
-    vendor: snapshot.vendor,
-    source: snapshot.source,
-    limitId: snapshot.limitId,
-    limitName: snapshot.limitName,
-    primary: snapshot.primary,
-    secondary: snapshot.secondary,
-    credits: snapshot.credits,
-    expiresAt: snapshot.expiresAt
-  }));
+  const entries: KeyUsageEntry[] = snapshots
+    .map((snapshot) => ({
+      vendor: snapshot.vendor,
+      source: snapshot.source,
+      limitId: snapshot.limitId,
+      limitName: snapshot.limitName,
+      primary: snapshot.primary,
+      secondary: snapshot.secondary,
+      credits: snapshot.credits,
+      expiresAt: snapshot.expiresAt
+    }))
+    .filter((entry) => hasKeyUsageSignal(entry));
 
   return {
     updatedAt: snapshots.reduce<string | null>(
@@ -325,6 +327,14 @@ export function toKeyUsageResponse(snapshots: OfficialKeyUsageSnapshot[]): KeyUs
     ),
     entries
   };
+}
+
+/** Empty shells (no window, no usable credits) carry no information for the panel. */
+function hasKeyUsageSignal(entry: KeyUsageEntry): boolean {
+  if (entry.primary !== null || entry.secondary !== null) {
+    return true;
+  }
+  return entry.credits !== null && (entry.credits.hasCredits || entry.credits.unlimited);
 }
 
 /**

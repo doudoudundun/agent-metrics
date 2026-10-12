@@ -113,30 +113,15 @@ function headersOf(call: RecordedCall | undefined): Record<string, string> {
 }
 
 describe("parseZCodeQuotaLimits", () => {
-  it("maps every limit of the observed response into a snapshot", () => {
+  it("maps token quota limits of the observed response into snapshots", () => {
     const snapshots = parseZCodeQuotaLimits(quotaLimitPayload(), OBSERVED_AT);
 
-    expect(snapshots).toHaveLength(3);
+    expect(snapshots).toHaveLength(2);
     expect(snapshots.map((entry) => entry.limitId)).toEqual([
-      "TIME_LIMIT:5:1",
       "TOKENS_LIMIT:3:5",
       "TOKENS_LIMIT:6:1"
     ]);
     expect(snapshots[0]).toMatchObject({
-      vendor: "zcode",
-      source: "zcode-quota-api",
-      limitName: "Tool call limit",
-      primary: {
-        usedPercent: 1,
-        windowMinutes: 43200,
-        resetsAt: "2026-10-28T11:00:22.983Z"
-      },
-      secondary: null,
-      credits: null,
-      expiresAt: null,
-      observedAt: OBSERVED_AT
-    });
-    expect(snapshots[1]).toMatchObject({
       vendor: "zcode",
       source: "zcode-quota-api",
       limitName: "5h token limit",
@@ -144,9 +129,13 @@ describe("parseZCodeQuotaLimits", () => {
         usedPercent: 37,
         windowMinutes: 300,
         resetsAt: "2026-10-12T12:30:34.718Z"
-      }
+      },
+      secondary: null,
+      credits: null,
+      expiresAt: null,
+      observedAt: OBSERVED_AT
     });
-    expect(snapshots[2]).toMatchObject({
+    expect(snapshots[1]).toMatchObject({
       limitName: "Weekly token limit",
       primary: {
         usedPercent: 7,
@@ -195,25 +184,19 @@ describe("parseZCodeQuotaLimits", () => {
     ).toEqual([
       ["5h token limit", 300],
       ["Weekly token limit", 10080],
-      ["Tool call limit", 43200],
       ["TOKENS_LIMIT 9×2", 0],
-      ["TOKENS_LIMIT ?×1", 0],
-      ["CREDIT_LIMIT 3×5", 60 * 5]
+      ["TOKENS_LIMIT ?×1", 0]
     ]);
     expect(snapshots.map((entry) => entry.limitId)).toEqual([
       "TOKENS_LIMIT:3:5",
       "TOKENS_LIMIT:6:1",
-      "TIME_LIMIT:5:1",
       "TOKENS_LIMIT:9:2",
-      "TOKENS_LIMIT:?:1",
-      "CREDIT_LIMIT:3:5"
+      "TOKENS_LIMIT:?:1"
     ]);
     expect(snapshots.map((entry) => entry.primary?.resetsAt)).toEqual([
       "2026-10-12T12:30:34.718Z",
       "2026-10-19T07:30:00.981Z",
-      "2026-10-28T11:00:22.983Z",
       "2026-10-12T12:30:34.718Z",
-      null,
       null
     ]);
   });
@@ -259,7 +242,7 @@ describe("parseZCodeQuotaLimits", () => {
   it("defaults the observation time to now", () => {
     const snapshots = parseZCodeQuotaLimits(quotaLimitPayload());
 
-    expect(snapshots).toHaveLength(3);
+    expect(snapshots).toHaveLength(2);
     expect(snapshots[0]?.observedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/u);
   });
 });
@@ -333,7 +316,7 @@ describe("collectZCodeApiKeyUsage", () => {
       now: () => NOW
     });
 
-    expect(result).toEqual({ snapshotsFound: 3, snapshotsStored: 3 });
+    expect(result).toEqual({ snapshotsFound: 2, snapshotsStored: 2 });
     expect(calls).toHaveLength(1);
     expect(calls[0]?.url).toBe(`https://quota.zcode.test${QUOTA_PATH}`);
     expect(calls[0]?.init?.method).toBe("GET");
@@ -341,9 +324,8 @@ describe("collectZCodeApiKeyUsage", () => {
     expect(headersOf(calls[0]).Accept).toBe("application/json");
 
     const stored = selectOfficialKeyUsage(db, { vendor: "zcode" });
-    expect(stored).toHaveLength(3);
+    expect(stored).toHaveLength(2);
     expect(stored.map((entry) => entry.limitId)).toEqual([
-      "TIME_LIMIT:5:1",
       "TOKENS_LIMIT:3:5",
       "TOKENS_LIMIT:6:1"
     ]);
@@ -379,7 +361,7 @@ describe("collectZCodeApiKeyUsage", () => {
       const { calls, fetchImpl } = recordCalls();
       const result = await collectZCodeApiKeyUsage(createDb(), { fetchImpl, now: () => NOW });
 
-      expect(result).toEqual({ snapshotsFound: 3, snapshotsStored: 3 });
+      expect(result).toEqual({ snapshotsFound: 2, snapshotsStored: 2 });
       expect(calls[0]?.url).toBe(`https://env.zcode.test${QUOTA_PATH}`);
       expect(headersOf(calls[0]).Authorization).toBe(`Bearer ${FAKE_API_KEY}`);
     } finally {
