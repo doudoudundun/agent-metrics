@@ -29,7 +29,8 @@ function buildResponse(): KeyUsageResponse {
           windowMinutes: 10080,
           resetsAt: "2026-10-15T01:19:16.000Z"
         },
-        credits: { hasCredits: false, unlimited: false }
+        credits: { hasCredits: false, unlimited: false },
+        expiresAt: null
       }
     ]
   };
@@ -40,14 +41,21 @@ describe("KeyUsagePanel", () => {
     render(<KeyUsagePanel data={buildResponse()} now={NOW} />);
 
     expect(screen.getByRole("heading", { name: "Key usage & limits" })).toBeInTheDocument();
+    // An entry with two windows renders as a single card.
+    expect(screen.getAllByRole("listitem")).toHaveLength(1);
     expect(screen.getByText("Codex")).toBeInTheDocument();
     expect(screen.getByText("codex")).toBeInTheDocument();
     expect(screen.getByText("44.5%")).toBeInTheDocument();
+    expect(screen.getByText("41%")).toBeInTheDocument();
 
     const primaryBar = screen.getByRole("progressbar", { name: "Primary window quota used" });
     expect(primaryBar).toHaveAttribute("aria-valuenow", "45");
     expect(primaryBar).toHaveAttribute("aria-valuemin", "0");
     expect(primaryBar).toHaveAttribute("aria-valuemax", "100");
+    expect(screen.getByRole("progressbar", { name: "Secondary window quota used" })).toHaveAttribute(
+      "aria-valuenow",
+      "41"
+    );
 
     expect(screen.getByText(/5h window/)).toBeInTheDocument();
     expect(screen.getByText(/7d window/)).toBeInTheDocument();
@@ -57,6 +65,53 @@ describe("KeyUsagePanel", () => {
     const credits = screen.getByText("No extra credits");
     expect(credits).toHaveAttribute("data-state", "none");
     expect(screen.getByText(/Updated/)).toBeInTheDocument();
+  });
+
+  it("merges single-window entries of the same vendor into one card", () => {
+    render(
+      <KeyUsagePanel
+        now={NOW}
+        data={{
+          updatedAt: "2026-10-10T08:55:00.000Z",
+          entries: [
+            {
+              vendor: "kimicode",
+              source: "kimicode-rollout",
+              limitId: "5h",
+              limitName: "5h limit",
+              primary: { usedPercent: 17, windowMinutes: 300, resetsAt: "2026-10-10T12:20:00.000Z" },
+              secondary: null,
+              credits: null,
+              expiresAt: null
+            },
+            {
+              vendor: "kimicode",
+              source: "kimicode-rollout",
+              limitId: "weekly",
+              limitName: "Weekly limit",
+              primary: { usedPercent: 19.9, windowMinutes: 10080, resetsAt: "2026-10-15T01:19:16.000Z" },
+              secondary: null,
+              credits: null,
+              expiresAt: null
+            }
+          ]
+        }}
+      />
+    );
+
+    expect(screen.getAllByRole("listitem")).toHaveLength(1);
+    expect(screen.getAllByText("Kimi Code")).toHaveLength(1);
+    expect(screen.getByText("Default limit")).toBeInTheDocument();
+    expect(screen.getByRole("progressbar", { name: "Primary window quota used" })).toHaveAttribute(
+      "aria-valuenow",
+      "17"
+    );
+    expect(screen.getByRole("progressbar", { name: "Secondary window quota used" })).toHaveAttribute(
+      "aria-valuenow",
+      "20"
+    );
+    expect(screen.getByText(/5h window/)).toBeInTheDocument();
+    expect(screen.getByText(/7d window/)).toBeInTheDocument();
   });
 
   it("marks a window whose reset time already passed as expired", () => {
@@ -73,7 +128,8 @@ describe("KeyUsagePanel", () => {
               limitName: "Primary plan",
               primary: { usedPercent: 100, windowMinutes: 300, resetsAt: "2026-10-10T08:00:00.000Z" },
               secondary: null,
-              credits: { hasCredits: true, unlimited: true }
+              credits: { hasCredits: true, unlimited: true },
+              expiresAt: "2026-10-31T00:00:00.000Z"
             }
           ]
         }}
@@ -89,6 +145,7 @@ describe("KeyUsagePanel", () => {
       "aria-valuenow",
       "100"
     );
+    expect(screen.getByText(/Valid until/)).toBeInTheDocument();
   });
 
   it("falls back to unknown labels when quota fields are missing", () => {
@@ -105,7 +162,8 @@ describe("KeyUsagePanel", () => {
               limitName: null,
               primary: null,
               secondary: null,
-              credits: null
+              credits: null,
+              expiresAt: null
             }
           ]
         }}

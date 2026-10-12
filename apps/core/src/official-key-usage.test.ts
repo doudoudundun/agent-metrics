@@ -88,6 +88,7 @@ function snapshot(
         ? { usedPercent: 33, windowMinutes: 10080, resetsAt: "2026-10-15T01:19:16.000Z" }
         : input.secondary,
     credits: input.credits === undefined ? { hasCredits: false, unlimited: false } : input.credits,
+    expiresAt: input.expiresAt === undefined ? null : input.expiresAt,
     observedAt: input.observedAt
   };
 }
@@ -391,7 +392,8 @@ describe("GET /api/key-usage", () => {
           windowMinutes: 10080,
           resetsAt: new Date(1792019956 * 1000).toISOString()
         },
-        credits: { hasCredits: false, unlimited: false }
+        credits: { hasCredits: false, unlimited: false },
+        expiresAt: null
       }
     ]);
 

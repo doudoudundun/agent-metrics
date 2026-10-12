@@ -118,6 +118,13 @@
   color: #c4d3e5;
 }
 
+.key-usage-card__expires {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: #8fa6bf;
+}
+
 .key-usage-window {
   display: grid;
   gap: 6px;

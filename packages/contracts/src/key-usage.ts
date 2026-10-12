@@ -24,7 +24,9 @@ export const KeyUsageEntrySchema = z.object({
   limitName: z.string().nullable(),
   primary: KeyUsageWindowSchema.nullable(),
   secondary: KeyUsageWindowSchema.nullable(),
-  credits: KeyUsageCreditsSchema.nullable()
+  credits: KeyUsageCreditsSchema.nullable(),
+  /** Plan/key expiry when the source reports one (e.g. ZCode plan ends_at). */
+  expiresAt: Rfc3339.nullable()
 });
 
 export const KeyUsageResponseSchema = z.object({

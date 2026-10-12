@@ -29,6 +29,7 @@ const ABSOLUTE_TIME_FORMAT: Intl.DateTimeFormatOptions = {
 
 export function KeyUsagePanel({ data, loading = false, errorMessage = null, now }: KeyUsagePanelProps) {
   const entries = data?.entries ?? [];
+  const displayEntries = mergeVendorWindowEntries(entries);
   const resolvedNow = typeof now === "function" ? now() : now ?? new Date();
 
   return (
@@ -45,13 +46,13 @@ export function KeyUsagePanel({ data, loading = false, errorMessage = null, now 
 
       {loading ? <p className="panel-empty">Loading key usage...</p> : null}
       {!loading && errorMessage ? <p className="panel-empty key-usage-panel__error">{errorMessage}</p> : null}
-      {!loading && !errorMessage && entries.length === 0 ? (
+      {!loading && !errorMessage && displayEntries.length === 0 ? (
         <p className="panel-empty">No official key usage data yet.</p>
       ) : null}
 
-      {!loading && !errorMessage && entries.length > 0 ? (
+      {!loading && !errorMessage && displayEntries.length > 0 ? (
         <ul className="key-usage-list" aria-label="Official key quota windows">
-          {entries.map((entry, index) => (
+          {displayEntries.map((entry, index) => (
             <li className="key-usage-card" key={`${entry.vendor}-${entry.limitId ?? "default"}-${index}`}>
               <div className="key-usage-card__head">
                 <strong className="key-usage-card__vendor">{formatVendor(entry.vendor)}</strong>
@@ -63,16 +64,21 @@ export function KeyUsagePanel({ data, loading = false, errorMessage = null, now 
                 </span>
               </div>
               <div className="key-usage-card__windows">
+                {entry.primary !== null ? (
+                  <QuotaWindow label="Primary window" window={entry.primary} now={resolvedNow} />
+                ) : null}
+                {entry.secondary !== null ? (
+                  <QuotaWindow label="Secondary window" window={entry.secondary} now={resolvedNow} />
+                ) : null}
                 {entry.primary === null && entry.secondary === null ? (
                   <p className="key-usage-card__empty">No quota windows reported.</p>
                 ) : null}
-                {entry.primary ? (
-                  <QuotaWindow label="Primary window" window={entry.primary} now={resolvedNow} />
-                ) : null}
-                {entry.secondary ? (
-                  <QuotaWindow label="Secondary window" window={entry.secondary} now={resolvedNow} />
-                ) : null}
               </div>
+              {entry.expiresAt ? (
+                <p className="key-usage-card__expires">
+                  Valid until {formatLocalTime(new Date(entry.expiresAt))}
+                </p>
+              ) : null}
             </li>
           ))}
         </ul>
@@ -91,7 +97,9 @@ function QuotaWindow({ label, window, now }: { label: string; window: KeyUsageWi
       <div className="key-usage-window__head">
         <span className="key-usage-window__label">
           {label}
-          {windowLength === null ? null : <span className="key-usage-window__length"> · {windowLength}</span>}
+          {windowLength === null ? null : (
+            <span className="key-usage-window__length"> · {windowLength}</span>
+          )}
         </span>
         <span className="key-usage-window__percent">{formatPercent(usedPercent)}</span>
       </div>
@@ -112,6 +120,57 @@ function QuotaWindow({ label, window, now }: { label: string; window: KeyUsageWi
       <p className="key-usage-window__reset">{formatReset(window.resetsAt, now)}</p>
     </div>
   );
+}
+
+function mergeVendorWindowEntries(entries: KeyUsageEntry[]): KeyUsageEntry[] {
+  const windowedCountByVendor = new Map<string, number>();
+  for (const entry of entries) {
+    if (entry.primary !== null || entry.secondary !== null) {
+      windowedCountByVendor.set(entry.vendor, (windowedCountByVendor.get(entry.vendor) ?? 0) + 1);
+    }
+  }
+
+  const mergedByVendor = new Map<string, KeyUsageEntry>();
+  const result: KeyUsageEntry[] = [];
+  for (const entry of entries) {
+    const hasWindow = entry.primary !== null || entry.secondary !== null;
+    if (!hasWindow || (windowedCountByVendor.get(entry.vendor) ?? 0) < 2) {
+      result.push(entry);
+      continue;
+    }
+
+    const existing = mergedByVendor.get(entry.vendor);
+    if (existing === undefined) {
+      const merged: KeyUsageEntry = {
+        ...entry,
+        limitId: null,
+        limitName: null,
+        primary: entry.primary ?? entry.secondary,
+        secondary: entry.primary !== null ? entry.secondary : null
+      };
+      mergedByVendor.set(entry.vendor, merged);
+      result.push(merged);
+      continue;
+    }
+
+    const pending = [entry.primary, entry.secondary].filter(
+      (window): window is KeyUsageWindow => window !== null
+    );
+    for (const window of pending) {
+      if (existing.primary === null) {
+        existing.primary = window;
+      } else if (existing.secondary === null) {
+        existing.secondary = window;
+      }
+    }
+    if (existing.credits === null && entry.credits !== null) {
+      existing.credits = entry.credits;
+    }
+    if (existing.expiresAt === null && entry.expiresAt !== null) {
+      existing.expiresAt = entry.expiresAt;
+    }
+  }
+  return result;
 }
 
 function formatVendor(vendor: string): string {

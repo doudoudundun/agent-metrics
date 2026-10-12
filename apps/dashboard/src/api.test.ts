@@ -521,7 +521,8 @@ describe("key usage api client", () => {
             windowMinutes: 10080,
             resetsAt: "2026-10-15T01:19:16.000Z"
           },
-          credits: { hasCredits: false, unlimited: false }
+          credits: { hasCredits: false, unlimited: false },
+          expiresAt: null
         }
       ]
     };

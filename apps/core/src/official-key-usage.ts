@@ -43,6 +43,8 @@ export type OfficialKeyUsageSnapshot = {
   primary: OfficialKeyUsageWindow | null;
   secondary: OfficialKeyUsageWindow | null;
   credits: OfficialKeyUsageCredits | null;
+  /** Plan/key expiry (ISO) when the source reports one; null for Codex rollouts. */
+  expiresAt: string | null;
   /** When the source record was written (ISO), or the file mtime as fallback. */
   observedAt: string;
 };
@@ -93,6 +95,7 @@ type OfficialKeyUsageDbRow = {
   secondaryResetsAt: string | null;
   creditsHasCredits: number | null;
   creditsUnlimited: number | null;
+  expiresAt: string | null;
   observedAt: string;
 };
 
@@ -181,6 +184,7 @@ export function ensureOfficialKeyUsageSchema(db: SqliteDatabaseLike): void {
       secondary_resets_at TEXT,
       credits_has_credits INTEGER,
       credits_unlimited INTEGER,
+      expires_at TEXT,
       observed_at TEXT NOT NULL,
       collected_at TEXT NOT NULL,
       PRIMARY KEY (vendor, limit_key, window_key)
@@ -188,6 +192,13 @@ export function ensureOfficialKeyUsageSchema(db: SqliteDatabaseLike): void {
     CREATE INDEX IF NOT EXISTS idx_official_key_usage_vendor_observed_at
       ON official_key_usage (vendor, observed_at);
   `);
+  const columns = db
+    .prepare<{ name: string }>("PRAGMA table_info(official_key_usage)")
+    .all()
+    .map((column) => column.name);
+  if (!columns.includes("expires_at")) {
+    db.exec("ALTER TABLE official_key_usage ADD COLUMN expires_at TEXT");
+  }
 }
 
 /** Upserts snapshots; an older scan never overwrites a newer stored row. */
@@ -206,8 +217,8 @@ export function persistOfficialKeyUsage(
       vendor, limit_key, window_key, source, limit_id, limit_name,
       primary_used_percent, primary_window_minutes, primary_resets_at,
       secondary_used_percent, secondary_window_minutes, secondary_resets_at,
-      credits_has_credits, credits_unlimited, observed_at, collected_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      credits_has_credits, credits_unlimited, expires_at, observed_at, collected_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(vendor, limit_key, window_key) DO UPDATE SET
       source = excluded.source,
       limit_id = excluded.limit_id,
@@ -220,6 +231,7 @@ export function persistOfficialKeyUsage(
       secondary_resets_at = excluded.secondary_resets_at,
       credits_has_credits = excluded.credits_has_credits,
       credits_unlimited = excluded.credits_unlimited,
+      expires_at = excluded.expires_at,
       observed_at = excluded.observed_at,
       collected_at = excluded.collected_at
     WHERE excluded.observed_at >= official_key_usage.observed_at`
@@ -242,6 +254,7 @@ export function persistOfficialKeyUsage(
         snapshot.secondary?.resetsAt ?? null,
         snapshot.credits === null ? null : snapshot.credits.hasCredits ? 1 : 0,
         snapshot.credits === null ? null : snapshot.credits.unlimited ? 1 : 0,
+        snapshot.expiresAt,
         snapshot.observedAt,
         collectedAt
       );
@@ -274,6 +287,7 @@ export function selectOfficialKeyUsage(
         secondary_resets_at AS secondaryResetsAt,
         credits_has_credits AS creditsHasCredits,
         credits_unlimited AS creditsUnlimited,
+        expires_at AS expiresAt,
         observed_at AS observedAt
       FROM official_key_usage
       ${vendorFilter}
@@ -300,7 +314,8 @@ export function toKeyUsageResponse(snapshots: OfficialKeyUsageSnapshot[]): KeyUs
     limitName: snapshot.limitName,
     primary: snapshot.primary,
     secondary: snapshot.secondary,
-    credits: snapshot.credits
+    credits: snapshot.credits,
+    expiresAt: snapshot.expiresAt
   }));
 
   return {
@@ -399,6 +414,7 @@ function parseRolloutLine(
     vendor: context.vendor,
     source: context.source,
     ...fields,
+    expiresAt: null,
     observedAt: readTimestamp(record.timestamp) ?? context.fallbackObservedAt
   };
 }
@@ -514,6 +530,7 @@ function toSnapshot(row: OfficialKeyUsageDbRow): OfficialKeyUsageSnapshot {
       row.creditsHasCredits === null && row.creditsUnlimited === null
         ? null
         : { hasCredits: row.creditsHasCredits === 1, unlimited: row.creditsUnlimited === 1 },
+    expiresAt: row.expiresAt,
     observedAt: row.observedAt
   };
 }
