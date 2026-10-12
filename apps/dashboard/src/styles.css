@@ -2082,7 +2082,7 @@ tbody tr[data-selected="true"] .session-select {
 
 .dashboard-column {
   display: grid;
-  align-content: start;
+  grid-auto-rows: 1fr;
   gap: 8px;
   min-width: 0;
 }
