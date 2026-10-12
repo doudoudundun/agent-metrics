@@ -15,20 +15,22 @@ const SHARE_FORMAT = new Intl.NumberFormat("en-US", {
   style: "percent",
   maximumFractionDigits: 1
 });
+const PROVIDER_LIMIT = 5;
 
 export function ProviderBreakdownPanel({ rows }: ProviderBreakdownPanelProps) {
   const rankedRows = [...rows].sort(compareProviders);
+  const visibleRows = rankedRows.slice(0, PROVIDER_LIMIT);
   const totalTokens = rankedRows.reduce((sum, row) => sum + row.totalTokens, 0);
 
   return (
     <section className="panel provider-breakdown-panel">
       <div className="panel-heading">
         <h2>Provider Breakdown</h2>
-        <span>{rankedRows.length} providers</span>
+        <span>{buildCountLabel(visibleRows.length, rankedRows.length)}</span>
       </div>
-      {rankedRows.length > 0 ? (
+      {visibleRows.length > 0 ? (
         <ol aria-label="Provider token breakdown" className="provider-breakdown-list">
-          {rankedRows.map((row) => {
+          {visibleRows.map((row) => {
             const share = totalTokens > 0 ? row.totalTokens / totalTokens : 0;
 
             return (
@@ -53,6 +55,14 @@ export function ProviderBreakdownPanel({ rows }: ProviderBreakdownPanelProps) {
       )}
     </section>
   );
+}
+
+function buildCountLabel(visibleCount: number, totalCount: number): string {
+  if (totalCount <= PROVIDER_LIMIT) {
+    return `${visibleCount} providers`;
+  }
+
+  return `Top ${visibleCount} of ${totalCount}`;
 }
 
 function compareProviders(left: ProviderRow, right: ProviderRow): number {

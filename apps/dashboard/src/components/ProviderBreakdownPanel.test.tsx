@@ -67,6 +67,24 @@ describe("ProviderBreakdownPanel", () => {
     expect(screen.getByText("0 providers")).toBeInTheDocument();
     expect(screen.queryByRole("list", { name: "Provider token breakdown" })).not.toBeInTheDocument();
   });
+
+  it("keeps the list to the top five providers and labels the cutoff", () => {
+    render(
+      <ProviderBreakdownPanel
+        rows={[1, 2, 3, 4, 5, 6, 7].map((index) => ({
+          providerId: `provider-${index}`,
+          providerHost: null,
+          totalTokens: (8 - index) * 1000
+        }))}
+      />
+    );
+
+    const items = readProviderRows();
+    expect(items).toHaveLength(5);
+    expect(items[0]).toHaveTextContent("provider-1");
+    expect(items[4]).toHaveTextContent("provider-5");
+    expect(screen.getByText("Top 5 of 7")).toBeInTheDocument();
+  });
 });
 
 function readProviderRows(): HTMLElement[] {
