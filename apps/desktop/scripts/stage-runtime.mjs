@@ -1,7 +1,7 @@
 import { copyFile, cp, mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, delimiter, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { BUILD_TARGETS, DEPLOY_TARGETS } from "./stage-runtime-config.mjs";
@@ -39,7 +39,7 @@ async function main() {
 
   for (const target of DEPLOY_TARGETS) {
     const destination = join(stagingRoot, target.folderName);
-    deployWorkspacePackage(target.packageName, destination);
+    deployWorkspacePackage(target.packageName, destination, runtime);
     await sanitizeRuntimeLinks(destination);
     await pruneRuntimeArtifacts(destination);
 
@@ -79,11 +79,21 @@ function buildWorkspacePackage(packageName) {
   );
 }
 
-function deployWorkspacePackage(packageName, destination) {
+function deployWorkspacePackage(packageName, destination, runtime) {
   execFileSync(
     corepackCommand,
     ["pnpm", "--dir", repoRoot, "deploy", "--legacy", "--filter", packageName, "--prod", destination],
-    corepackExecOptions
+    {
+      ...corepackExecOptions,
+      // Deploy triggers install scripts (better-sqlite3). Prepend the managed
+      // Node runtime so those scripts see its ABI and take the published
+      // prebuild; the system Node may be a newer ABI that only builds from
+      // source, which fails on machines without VS Build Tools.
+      env: {
+        ...process.env,
+        PATH: prependPath(runtime.binDir, process.env.PATH ?? "")
+      }
+    }
   );
 }
 
