@@ -60,11 +60,11 @@ export function TrendChart({
       {statusMessage ? <p className="panel-scope-message">{statusMessage}</p> : null}
       {data.length > 0 ? (
         <div className="chart-frame">
-          <ResponsiveContainer width="100%" height={210}>
+          <ResponsiveContainer width="100%" height="100%">
             <BarChart data={data} barCategoryGap={22}>
-              <CartesianGrid stroke="rgba(225, 232, 242, 0.12)" vertical={false} />
-              <XAxis dataKey="label" stroke="#95a7c0" tickLine={false} axisLine={false} />
-              <YAxis stroke="#95a7c0" tickLine={false} axisLine={false} allowDecimals={false} />
+              <CartesianGrid stroke="rgba(16, 32, 48, 0.08)" vertical={false} />
+              <XAxis dataKey="label" stroke="#5f7087" tickLine={false} axisLine={false} />
+              <YAxis stroke="#5f7087" tickLine={false} axisLine={false} allowDecimals={false} />
               <Tooltip
                 contentStyle={{
                   background: "#0f1f2f",

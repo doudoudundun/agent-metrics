@@ -649,6 +649,15 @@ body[data-desktop-surface="desktop-widget"] .app-shell--floating {
   min-height: 224px;
 }
 
+.dashboard-column .chart-panel {
+  display: flex;
+  flex-direction: column;
+}
+
+.dashboard-column .chart-frame {
+  flex: 1 1 auto;
+}
+
 .token-trend-legend {
   position: relative;
   z-index: 1;
@@ -2262,6 +2271,14 @@ tbody tr[data-selected="true"] .session-select {
 
 .dashboard-page .model-usage-main .model-usage-cost {
   color: #1d6fd1;
+}
+
+.dashboard-page .chart-summary strong {
+  color: var(--ink);
+}
+
+.dashboard-page .token-trend-legend {
+  color: var(--ink-soft);
 }
 
 @media (max-width: 1024px) {

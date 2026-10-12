@@ -101,19 +101,19 @@ export function TokenTrendPanel({
             </span>
           </div>
           <div className="chart-frame chart-frame--tall">
-            <ResponsiveContainer width="100%" height={248}>
+            <ResponsiveContainer width="100%" height="100%">
               <LineChart data={rows} margin={{ top: 8, right: 8, bottom: 4, left: 0 }}>
-                <CartesianGrid stroke="rgba(225, 232, 242, 0.12)" vertical={false} />
+                <CartesianGrid stroke="rgba(16, 32, 48, 0.08)" vertical={false} />
                 <XAxis
                   dataKey="label"
-                  stroke="#95a7c0"
+                  stroke="#5f7087"
                   tickLine={false}
                   axisLine={false}
                   interval={resolveTickInterval(bucket, rows.length)}
                 />
                 <YAxis
                   yAxisId="tokens"
-                  stroke="#95a7c0"
+                  stroke="#5f7087"
                   tickLine={false}
                   axisLine={false}
                   tickFormatter={formatCompactTokens}
@@ -122,7 +122,7 @@ export function TokenTrendPanel({
                   yAxisId="rate"
                   orientation="right"
                   domain={[0, 1]}
-                  stroke="#95a7c0"
+                  stroke="#5f7087"
                   tickLine={false}
                   axisLine={false}
                   tickFormatter={formatPercent}
