@@ -86,6 +86,9 @@ export function CursorQuotaCard({ usage, loading, errorMessage }: CursorQuotaCar
       {!loading && errorMessage ? (
         <p className="key-usage-panel__error">{errorMessage}</p>
       ) : null}
+      {!loading && !errorMessage && usage === null ? (
+        <p className="key-usage-card__empty">Waiting for the first Cursor sync...</p>
+      ) : null}
       {!loading && !errorMessage && usage ? (
         <>
           <div className="cursor-quota-grid" aria-label="Quota summary">
