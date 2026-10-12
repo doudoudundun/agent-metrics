@@ -113,6 +113,70 @@ describe("normalizeKimicodeWireRecord", () => {
     );
   });
 
+  it("attaches server-reported step timing to the following usage record", () => {
+    const state = createKimicodeWireParseState();
+    const context = {
+      sessionId: "session_1",
+      workspacePath: "D:/projects/dev/demo",
+      agentId: "main"
+    };
+
+    normalizeKimicodeWireRecord(
+      {
+        type: "context.append_loop_event",
+        event: {
+          type: "step.end",
+          messageId: "msg_1",
+          llmFirstTokenLatencyMs: 1200,
+          llmStreamDurationMs: 3400
+        },
+        time: 1_786_587_704_400
+      },
+      context,
+      state
+    );
+    const usage = normalizeKimicodeWireRecord(
+      {
+        type: "usage.record",
+        model: "kimi-code/k3-256k",
+        usage: { inputOther: 100, output: 50, inputCacheRead: 0, inputCacheCreation: 0 },
+        usageScope: "turn",
+        time: 1_786_587_704_487
+      },
+      context,
+      state
+    );
+
+    expect(usage[0]).toEqual(
+      expect.objectContaining({
+        type: "token.usage.recorded",
+        first_token_latency_ms: 1200,
+        decode_duration_ms: 3400
+      })
+    );
+
+    // Timing is consumed once: a later usage record without a fresh step.end
+    // must not inherit stale values.
+    const nextUsage = normalizeKimicodeWireRecord(
+      {
+        type: "usage.record",
+        model: "kimi-code/k3-256k",
+        usage: { inputOther: 10, output: 5, inputCacheRead: 0, inputCacheCreation: 0 },
+        usageScope: "turn",
+        time: 1_786_587_705_000
+      },
+      context,
+      state
+    );
+    expect(nextUsage[0]).toEqual(
+      expect.objectContaining({
+        type: "token.usage.recorded",
+        first_token_latency_ms: null,
+        decode_duration_ms: null
+      })
+    );
+  });
+
   it("emits code.edit.applied with diff stats for a successful Edit", () => {
     const state = createKimicodeWireParseState();
     const context = {

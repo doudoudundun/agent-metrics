@@ -15,6 +15,7 @@ import {
   normalizeOpenCodeMessageRow,
   normalizeOpenCodeSessionRow,
   type OpenCodeMessageRow,
+  type OpenCodeModelUsageTiming,
   type OpenCodePartRow,
   type OpenCodeProviderRegistry,
   type OpenCodeSessionRow
@@ -41,6 +42,7 @@ type ReadOnlyDatabase = {
   close(): void;
   prepare<Result = unknown>(sql: string): {
     all(...params: unknown[]): Result[];
+    get(...params: unknown[]): Result | undefined;
   };
 };
 
@@ -323,6 +325,15 @@ async function syncSingleSource(input: {
     );
     const allKnownMessageRows = dedupeMessageRows([...allMessageRows, ...partMessageRows]);
     const messagePartRows = selectPartsByMessageIds(db, allKnownMessageRows.map((row) => row.id));
+    const modelUsageLookup = selectModelUsageTiming(
+      db,
+      [
+        ...new Set([
+          ...updatedToolRows.map((row) => row.message_id),
+          ...allKnownMessageRows.map((row) => row.id)
+        ])
+      ]
+    );
     const sessionLookup = loadSessionLookup(
       db,
       new Set([
@@ -359,6 +370,7 @@ async function syncSingleSource(input: {
           sessionDirectory: session?.directory ?? null,
           sessionModel: session?.model ?? null,
           partRows: partRowsByMessageId.get(row.id) ?? [],
+          modelUsage: modelUsageLookup.get(row.id) ?? null,
           providerRegistry: input.providerRegistry,
           eventContext: {
             eventNamespace: input.source.eventNamespace,
@@ -376,6 +388,7 @@ async function syncSingleSource(input: {
           sessionDirectory: session?.directory ?? null,
           sessionModel: session?.model ?? null,
           messageRow: message,
+          modelUsage: modelUsageLookup.get(row.message_id) ?? null,
           providerRegistry: input.providerRegistry,
           eventContext: {
             eventNamespace: input.source.eventNamespace,
@@ -460,6 +473,50 @@ function selectPartsByMessageIds(db: ReadOnlyDatabase, messageIds: string[]): Op
     WHERE message_id IN (${placeholders})
     ORDER BY time_created ASC, id ASC`
   );
+}
+
+// ZCode forks the OpenCode schema and adds a per-request model_usage table with
+// server-measured timing; vanilla OpenCode/MiMo databases do not have it.
+function selectModelUsageTiming(
+  db: ReadOnlyDatabase,
+  messageIds: string[]
+): Map<string, OpenCodeModelUsageTiming> {
+  const lookup = new Map<string, OpenCodeModelUsageTiming>();
+  if (messageIds.length === 0 || !tableExists(db, "model_usage")) {
+    return lookup;
+  }
+
+  const rows = selectByIdChunks<{
+    assistant_message_id: string;
+    time_to_first_token_ms: number | null;
+    duration_ms: number | null;
+  }>(db, messageIds, (placeholders) =>
+    `SELECT
+      assistant_message_id,
+      time_to_first_token_ms,
+      duration_ms
+    FROM model_usage
+    WHERE assistant_message_id IN (${placeholders})
+    ORDER BY attempt_index ASC`
+  );
+  for (const row of rows) {
+    if (!lookup.has(row.assistant_message_id)) {
+      lookup.set(row.assistant_message_id, {
+        timeToFirstTokenMs: row.time_to_first_token_ms,
+        durationMs: row.duration_ms
+      });
+    }
+  }
+  return lookup;
+}
+
+function tableExists(db: ReadOnlyDatabase, tableName: string): boolean {
+  const row = db
+    .prepare<{ count: number }>(
+      "SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name = ?"
+    )
+    .get(tableName);
+  return (row?.count ?? 0) > 0;
 }
 
 function selectMessagesByIds(

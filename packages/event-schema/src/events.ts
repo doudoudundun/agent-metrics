@@ -140,7 +140,9 @@ export const TokenUsageRecordedEventSchema = BaseEventSchema.extend({
   cache_creation_input_tokens: NonNegativeInt,
   cache_read_input_tokens: NonNegativeInt,
   server_tool_use: z.string().default("{}"),
-  usage_source: UsageSourceSchema
+  usage_source: UsageSourceSchema,
+  first_token_latency_ms: NonNegativeInt.nullable().optional(),
+  decode_duration_ms: NonNegativeInt.nullable().optional()
 }).merge(ProviderMetadataSchema);
 
 export const SnapshotCreatedEventSchema = BaseEventSchema.extend({
@@ -286,6 +288,8 @@ const TokenUsageRecordedEventV2BaseSchema = z
     cache_read_input_tokens: NonNegativeInt,
     server_tool_use: ServerToolUseSchema,
     usage_source: UsageSourceSchema,
+    first_token_latency_ms: NonNegativeInt.nullable().optional(),
+    decode_duration_ms: NonNegativeInt.nullable().optional(),
     provider_id: NonEmptyString,
     provider_base_url: NonEmptyString.nullable().optional(),
     provider_host: NonEmptyString.nullable().optional()

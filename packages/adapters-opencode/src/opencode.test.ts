@@ -690,6 +690,61 @@ describe("normalizeOpenCodeToolPartRow", () => {
     }
   });
 
+  it("prefers model_usage timing over the message-level duration estimate", () => {
+    const messageRow: OpenCodeMessageRow = {
+      id: "msg_assistant_timing",
+      session_id: "ses_timing",
+      time_created: 1777355829153,
+      time_updated: 1777355842420,
+      data: JSON.stringify({
+        role: "assistant",
+        time: { created: 1777355829153, completed: 1777355842420 },
+        modelID: "glm-5.3"
+      })
+    };
+    const partRow: OpenCodePartRow = {
+      id: "prt_step_timing",
+      message_id: "msg_assistant_timing",
+      session_id: "ses_timing",
+      time_created: 1777355841852,
+      time_updated: 1777355841866,
+      data: JSON.stringify({
+        type: "step-finish",
+        tokens: { input: 100, output: 40, reasoning: 0, cache: { read: 0, write: 0 } }
+      })
+    };
+
+    const precise = normalizeOpenCodePartRow({
+      row: partRow,
+      sessionDirectory: "D:/projects/dev/agent-metrics",
+      sessionModel: "glm-5.3",
+      messageRow,
+      modelUsage: { timeToFirstTokenMs: 1500, durationMs: 8000 }
+    });
+    expect(precise[0]).toEqual(
+      expect.objectContaining({
+        type: "token.usage.recorded",
+        first_token_latency_ms: 1500,
+        decode_duration_ms: 6500
+      })
+    );
+
+    // Without model_usage, fall back to the message created→completed window.
+    const fallback = normalizeOpenCodePartRow({
+      row: partRow,
+      sessionDirectory: "D:/projects/dev/agent-metrics",
+      sessionModel: "glm-5.3",
+      messageRow
+    });
+    expect(fallback[0]).toEqual(
+      expect.objectContaining({
+        type: "token.usage.recorded",
+        first_token_latency_ms: null,
+        decode_duration_ms: 1777355842420 - 1777355829153
+      })
+    );
+  });
+
   it("folds Anthropic-style step-finish cache-read into gross input", () => {
     const messageRow: OpenCodeMessageRow = {
       id: "msg_assistant_net_step",

@@ -38,7 +38,9 @@ const AGGREGATE_QUERY_VERSION = 4;
 const AGGREGATE_QUERY_NAME = "004-optimize-aggregate-queries";
 const TOOL_AGGREGATE_INDEX_VERSION = 5;
 const TOOL_AGGREGATE_INDEX_NAME = "005-cover-tool-aggregate-queries";
-const LATEST_VERSION = TOOL_AGGREGATE_INDEX_VERSION;
+const USAGE_TIMING_VERSION = 6;
+const USAGE_TIMING_NAME = "006-add-usage-timing-columns";
+const LATEST_VERSION = USAGE_TIMING_VERSION;
 
 const LEGACY_TABLES = [
   "sessions",
@@ -111,6 +113,20 @@ export function runDomainMigrations(db: SqliteDatabaseLike, now: MigrationNow = 
     db.transaction(() => {
       ensureToolAggregateQueryIndex(db);
       insertMigration(db, TOOL_AGGREGATE_INDEX_VERSION, TOOL_AGGREGATE_INDEX_NAME, appliedAt);
+    })();
+  }
+  if (!hasMigration(db, USAGE_TIMING_NAME)) {
+    db.transaction(() => {
+      // Fresh databases already get both columns from createCanonicalSchema;
+      // only ALTER when upgrading an existing usage_events table.
+      const columns = columnNames(db, "usage_events");
+      if (!columns.has("first_token_latency_ms")) {
+        db.exec("ALTER TABLE usage_events ADD COLUMN first_token_latency_ms INTEGER");
+      }
+      if (!columns.has("decode_duration_ms")) {
+        db.exec("ALTER TABLE usage_events ADD COLUMN decode_duration_ms INTEGER");
+      }
+      insertMigration(db, USAGE_TIMING_VERSION, USAGE_TIMING_NAME, appliedAt);
     })();
   }
 }

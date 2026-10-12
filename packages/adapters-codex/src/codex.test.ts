@@ -866,6 +866,123 @@ describe("extractCodexEventsFromRollout", () => {
     }
   });
 
+  it("estimates decode duration from the gap between consecutive token_count events", () => {
+    const tokenCount = (timestamp: string, totalTokens: number, output: number) =>
+      JSON.stringify({
+        timestamp,
+        type: "event_msg",
+        payload: {
+          type: "token_count",
+          info: {
+            total_token_usage: {
+              input_tokens: 1000,
+              cached_input_tokens: 0,
+              output_tokens: output,
+              reasoning_output_tokens: 0,
+              total_tokens: totalTokens
+            },
+            last_token_usage: {
+              input_tokens: 1000,
+              cached_input_tokens: 0,
+              output_tokens: output,
+              reasoning_output_tokens: 0,
+              total_tokens: totalTokens
+            }
+          }
+        }
+      });
+
+    const events = extractCodexEventsFromRollout({
+      filePath: "C:/Users/test/.codex/sessions/2026/05/27/rollout-2026-05-27T10-00-00-019e5dc9-b10c-7371-8edd-066e8db7e50d.jsonl",
+      contents: [
+        JSON.stringify({
+          timestamp: "2026-05-27T10:00:00.000Z",
+          type: "session_meta",
+          payload: {
+            id: "019e5dc9-b10c-7371-8edd-066e8db7e50d",
+            timestamp: "2026-05-27T10:00:00.000Z",
+            cwd: "D:/projects/dev"
+          }
+        }),
+        tokenCount("2026-05-27T10:00:12.000Z", 1100, 100),
+        tokenCount("2026-05-27T10:00:20.500Z", 1300, 200)
+      ].join("\n")
+    });
+
+    const usageEvents = events.filter((event) => event.type === "token.usage.recorded");
+    expect(usageEvents).toHaveLength(2);
+    // First usage event has no predecessor, so no estimate.
+    expect(usageEvents[0]).toEqual(
+      expect.objectContaining({ decode_duration_ms: null, first_token_latency_ms: null })
+    );
+    expect(usageEvents[1]).toEqual(
+      expect.objectContaining({ decode_duration_ms: 8500, first_token_latency_ms: null })
+    );
+  });
+
+  it("drops decode estimates across turn boundaries and implausible gaps", () => {
+    const tokenCount = (timestamp: string, totalTokens: number, output: number) =>
+      JSON.stringify({
+        timestamp,
+        type: "event_msg",
+        payload: {
+          type: "token_count",
+          info: {
+            total_token_usage: {
+              input_tokens: 1000,
+              cached_input_tokens: 0,
+              output_tokens: output,
+              reasoning_output_tokens: 0,
+              total_tokens: totalTokens
+            },
+            last_token_usage: {
+              input_tokens: 1000,
+              cached_input_tokens: 0,
+              output_tokens: output,
+              reasoning_output_tokens: 0,
+              total_tokens: totalTokens
+            }
+          }
+        }
+      });
+    const taskStarted = (timestamp: string) =>
+      JSON.stringify({
+        timestamp,
+        type: "event_msg",
+        payload: { type: "task_started" }
+      });
+
+    const events = extractCodexEventsFromRollout({
+      filePath: "C:/Users/test/.codex/sessions/2026/05/27/rollout-2026-05-27T10-00-00-019e5dc9-b10c-7371-8edd-066e8db7e50d.jsonl",
+      contents: [
+        JSON.stringify({
+          timestamp: "2026-05-27T10:00:00.000Z",
+          type: "session_meta",
+          payload: {
+            id: "019e5dc9-b10c-7371-8edd-066e8db7e50d",
+            timestamp: "2026-05-27T10:00:00.000Z",
+            cwd: "D:/projects/dev"
+          }
+        }),
+        tokenCount("2026-05-27T10:00:10.000Z", 1100, 100),
+        // A new turn starts: the 5-minute gap must not count as decoding.
+        taskStarted("2026-05-27T10:05:00.000Z"),
+        tokenCount("2026-05-27T10:05:08.000Z", 1300, 200),
+        // Same turn, but a 10-minute gap is tool/idle time, not decode.
+        tokenCount("2026-05-27T10:15:08.000Z", 1500, 300),
+        tokenCount("2026-05-27T10:15:15.000Z", 1700, 400)
+      ].join("\n")
+    });
+
+    const usageEvents = events.filter((event) => event.type === "token.usage.recorded");
+    expect(usageEvents.map((event) => event.decode_duration_ms)).toEqual([
+      null,
+      null,
+      null,
+      7000
+    ]);
+  });
+
   it("tags Multica rollouts via path and originator as codex:multica", () => {
     const byPath = extractCodexEventsFromRollout({
       filePath:

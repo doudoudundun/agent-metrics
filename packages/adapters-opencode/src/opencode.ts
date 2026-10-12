@@ -43,6 +43,11 @@ export type OpenCodeProviderMetadata = {
 
 export type OpenCodeProviderRegistry = Record<string, OpenCodeProviderMetadata>;
 
+export type OpenCodeModelUsageTiming = {
+  timeToFirstTokenMs: number | null;
+  durationMs: number | null;
+};
+
 export type OpenCodeEventContext = {
   eventNamespace?: string | null;
   sourceAdapter?: SourceAdapter;
@@ -94,6 +99,7 @@ export function normalizeOpenCodeMessageRow(input: {
   sessionDirectory?: string | null;
   sessionModel?: string | null;
   partRows?: OpenCodePartRow[];
+  modelUsage?: OpenCodeModelUsageTiming | null;
   providerRegistry?: OpenCodeProviderRegistry;
   eventContext?: OpenCodeEventContext;
 }): NormalizedEventV2[] {
@@ -174,6 +180,7 @@ export function normalizeOpenCodeMessageRow(input: {
   const tokenPayload = extractTokenPayload(parsed);
 
   if (tokenPayload !== null && usagePart === null) {
+    const timing = resolveStepTiming(parsed, input.modelUsage ?? null);
     events.push({
       event_id: buildEventId(eventContext, `message:${input.row.id}:usage`),
       session_id: input.row.session_id,
@@ -190,6 +197,8 @@ export function normalizeOpenCodeMessageRow(input: {
       cache_read_input_tokens: tokenPayload.cacheReadTokens,
       server_tool_use: "{}",
       usage_source: "opencode-message",
+      first_token_latency_ms: timing.firstTokenLatencyMs,
+      decode_duration_ms: timing.decodeDurationMs,
       provider_id: providerId,
       provider_base_url: providerMetadata?.baseUrl ?? null,
       provider_host: providerMetadata?.host ?? null
@@ -204,6 +213,7 @@ export function normalizeOpenCodePartRow(input: {
   sessionDirectory?: string | null;
   sessionModel?: string | null;
   messageRow?: OpenCodeMessageRow | null;
+  modelUsage?: OpenCodeModelUsageTiming | null;
   providerRegistry?: OpenCodeProviderRegistry;
   eventContext?: OpenCodeEventContext;
 }): NormalizedEventV2[] {
@@ -221,6 +231,7 @@ export function normalizeOpenCodePartRow(input: {
         sessionDirectory: input.sessionDirectory,
         sessionModel: input.sessionModel,
         messageRow: input.messageRow,
+        modelUsage: input.modelUsage,
         providerRegistry: input.providerRegistry,
         eventContext: input.eventContext
       })
@@ -452,6 +463,7 @@ function normalizeOpenCodeStepFinishPart(input: {
   sessionDirectory?: string | null;
   sessionModel?: string | null;
   messageRow?: OpenCodeMessageRow | null;
+  modelUsage?: OpenCodeModelUsageTiming | null;
   providerRegistry?: OpenCodeProviderRegistry;
   eventContext?: OpenCodeEventContext;
 }): AnyEvent[] {
@@ -487,6 +499,7 @@ function normalizeOpenCodeStepFinishPart(input: {
       ? resolveWorkspacePath(messageRecord, input.sessionDirectory)
       : normalizeWorkspacePath(input.sessionDirectory);
   const eventContext = resolveEventContext(input.eventContext);
+  const timing = resolveStepTiming(messageRecord, input.modelUsage ?? null);
 
   return [
     {
@@ -505,11 +518,33 @@ function normalizeOpenCodeStepFinishPart(input: {
       cache_read_input_tokens: tokenPayload.cacheReadTokens,
       server_tool_use: "{}",
       usage_source: "opencode-step-finish",
+      first_token_latency_ms: timing.firstTokenLatencyMs,
+      decode_duration_ms: timing.decodeDurationMs,
       provider_id: providerId,
       provider_base_url: providerMetadata?.baseUrl ?? null,
       provider_host: providerMetadata?.host ?? null
     }
   ];
+}
+
+function resolveStepTiming(
+  messageRecord: Record<string, unknown> | null,
+  modelUsage: OpenCodeModelUsageTiming | null
+): { firstTokenLatencyMs: number | null; decodeDurationMs: number | null } {
+  if (modelUsage?.durationMs != null) {
+    const ttft = modelUsage.timeToFirstTokenMs ?? null;
+    return {
+      firstTokenLatencyMs: ttft,
+      decodeDurationMs: Math.max(0, modelUsage.durationMs - (ttft ?? 0))
+    };
+  }
+  const time = asRecord(messageRecord?.time);
+  const created = normalizeInteger(time?.created);
+  const completed = normalizeInteger(time?.completed);
+  if (created !== null && completed !== null && completed > created) {
+    return { firstTokenLatencyMs: null, decodeDurationMs: completed - created };
+  }
+  return { firstTokenLatencyMs: null, decodeDurationMs: null };
 }
 
 function sumTextPartChars(partRows: OpenCodePartRow[]): number {

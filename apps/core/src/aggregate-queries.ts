@@ -11,6 +11,8 @@ import type { MetricsDatabase, SourceVendorFilter } from "./core-types.js";
 import { buildTimeWindow, parseFilesChanged } from "./query-support.js";
 import { dropCursorGenerationShadowedByOfficial } from "./cursor-account-usage.js";
 import { selectOverviewToolCounts, selectToolRankingRows } from "./tool-query-support.js";
+import { columnNames, tableExists } from "./domain-migration-helpers.js";
+import type { SqliteDatabaseLike } from "./domain-types.js";
 
 type SessionOverviewRow = {
   session_id: string;
@@ -54,6 +56,13 @@ type TokensByModelRow = {
   cacheReadTokens: number;
   cacheCreationTokens: number;
   costUsd: number | null;
+  avgOutputTokensPerSecond: number | null;
+  avgFirstTokenLatencyMs: number | null;
+};
+
+type ModelTiming = {
+  avgOutputTokensPerSecond: number | null;
+  avgFirstTokenLatencyMs: number | null;
 };
 
 type ToolRankingRow = {
@@ -188,7 +197,9 @@ export function selectTokensByModel(
       outputTokens: 0,
       cacheReadTokens: 0,
       cacheCreationTokens: 0,
-      costUsd: null
+      costUsd: null,
+      avgOutputTokensPerSecond: null,
+      avgFirstTokenLatencyMs: null
     };
     current.inputTokens += resolveDisplayedInputTokens(row);
     current.outputTokens += row.output_tokens;
@@ -198,23 +209,111 @@ export function selectTokensByModel(
     grouped.set(groupKey, current);
   }
 
+  const timingByModel = selectUsageTimingByModel(db, scope, sourceVendor);
+
   return [...grouped.values()]
-    .map((row) => ({
-      ...row,
-      costUsd: estimateCostUsd({
-        model: row.model === "unknown" ? null : row.model,
-        inputTokens: row.inputTokens,
-        outputTokens: row.outputTokens,
-        cacheReadTokens: row.cacheReadTokens,
-        cacheCreationTokens: row.cacheCreationTokens
-      })
-    }))
+    .map((row) => {
+      const timing =
+        timingByModel.get(`${row.sourceVendor}\0${row.model}`) ?? null;
+      return {
+        ...row,
+        costUsd: estimateCostUsd({
+          model: row.model === "unknown" ? null : row.model,
+          inputTokens: row.inputTokens,
+          outputTokens: row.outputTokens,
+          cacheReadTokens: row.cacheReadTokens,
+          cacheCreationTokens: row.cacheCreationTokens
+        }),
+        avgOutputTokensPerSecond: timing?.avgOutputTokensPerSecond ?? null,
+        avgFirstTokenLatencyMs: timing?.avgFirstTokenLatencyMs ?? null
+      };
+    })
     .sort(
       (left, right) =>
         right.totalTokens - left.totalTokens ||
         left.model.localeCompare(right.model) ||
         left.sourceVendor.localeCompare(right.sourceVendor)
     );
+}
+
+/**
+ * Generation-speed metrics live only on canonical usage_events (the legacy
+ * token_usage_events table has no timing columns). Grouped by
+ * (source_vendor, model) with the same "unknown" fallback as the legacy fold
+ * so the two can be joined in selectTokensByModel. Output tokens per second
+ * is a duration-weighted aggregate (total output / total decode time), not an
+ * average of per-request rates.
+ */
+function selectUsageTimingByModel(
+  db: MetricsDatabase,
+  scope: ResolvedTimeScope | undefined,
+  sourceVendor: SourceVendorFilter
+): Map<string, ModelTiming> {
+  const result = new Map<string, ModelTiming>();
+  const sqlite = db as unknown as SqliteDatabaseLike;
+  if (
+    !tableExists(sqlite, "usage_events") ||
+    !columnNames(sqlite, "usage_events").has("decode_duration_ms")
+  ) {
+    return result;
+  }
+
+  const window = buildTimeWindow("occurred_at", scope, sourceVendor);
+  const whereSql = window.whereSql.length > 0
+    ? `${window.whereSql} AND usage_measurement = 'increment'`
+    : ` WHERE usage_measurement = 'increment'`;
+  const rows = dropCursorGenerationShadowedByOfficial(
+    db
+      .prepare<{
+        sourceVendor: SourceVendor;
+        model: string | null;
+        outputTokens: number | null;
+        decodeDurationMs: number | null;
+        firstTokenLatencyMs: number | null;
+        usageSource: string | null;
+        createdAt: string;
+      }>(
+        `SELECT
+          source_vendor AS sourceVendor,
+          model_id AS model,
+          output_tokens AS outputTokens,
+          decode_duration_ms AS decodeDurationMs,
+          first_token_latency_ms AS firstTokenLatencyMs,
+          usage_source AS usageSource,
+          occurred_at AS createdAt
+        FROM usage_events${whereSql}`
+      )
+      .all(...window.params)
+  );
+
+  const grouped = new Map<
+    string,
+    { outputTokens: number; decodeMs: number; ttftSumMs: number; ttftCount: number }
+  >();
+  for (const row of rows) {
+    const key = `${row.sourceVendor}\0${row.model ?? "unknown"}`;
+    const current =
+      grouped.get(key) ?? { outputTokens: 0, decodeMs: 0, ttftSumMs: 0, ttftCount: 0 };
+    if (row.decodeDurationMs !== null && row.decodeDurationMs > 0) {
+      current.decodeMs += row.decodeDurationMs;
+      current.outputTokens += row.outputTokens ?? 0;
+    }
+    if (row.firstTokenLatencyMs !== null) {
+      current.ttftSumMs += row.firstTokenLatencyMs;
+      current.ttftCount += 1;
+    }
+    grouped.set(key, current);
+  }
+
+  for (const [key, totals] of grouped) {
+    result.set(key, {
+      avgOutputTokensPerSecond:
+        totals.decodeMs > 0 ? (totals.outputTokens * 1000) / totals.decodeMs : null,
+      avgFirstTokenLatencyMs:
+        totals.ttftCount > 0 ? totals.ttftSumMs / totals.ttftCount : null
+    });
+  }
+  return result;
 }
 
 export function selectToolRanking(

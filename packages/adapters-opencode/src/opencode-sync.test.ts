@@ -702,6 +702,13 @@ describe("syncOpenCodeDatabase", () => {
         time_updated INTEGER NOT NULL,
         data TEXT NOT NULL
       );
+      CREATE TABLE model_usage (
+        id TEXT PRIMARY KEY,
+        assistant_message_id TEXT NOT NULL,
+        attempt_index INTEGER NOT NULL,
+        time_to_first_token_ms INTEGER,
+        duration_ms INTEGER
+      );
     `);
 
     db.prepare(`
@@ -805,6 +812,9 @@ describe("syncOpenCodeDatabase", () => {
         }
       })
     );
+    db.prepare(
+      "INSERT INTO model_usage (id, assistant_message_id, attempt_index, time_to_first_token_ms, duration_ms) VALUES (?, ?, ?, ?, ?)"
+    ).run("mu_zcode_1", "msg_zcode_assistant", 0, 900, 5000);
     db.close();
 
     // The baseline isolation (beforeEach) already redirects OPENCODE_DB_PATH
@@ -844,7 +854,9 @@ describe("syncOpenCodeDatabase", () => {
           source_record_id: "opencode:zcode:message:msg_zcode_assistant:usage",
           source_vendor: "zcode",
           source_adapter: "zcode-db",
-          usage_source: "opencode-message"
+          usage_source: "opencode-message",
+          first_token_latency_ms: 900,
+          decode_duration_ms: 4100
         })
       ])
     );

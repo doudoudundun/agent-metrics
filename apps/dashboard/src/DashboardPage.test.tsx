@@ -724,7 +724,9 @@ function buildReadyOverview() {
         outputTokens: 12000,
         cacheReadTokens: 4000,
         cacheCreationTokens: 2000,
-        costUsd: 12.34
+        costUsd: 12.34,
+        avgOutputTokensPerSecond: 35.2,
+        avgFirstTokenLatencyMs: 1200
       }
     ],
     totalToolCalls: 12,

@@ -166,7 +166,8 @@ describe("runDomainMigrations", () => {
       { version: 2, name: "002-add-session-query-indexes", applied_at: "2026-07-17T12:00:00.000Z" },
       { version: 3, name: "003-split-zcode-vendor", applied_at: "2026-07-17T12:00:00.000Z" },
       { version: 4, name: "004-optimize-aggregate-queries", applied_at: "2026-07-17T12:00:00.000Z" },
-      { version: 5, name: "005-cover-tool-aggregate-queries", applied_at: "2026-07-17T12:00:00.000Z" }
+      { version: 5, name: "005-cover-tool-aggregate-queries", applied_at: "2026-07-17T12:00:00.000Z" },
+      { version: 6, name: "006-add-usage-timing-columns", applied_at: "2026-07-17T12:00:00.000Z" }
     ]);
 
     db.close();
@@ -252,6 +253,35 @@ describe("runDomainMigrations", () => {
     expect(first).toEqual({ raw_input_tokens: 120, displayed_input_tokens: 100 });
     expect(db.prepare("SELECT raw_input_tokens, displayed_input_tokens FROM usage_events").get()).toEqual(first);
     expect(db.prepare("SELECT version FROM schema_migrations WHERE name = ?").get("codex-raw-input-tokens-v1")).toEqual({ version: -1 });
+
+    db.close();
+  });
+
+  it("adds usage timing columns when upgrading a pre-006 database", async () => {
+    const db = new Database(":memory:");
+    const runDomainMigrations = await loadRunner();
+
+    runDomainMigrations(db, new Date("2026-07-17T12:00:00.000Z"));
+    // Simulate a database created before migration 006: timing columns and
+    // marker absent. SQLite >= 3.35 supports DROP COLUMN.
+    db.exec(`
+      ALTER TABLE usage_events DROP COLUMN first_token_latency_ms;
+      ALTER TABLE usage_events DROP COLUMN decode_duration_ms;
+      DELETE FROM schema_migrations WHERE name = '006-add-usage-timing-columns';
+    `);
+
+    runDomainMigrations(db, new Date("2026-07-18T12:00:00.000Z"));
+
+    const columns = db
+      .prepare<{ name: string }>("SELECT name FROM pragma_table_info('usage_events')")
+      .all()
+      .map((row) => row.name);
+    expect(columns).toEqual(
+      expect.arrayContaining(["first_token_latency_ms", "decode_duration_ms"])
+    );
+    expect(
+      db.prepare("SELECT version, name FROM schema_migrations WHERE name = ?").get("006-add-usage-timing-columns")
+    ).toEqual({ version: 6, name: "006-add-usage-timing-columns" });
 
     db.close();
   });

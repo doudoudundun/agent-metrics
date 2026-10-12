@@ -46,6 +46,8 @@ export type ClaudeTranscriptObservation =
       providerId: string | null;
       providerBaseUrl: string | null;
       providerHost: string | null;
+      // Estimated from the gap to the previous transcript record; includes tool time.
+      decodeDurationMs?: number | null;
     }
   | {
       kind: "tool_called";
@@ -344,7 +346,9 @@ export function normalizeClaudeTranscriptObservation(
       usage_source: "claude-transcript",
       provider_id: observation.providerId,
       provider_base_url: observation.providerBaseUrl,
-      provider_host: observation.providerHost
+      provider_host: observation.providerHost,
+      first_token_latency_ms: null,
+      decode_duration_ms: observation.decodeDurationMs ?? null
     };
   }
 

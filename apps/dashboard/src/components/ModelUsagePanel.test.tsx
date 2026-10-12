@@ -20,7 +20,9 @@ describe("ModelUsagePanel", () => {
             outputTokens: 20,
             cacheReadTokens: 10,
             cacheCreationTokens: 5,
-            costUsd: 0.1
+            costUsd: 0.1,
+            avgOutputTokensPerSecond: null,
+            avgFirstTokenLatencyMs: null
           },
           {
             model: "unknown",
@@ -30,7 +32,9 @@ describe("ModelUsagePanel", () => {
             outputTokens: 80,
             cacheReadTokens: 25,
             cacheCreationTokens: 15,
-            costUsd: null
+            costUsd: null,
+            avgOutputTokensPerSecond: null,
+            avgFirstTokenLatencyMs: null
           },
           {
             model: "claude-sonnet",
@@ -40,7 +44,9 @@ describe("ModelUsagePanel", () => {
             outputTokens: 140,
             cacheReadTokens: 50,
             cacheCreationTokens: 20,
-            costUsd: 0.0012
+            costUsd: 0.0012,
+            avgOutputTokensPerSecond: null,
+            avgFirstTokenLatencyMs: null
           },
           {
             model: "gpt-5-codex",
@@ -50,7 +56,9 @@ describe("ModelUsagePanel", () => {
             outputTokens: 180,
             cacheReadTokens: 60,
             cacheCreationTokens: 30,
-            costUsd: 0.42
+            costUsd: 0.42,
+            avgOutputTokensPerSecond: null,
+            avgFirstTokenLatencyMs: null
           },
           {
             model: "haiku",
@@ -60,7 +68,9 @@ describe("ModelUsagePanel", () => {
             outputTokens: 25,
             cacheReadTokens: 10,
             cacheCreationTokens: 5,
-            costUsd: 0
+            costUsd: 0,
+            avgOutputTokensPerSecond: null,
+            avgFirstTokenLatencyMs: null
           },
           {
             model: "o3",
@@ -70,7 +80,9 @@ describe("ModelUsagePanel", () => {
             outputTokens: 100,
             cacheReadTokens: 25,
             cacheCreationTokens: 20,
-            costUsd: 1.5
+            costUsd: 1.5,
+            avgOutputTokensPerSecond: null,
+            avgFirstTokenLatencyMs: null
           }
         ]}
       />
@@ -102,7 +114,9 @@ describe("ModelUsagePanel", () => {
             outputTokens: 180,
             cacheReadTokens: 60,
             cacheCreationTokens: 30,
-            costUsd: 0.42
+            costUsd: 0.42,
+            avgOutputTokensPerSecond: 42.4,
+            avgFirstTokenLatencyMs: 830
           },
           {
             model: "claude-sonnet-4-6",
@@ -112,7 +126,9 @@ describe("ModelUsagePanel", () => {
             outputTokens: 140,
             cacheReadTokens: 50,
             cacheCreationTokens: 20,
-            costUsd: 0.0012
+            costUsd: 0.0012,
+            avgOutputTokensPerSecond: null,
+            avgFirstTokenLatencyMs: null
           },
           {
             model: "mystery-model",
@@ -122,7 +138,9 @@ describe("ModelUsagePanel", () => {
             outputTokens: 80,
             cacheReadTokens: 25,
             cacheCreationTokens: 15,
-            costUsd: null
+            costUsd: null,
+            avgOutputTokensPerSecond: null,
+            avgFirstTokenLatencyMs: null
           },
           {
             model: "big-pickle",
@@ -132,7 +150,9 @@ describe("ModelUsagePanel", () => {
             outputTokens: 20,
             cacheReadTokens: 10,
             cacheCreationTokens: 10,
-            costUsd: 0
+            costUsd: 0,
+            avgOutputTokensPerSecond: null,
+            avgFirstTokenLatencyMs: null
           }
         ]}
       />
@@ -151,5 +171,10 @@ describe("ModelUsagePanel", () => {
     expect(within(items[3]).getByText("OpenCode")).toBeInTheDocument();
     expect(items[3]).toHaveTextContent("$0.00");
     expect(within(items[2]).getByTitle("No official pricing")).toBeInTheDocument();
+    // Timing row: speed and TTFT render for rows with data, em-dash otherwise.
+    expect(items[0]).toHaveTextContent("42.4 tok/s");
+    expect(items[0]).toHaveTextContent("TTFT 830ms");
+    expect(items[2]).toHaveTextContent("— tok/s");
+    expect(items[2]).toHaveTextContent("TTFT —");
   });
 });

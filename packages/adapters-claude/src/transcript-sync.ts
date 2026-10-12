@@ -189,6 +189,7 @@ async function syncTranscriptReference(input: {
   // Maps tool_use ids encountered in this transcript to their human-readable tool names so that
   // tool_result observations (which only carry tool_use_id) can recover the original tool name.
   const toolUseIdToName = new Map<string, string>();
+  let lastRecordMs: number | null = null;
 
   for (const line of completeLines) {
     const record = parseTranscriptLine(line, input.reference);
@@ -196,9 +197,26 @@ async function syncTranscriptReference(input: {
       continue;
     }
 
+    // Claude transcript lines only carry a completion timestamp, so the decode
+    // window is approximated by the gap to the previous record (tool time
+    // included). Left null when the gap is unknown.
+    const rawTimestamp = record.timestamp;
+    const recordMs =
+      typeof rawTimestamp === "string" ? Date.parse(rawTimestamp) : Number.NaN;
+    const decodeDurationMs =
+      lastRecordMs !== null && Number.isFinite(recordMs) && recordMs >= lastRecordMs
+        ? recordMs - lastRecordMs
+        : null;
+    if (Number.isFinite(recordMs)) {
+      lastRecordMs = recordMs;
+    }
+
     const observations = extractClaudeTranscriptObservations(record);
 
     for (const observation of observations) {
+      if (observation.kind === "token_usage_recorded") {
+        observation.decodeDurationMs = decodeDurationMs;
+      }
       if (observation.kind === "tool_called") {
         toolUseIdToName.set(observation.toolUseId, observation.toolName);
       } else if (observation.kind === "tool_finished" && observation.toolName === null) {

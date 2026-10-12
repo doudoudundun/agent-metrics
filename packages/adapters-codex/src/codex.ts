@@ -4,6 +4,9 @@ import type { AnyEvent, NormalizedEventV2, SourceAdapter, SourceVendor } from "@
 
 const CODEX_SOURCE_VENDOR: SourceVendor = "codex";
 const CODEX_ROLLOUT_ADAPTER: SourceAdapter = "codex-rollout";
+// Consecutive token_count gaps beyond this still include unobserved tool runs
+// or idle time even within a turn; treat them as unknown rather than decode.
+const MAX_DECODE_GAP_MS = 120_000;
 
 export type CodexProviderConfig = {
   baseUrl: string | null;
@@ -28,6 +31,7 @@ export function extractCodexEventsFromRollout(input: {
   const lines = input.contents.split(/\r?\n/u).filter((line) => line.length > 0);
   const events: AnyEvent[] = [];
   const pendingToolCalls = new Map<string, PendingCodexToolCall>();
+  let lastTokenEventMs: number | null = null;
   let sourceInstanceId =
     input.sourceInstanceId ??
     (isMulticaRolloutPath(input.filePath) ? "codex:multica" : undefined);
@@ -458,6 +462,17 @@ export function extractCodexEventsFromRollout(input: {
     }
 
     if (
+      eventType === "event_msg" &&
+      payload !== null &&
+      normalizeOptionalString(payload.type) === "task_started"
+    ) {
+      // Turn boundary: the wait between turns (user thinking, overnight gaps)
+      // must never be attributed to decoding, so drop the previous anchor.
+      lastTokenEventMs = null;
+      continue;
+    }
+
+    if (
       eventType !== "event_msg" ||
       payload === null ||
       normalizeOptionalString(payload.type) !== "token_count"
@@ -508,13 +523,30 @@ export function extractCodexEventsFromRollout(input: {
     const providerId = sessionMeta?.providerId ?? null;
     const providerConfig = providerId ? input.providerConfigs?.[providerId] : undefined;
 
+    const usageTimestamp =
+      normalizeOptionalString(parsed.timestamp) ??
+      sessionMeta?.timestamp ??
+      new Date(0).toISOString();
+    // Codex rollouts carry no per-request timing, so approximate the decode
+    // window with the gap between consecutive token_count events. Gaps past
+    // MAX_DECODE_GAP_MS are dominated by tool execution or idle time and are
+    // dropped instead of polluting the speed average.
+    const usageMs = Date.parse(usageTimestamp);
+    const decodeDurationMs =
+      lastTokenEventMs !== null &&
+      Number.isFinite(usageMs) &&
+      usageMs >= lastTokenEventMs &&
+      usageMs - lastTokenEventMs <= MAX_DECODE_GAP_MS
+        ? usageMs - lastTokenEventMs
+        : null;
+    if (Number.isFinite(usageMs)) {
+      lastTokenEventMs = usageMs;
+    }
+
     events.push({
       event_id: `codex:session:${sessionId}:usage:${totalTokens}`,
       session_id: sessionId,
-      timestamp:
-        normalizeOptionalString(parsed.timestamp) ??
-        sessionMeta?.timestamp ??
-        new Date(0).toISOString(),
+      timestamp: usageTimestamp,
       source_vendor: CODEX_SOURCE_VENDOR,
       source_adapter: CODEX_ROLLOUT_ADAPTER,
       workspace_path: sessionMeta?.workspacePath ?? ".",
@@ -529,7 +561,9 @@ export function extractCodexEventsFromRollout(input: {
       usage_source: "codex-rollout",
       provider_id: providerId,
       provider_base_url: providerConfig?.baseUrl ?? null,
-      provider_host: providerConfig?.host ?? null
+      provider_host: providerConfig?.host ?? null,
+      first_token_latency_ms: null,
+      decode_duration_ms: decodeDurationMs
     });
   }
 

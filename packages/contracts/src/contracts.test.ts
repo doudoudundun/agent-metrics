@@ -145,7 +145,14 @@ describe("overview / tools / trend / widget", () => {
       insertions: 10,
       deletions: 3,
       tokensByModel: [
-        { model: "gpt-5", sourceVendor: "codex", costUsd: 0.42, ...tokenComponents }
+        {
+          model: "gpt-5",
+          sourceVendor: "codex",
+          costUsd: 0.42,
+          avgOutputTokensPerSecond: 38.5,
+          avgFirstTokenLatencyMs: 820,
+          ...tokenComponents
+        }
       ],
       sourceBreakdown: [
         {

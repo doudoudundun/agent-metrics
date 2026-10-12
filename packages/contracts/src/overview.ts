@@ -15,7 +15,9 @@ import {
 export const TokensByModelRowSchema = TokenComponentsSchema.extend({
   model: z.string().min(1),
   sourceVendor: SourceVendorSchema,
-  costUsd: z.number().nonnegative().nullable()
+  costUsd: z.number().nonnegative().nullable(),
+  avgOutputTokensPerSecond: z.number().nonnegative().nullable(),
+  avgFirstTokenLatencyMs: z.number().nonnegative().nullable()
 });
 
 export const SourceBreakdownRowSchema = z.object({

@@ -16,13 +16,15 @@ export type DshParseState = {
   lastModel: string | null;
   lastProviderId: string | null;
   toolStarts: Map<string, { name: string; startedAt: number; args: Record<string, unknown> | null }>;
+  pendingStep: { startedAtMs: number; firstChunkMs: number | null; usageChunkMs: number | null } | null;
 };
 
 export function createDshParseState(): DshParseState {
   return {
     lastModel: null,
     lastProviderId: null,
-    toolStarts: new Map()
+    toolStarts: new Map(),
+    pendingStep: null
   };
 }
 
@@ -75,6 +77,23 @@ export function normalizeDshLogRecord(
 
   if (type === "request/header") {
     rememberRequestHeader(parsed, state);
+    return [];
+  }
+
+  if (type === "step/start") {
+    const time = readTimestamp(parsed.time);
+    state.pendingStep =
+      time === null ? null : { startedAtMs: time, firstChunkMs: null, usageChunkMs: null };
+    return [];
+  }
+
+  if (type === "step/end") {
+    state.pendingStep = null;
+    return [];
+  }
+
+  if (type === "assistant/chunk") {
+    rememberAssistantChunk(parsed, state);
     return [];
   }
 
@@ -340,6 +359,20 @@ function normalizeAssistantMessage(
     const cacheReadTokens = readNonNegativeInt(usage.cacheReadTokens) ?? 0;
     const cacheWriteTokens = readNonNegativeInt(usage.cacheWriteTokens) ?? 0;
     if (inputTokens > 0 || outputTokens > 0 || cacheReadTokens > 0 || cacheWriteTokens > 0) {
+      // dsh session logs record step boundaries and streaming chunks with
+      // millisecond timestamps, giving client-observed TTFT (step start to
+      // first chunk) and decode duration (first chunk to usage chunk).
+      const step = state.pendingStep;
+      const firstChunkMs = step?.firstChunkMs ?? null;
+      const firstTokenLatencyMs =
+        step !== null && firstChunkMs !== null && firstChunkMs >= step.startedAtMs
+          ? firstChunkMs - step.startedAtMs
+          : null;
+      const streamEndMs = step?.usageChunkMs ?? time;
+      const decodeDurationMs =
+        firstChunkMs !== null && streamEndMs >= firstChunkMs
+          ? streamEndMs - firstChunkMs
+          : null;
       events.push({
         event_id: buildEventId(`${sessionId}:usage:${messageId}`),
         session_id: sessionId,
@@ -358,7 +391,9 @@ function normalizeAssistantMessage(
         usage_source: "dsh-usage",
         provider_id: providerId,
         provider_base_url: null,
-        provider_host: null
+        provider_host: null,
+        first_token_latency_ms: firstTokenLatencyMs,
+        decode_duration_ms: decodeDurationMs
       });
     }
   }
@@ -377,6 +412,24 @@ function rememberRequestHeader(record: Record<string, unknown>, state: DshParseS
   }
   if (provider !== null) {
     state.lastProviderId = provider;
+  }
+}
+
+function rememberAssistantChunk(record: Record<string, unknown>, state: DshParseState): void {
+  const step = state.pendingStep;
+  if (step === null) {
+    return;
+  }
+  const time = readTimestamp(record.time);
+  if (time === null) {
+    return;
+  }
+  if (step.firstChunkMs === null) {
+    step.firstChunkMs = time;
+  }
+  const chunk = asRecord(asRecord(record.data)?.chunk);
+  if (readString(chunk?.type) === "usage") {
+    step.usageChunkMs = time;
   }
 }
 

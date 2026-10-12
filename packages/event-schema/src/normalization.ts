@@ -216,6 +216,8 @@ function toV2Candidate(
       cache_read_input_tokens: event.cache_read_input_tokens,
       server_tool_use: event.server_tool_use,
       usage_source: event.usage_source,
+      first_token_latency_ms: event.first_token_latency_ms ?? null,
+      decode_duration_ms: event.decode_duration_ms ?? null,
       provider_id: event.provider_id ?? "unknown",
       provider_base_url: event.provider_base_url ?? null,
       provider_host: event.provider_host ?? null

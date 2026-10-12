@@ -66,6 +66,14 @@ export function ModelUsagePanel({ rows }: ModelUsagePanelProps) {
                   <span>out {NUMBER_FORMAT.format(row.outputTokens)}</span>
                   <span>cache {NUMBER_FORMAT.format(cacheTokens)}</span>
                 </div>
+                <div className="model-usage-meta model-usage-timing">
+                  <span title="Average output tokens per second (weighted by decode time)">
+                    {formatSpeed(row.avgOutputTokensPerSecond)}
+                  </span>
+                  <span title="Average time to first token">
+                    TTFT {formatTtft(row.avgFirstTokenLatencyMs)}
+                  </span>
+                </div>
               </li>
             );
           })}
@@ -103,4 +111,20 @@ function formatCost(costUsd: number | null): string {
   }
 
   return COST_FORMAT.format(costUsd);
+}
+
+function formatSpeed(tokensPerSecond: number | null): string {
+  if (tokensPerSecond === null || tokensPerSecond === undefined) {
+    return "— tok/s";
+  }
+
+  return `${tokensPerSecond >= 100 ? Math.round(tokensPerSecond) : tokensPerSecond.toFixed(1)} tok/s`;
+}
+
+function formatTtft(latencyMs: number | null): string {
+  if (latencyMs === null || latencyMs === undefined) {
+    return "—";
+  }
+
+  return latencyMs >= 1000 ? `${(latencyMs / 1000).toFixed(1)}s` : `${Math.round(latencyMs)}ms`;
 }

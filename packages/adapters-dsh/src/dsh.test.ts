@@ -163,6 +163,112 @@ describe("normalizeDshLogRecord", () => {
     );
   });
 
+  it("derives TTFT and decode duration from step boundaries and stream chunks", () => {
+    const state = createDshParseState();
+    const sessionId = "session-1";
+    const workspacePath = "D:/projects/dev/demo";
+
+    normalizeDshLogRecord(
+      { type: "step/start", seq: 0, time: 1_000_000, data: { turn: 1, step: 1 } },
+      sessionId,
+      workspacePath,
+      state
+    );
+    // First streamed chunk 800ms after the step started.
+    normalizeDshLogRecord(
+      {
+        type: "assistant/chunk",
+        seq: 1,
+        time: 1_000_800,
+        data: { turn: 1, step: 1, chunk: { type: "block-start", index: 0, blockType: "text" } }
+      },
+      sessionId,
+      workspacePath,
+      state
+    );
+    // Usage chunk closes the stream 3s after the first chunk.
+    normalizeDshLogRecord(
+      {
+        type: "assistant/chunk",
+        seq: 2,
+        time: 1_003_800,
+        data: {
+          turn: 1,
+          step: 1,
+          chunk: { type: "usage", usage: { inputTokens: 10, outputTokens: 4 } }
+        }
+      },
+      sessionId,
+      workspacePath,
+      state
+    );
+    const assistant = normalizeDshLogRecord(
+      {
+        type: "assistant/message",
+        seq: 3,
+        time: 1_003_802,
+        data: {
+          turn: 1,
+          step: 1,
+          message: {
+            id: "msg_asst_timing",
+            role: "assistant",
+            content: [{ type: "text", text: "done" }],
+            source: { kind: "model", provider: "deepseek", model: "deepseek-chat" }
+          },
+          usage: { inputTokens: 10, outputTokens: 4 }
+        }
+      },
+      sessionId,
+      workspacePath,
+      state
+    );
+
+    const usageEvent = assistant.find((event) => event.type === "token.usage.recorded");
+    expect(usageEvent).toEqual(
+      expect.objectContaining({
+        first_token_latency_ms: 800,
+        decode_duration_ms: 3000
+      })
+    );
+
+    // step/end clears the pending step so the next message has no timing.
+    normalizeDshLogRecord(
+      { type: "step/end", seq: 4, time: 1_003_900, data: { turn: 1, step: 1 } },
+      sessionId,
+      workspacePath,
+      state
+    );
+    const next = normalizeDshLogRecord(
+      {
+        type: "assistant/message",
+        seq: 5,
+        time: 1_010_000,
+        data: {
+          turn: 1,
+          step: 2,
+          message: {
+            id: "msg_asst_no_timing",
+            role: "assistant",
+            content: [{ type: "text", text: "again" }],
+            source: { kind: "model", provider: "deepseek", model: "deepseek-chat" }
+          },
+          usage: { inputTokens: 5, outputTokens: 2 }
+        }
+      },
+      sessionId,
+      workspacePath,
+      state
+    );
+    const nextUsage = next.find((event) => event.type === "token.usage.recorded");
+    expect(nextUsage).toEqual(
+      expect.objectContaining({
+        first_token_latency_ms: null,
+        decode_duration_ms: null
+      })
+    );
+  });
+
   it("emits code.edit.applied for a successful edit tool result", () => {
     const state = createDshParseState();
     const sessionId = "session-1";

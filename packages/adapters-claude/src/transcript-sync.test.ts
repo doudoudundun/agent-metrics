@@ -79,6 +79,15 @@ describe("syncKnownClaudeTranscripts", () => {
       "assistant.responded",
       "token.usage.recorded"
     ]);
+    // The usage record carries the gap to the previous transcript record as an
+    // estimated decode window (10:00:00 user -> 10:00:05 assistant).
+    expect(eventLines[2]).toEqual(
+      expect.objectContaining({
+        type: "token.usage.recorded",
+        first_token_latency_ms: null,
+        decode_duration_ms: 5000
+      })
+    );
   });
 
   it("catches up newly appended transcript bytes without duplicating earlier events", async () => {

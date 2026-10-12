@@ -24,6 +24,7 @@ export type KimicodeWireParseState = {
   lastModel: string | null;
   lastProviderId: string | null;
   lastMessageId: string | null;
+  pendingStepTiming: { firstTokenLatencyMs: number | null; decodeDurationMs: number | null } | null;
   toolStarts: Map<string, { name: string; startedAt: number; args: Record<string, unknown> | null }>;
 };
 
@@ -32,6 +33,7 @@ export function createKimicodeWireParseState(): KimicodeWireParseState {
     lastModel: null,
     lastProviderId: null,
     lastMessageId: null,
+    pendingStepTiming: null,
     toolStarts: new Map()
   };
 }
@@ -144,6 +146,10 @@ function rememberStepMessage(record: Record<string, unknown>, state: KimicodeWir
   if (messageId !== null) {
     state.lastMessageId = messageId;
   }
+  state.pendingStepTiming = {
+    firstTokenLatencyMs: readNonNegativeInt(record.llmFirstTokenLatencyMs),
+    decodeDurationMs: readNonNegativeInt(record.llmStreamDurationMs)
+  };
 }
 
 function normalizeTurnPrompt(record: Record<string, unknown>, context: KimicodeWireContext): AnyEvent[] {
@@ -389,6 +395,8 @@ function normalizeUsageRecord(
     state.lastProviderId = splitProvider(model);
   }
   const messageId = state.lastMessageId ?? `usage:${context.agentId}:${time}`;
+  const timing = state.pendingStepTiming;
+  state.pendingStepTiming = null;
   return [
     {
       event_id: buildEventId(`${context.sessionId}:agent:${context.agentId}:usage:${time}`),
@@ -406,6 +414,8 @@ function normalizeUsageRecord(
       cache_read_input_tokens: cacheRead,
       server_tool_use: "{}",
       usage_source: "kimicode-usage",
+      first_token_latency_ms: timing?.firstTokenLatencyMs ?? null,
+      decode_duration_ms: timing?.decodeDurationMs ?? null,
       provider_id: state.lastProviderId,
       provider_base_url: null,
       provider_host: null
