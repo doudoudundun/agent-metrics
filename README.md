@@ -1,6 +1,6 @@
 # Agent Metrics
 
-Local-first metrics dashboard for Claude Code hooks.
+Local-first metrics dashboard for AI coding agents (Claude Code, Codex, Cursor, OpenCode, ZCode, Kimi Code, DSH, MiMo).
 
 ## Quick Start
 
@@ -18,11 +18,11 @@ After startup, open Claude Code in any workspace and trigger a few real tools su
 
 ## How Collection Works
 
-- Claude Code hooks call the local ingress collector in `apps/cli`.
+- Claude Code hooks call the local ingress collector in `apps/cli`; other vendors are collected by source adapters (Codex rollouts, Cursor tracking DB, OpenCode/ZCode/MiMo SQLite, Kimi Code wire records, DSH JSONL).
 - Raw hook envelopes append to `data/hooks/raw/claude-code.jsonl`.
 - `agent-metrics hooks parse --follow` converts raw envelopes into normalized events at `data/events/events.jsonl`.
 - `apps/core` ingests normalized events into SQLite on API requests.
-- `apps/dashboard` renders sessions, tool rankings, edit metrics, and a session timeline.
+- `apps/dashboard` renders sessions, tool rankings, edit metrics, a session timeline, model usage with cost estimation and generation speed (TTFT / tok/s), provider breakdown, and official key usage quotas.
 
 ## Dashboard Behavior
 
@@ -30,6 +30,9 @@ After startup, open Claude Code in any workspace and trigger a few real tools su
 - The hero toolbar switches the global dashboard scope between natural calendar views, rolling window views, and lifetime.
 - Selected aggregate panels can override the global scope without changing the rest of the dashboard.
 - `Updated` shows the backend `updatedAt` value formatted as a full local date-time.
+- The token trend chart auto-selects hour, day, week, or month buckets by window span.
+- Model usage rows show estimated cost (from the built-in model pricing table), output speed, and time-to-first-token where the source records timing.
+- The official key usage panel shows provider quota percentages and window reset times collected from Codex rollout rate limits.
 
 ## Commands
 
@@ -96,7 +99,7 @@ Compatibility notes:
 The desktop app supports two working modes:
 
 1. Main dashboard window
-2. Floating always-on-top window
+2. Widget window (compact always-on-top monitor)
 
 ### Main Dashboard Window
 
@@ -114,30 +117,31 @@ What it is for:
 - reviewing sessions, rankings, charts, and detailed metrics
 - changing time ranges and exploring data in depth
 
-### Floating Always-On-Top Window
+### Widget Window
 
 Use this mode when you want a compact desktop monitor that stays visible while you work.
 
 How to open it:
 
-- macOS: click the menu bar icon and choose `Show or Hide Floating Window`
-- Windows: click the tray icon and choose `Show or Hide Floating Window`
+- macOS: click the menu bar icon and choose `Show Widget` (or `Hide Widget` when it is visible)
+- Windows: click the tray icon and choose `Show Widget` (or `Hide Widget` when it is visible)
 
 What it is for:
 
 - keeping a live summary visible on the desktop
 - checking sessions, turns, and tokens at a glance
 - monitoring activity without opening the full dashboard
+- the widget remembers its collapsed, expanded, or pinned state
 
-### Windows desktop orb
+### Tray And Menu Bar
 
-The packaged desktop app can expose a tray-backed orb on Windows. The orb can dock to the left or right edge, partially hide, and reveal a lightweight metrics card on hover. Use the tray menu to reopen the orb or reset its position if it moves off-screen.
+The packaged desktop app exposes a tray icon on Windows and a menu bar icon on macOS. Both open the dashboard or the widget window. Closing the dashboard window hides it to the tray; the tray or menu bar `Quit` action fully exits the app.
 
 ### Close, Hide, And Quit
 
 - Closing the main dashboard window does not quit the app by default.
 - Closing the main dashboard window hides it to the tray on Windows or the menu bar on macOS.
-- Closing the floating window hides only the floating window.
+- Closing the widget window hides only the widget window.
 - To fully exit the app, open the tray or menu bar menu and choose `Quit`.
 
 ### What Happens After Launch
@@ -145,7 +149,7 @@ The packaged desktop app can expose a tray-backed orb on Windows. The orb can do
 - The desktop app starts the existing local telemetry pipeline instead of replacing it.
 - The browser dashboard remains available for debugging and development.
 - Window size and position are remembered between launches.
-- The floating window can be moved and reopened independently from the main dashboard.
+- The widget window can be moved and reopened independently from the main dashboard.
 
 ## Manual Install
 
