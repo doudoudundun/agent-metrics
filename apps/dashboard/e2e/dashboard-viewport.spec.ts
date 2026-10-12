@@ -32,7 +32,9 @@ const overviewFixture = {
       outputTokens: 12000,
       cacheReadTokens: 4000,
       cacheCreationTokens: 2000,
-      costUsd: 1.23
+      costUsd: 1.23,
+      avgOutputTokensPerSecond: 33.2,
+      avgFirstTokenLatencyMs: 1200
     }
   ],
   totalToolCalls: 12,
@@ -147,6 +149,12 @@ async function installDashboardApiMocks(page: Page): Promise<void> {
             }
           ]
         }
+      });
+      return;
+    }
+    if (pathname.endsWith("/api/key-usage")) {
+      await route.fulfill({
+        json: { updatedAt: overviewFixture.updatedAt, entries: [] }
       });
       return;
     }
