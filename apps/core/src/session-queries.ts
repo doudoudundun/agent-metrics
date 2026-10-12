@@ -1,17 +1,15 @@
 import type { TokenTrendBucket } from "@agent-metrics/contracts";
 import type { SourceVendor } from "@agent-metrics/event-schema";
-import {
-  estimateCostUsd,
-  isAdditiveUsage,
-  resolveDisplayedInputTokens,
-  resolveTotalTokens
-} from "@agent-metrics/metrics-engine";
+import { estimateCostUsd, isAdditiveUsage } from "@agent-metrics/metrics-engine";
 import type { ResolvedTimeScope, TimeScopeRange } from "./time-scope.js";
 import type { MetricsDatabase, SourceVendorFilter } from "./core-types.js";
-import { dropCursorGenerationShadowedByOfficial } from "./cursor-account-usage.js";
-import { buildTimeWindow } from "./query-support.js";
-import { selectSourceToolCallCounts } from "./tool-query-support.js";
-import type { TokenUsageOverviewRow } from "./aggregate-queries.js";
+import {
+  andWhere,
+  buildTimeWindow,
+  buildToolActivityWindow,
+  TOOL_CALLS_SESSION_JOIN
+} from "./query-support.js";
+import { selectTokenUsageRows, type TokenUsageOverviewRow } from "./aggregate-queries.js";
 
 type SessionListRow = {
   sessionId: string;
@@ -53,16 +51,6 @@ type TokenTrendRow = {
   cacheHitRate: number;
 };
 
-type TokenTrendUsageRow = {
-  createdAt: string;
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens: number;
-  cacheCreationTokens: number;
-  sourceVendor: SourceVendor;
-  usageSource: string | null;
-};
-
 export function selectSessions(
   db: MetricsDatabase,
   scope?: ResolvedTimeScope,
@@ -71,76 +59,89 @@ export function selectSessions(
   const window = buildTimeWindow("started_at", scope, sourceVendor);
 
   const sessions = db
-    .prepare<Omit<SessionListRow, "totalTokens"> & { totalTokens?: number }>(
+    .prepare<Omit<SessionListRow, "totalTokens"> & { sourceInstanceId: string; totalTokens?: number }>(
       `
         SELECT
+          sessions.source_instance_id AS sourceInstanceId,
           sessions.session_id AS sessionId,
           sessions.workspace_path AS workspacePath,
           sessions.source_vendor AS sourceVendor,
           sessions.source_adapter AS sourceAdapter,
           COALESCE(prompt_counts.turnCount, 0) AS turnCount,
           0 AS totalTokens,
-          (
-            SELECT combined.providerId
-            FROM (
-              SELECT provider_id AS providerId, created_at, event_id
-              FROM assistant_responses
-              WHERE session_id = sessions.session_id AND provider_id IS NOT NULL
-              UNION ALL
-              SELECT provider_id AS providerId, created_at, event_id
-              FROM token_usage_events
-              WHERE session_id = sessions.session_id AND provider_id IS NOT NULL
-            ) AS combined
-            ORDER BY combined.created_at DESC, combined.event_id DESC
-            LIMIT 1
-          ) AS providerId,
-          (
-            SELECT combined.providerHost
-            FROM (
-              SELECT provider_host AS providerHost, created_at, event_id
-              FROM assistant_responses
-              WHERE session_id = sessions.session_id AND provider_host IS NOT NULL
-              UNION ALL
-              SELECT provider_host AS providerHost, created_at, event_id
-              FROM token_usage_events
-              WHERE session_id = sessions.session_id AND provider_host IS NOT NULL
-            ) AS combined
-            ORDER BY combined.created_at DESC, combined.event_id DESC
-            LIMIT 1
-          ) AS providerHost,
-          (
-            SELECT combined.model
-            FROM (
-              SELECT model, created_at, event_id
-              FROM assistant_responses
-              WHERE session_id = sessions.session_id AND model IS NOT NULL
-              UNION ALL
-              SELECT model, created_at, event_id
-              FROM token_usage_events
-              WHERE session_id = sessions.session_id AND model IS NOT NULL
-            ) AS combined
-            ORDER BY combined.created_at DESC, combined.event_id DESC
-            LIMIT 1
-          ) AS lastModel,
-          MAX(
-            sessions.started_at,
-            COALESCE((SELECT MAX(created_at) FROM prompt_events WHERE session_id = sessions.session_id), sessions.started_at),
-            COALESCE(
-              (SELECT MAX(COALESCE(started_at, finished_at)) FROM tool_calls WHERE session_id = sessions.session_id),
-              (SELECT MAX(created_at) FROM tool_events WHERE session_id = sessions.session_id),
-              sessions.started_at
+          latest_usage.providerId AS providerId,
+          latest_usage.providerHost AS providerHost,
+          latest_usage.lastModel AS lastModel,
+          -- MAX() returns NULL when any argument is NULL, so every candidate is
+          -- defaulted to '' first and the empty result is turned back into NULL.
+          NULLIF(
+            MAX(
+              COALESCE(sessions.started_at, ''),
+              COALESCE(sessions.ended_at, ''),
+              COALESCE(
+                (SELECT MAX(timestamp) FROM normalized_events
+                 WHERE source_instance_id = sessions.source_instance_id
+                   AND session_id = sessions.session_id
+                   AND event_type = 'prompt.submitted'),
+                ''
+              ),
+              COALESCE(
+                (SELECT MAX(COALESCE(started_at, finished_at)) FROM tool_calls
+                 WHERE source_instance_id = sessions.source_instance_id
+                   AND session_id = sessions.session_id),
+                ''
+              ),
+              COALESCE(
+                (SELECT MAX(timestamp) FROM normalized_events
+                 WHERE source_instance_id = sessions.source_instance_id
+                   AND session_id = sessions.session_id
+                   AND event_type = 'assistant.responded'),
+                ''
+              ),
+              COALESCE(
+                (SELECT MAX(occurred_at) FROM usage_events
+                 WHERE source_instance_id = sessions.source_instance_id
+                   AND session_id = sessions.session_id),
+                ''
+              ),
+              COALESCE(
+                (SELECT MAX(timestamp) FROM normalized_events
+                 WHERE source_instance_id = sessions.source_instance_id
+                   AND session_id = sessions.session_id
+                   AND event_type = 'code.edit.applied'),
+                ''
+              )
             ),
-            COALESCE((SELECT MAX(created_at) FROM assistant_responses WHERE session_id = sessions.session_id), sessions.started_at),
-            COALESCE((SELECT MAX(created_at) FROM token_usage_events WHERE session_id = sessions.session_id), sessions.started_at),
-            COALESCE((SELECT MAX(created_at) FROM code_edits WHERE session_id = sessions.session_id), sessions.started_at)
+            ''
           ) AS lastActivityAt
-        FROM sessions
+        FROM domain_sessions AS sessions
         LEFT JOIN (
-          SELECT session_id, COUNT(*) AS turnCount
-          FROM prompt_events
-          GROUP BY session_id
+          SELECT source_instance_id, session_id, COUNT(*) AS turnCount
+          FROM normalized_events
+          WHERE event_type = 'prompt.submitted'
+          GROUP BY source_instance_id, session_id
         ) AS prompt_counts
-          ON prompt_counts.session_id = sessions.session_id
+          ON prompt_counts.source_instance_id = sessions.source_instance_id
+         AND prompt_counts.session_id = sessions.session_id
+        LEFT JOIN (
+          SELECT source_instance_id, session_id, providerId, providerHost, lastModel
+          FROM (
+            SELECT
+              source_instance_id,
+              session_id,
+              provider_id AS providerId,
+              provider_host AS providerHost,
+              model_id AS lastModel,
+              ROW_NUMBER() OVER (
+                PARTITION BY source_instance_id, session_id
+                ORDER BY occurred_at DESC, event_id DESC
+              ) AS rowNumber
+            FROM usage_events
+          )
+          WHERE rowNumber = 1
+        ) AS latest_usage
+          ON latest_usage.source_instance_id = sessions.source_instance_id
+         AND latest_usage.session_id = sessions.session_id
         ${window.whereSql}
         ORDER BY sessions.started_at DESC
       `
@@ -153,38 +154,25 @@ export function selectSessions(
 
   const totalsBySession = new Map<string, number>();
   for (const row of db
-    .prepare<{
-      session_id: string;
-      input_tokens: number;
-      output_tokens: number;
-      cache_creation_input_tokens: number;
-      cache_read_input_tokens: number;
-      source_vendor: SourceVendor;
-      usage_source: string | null;
-    }>(
+    .prepare<{ sourceInstanceId: string; sessionId: string; totalTokens: number | null }>(
       `SELECT
-        session_id,
-        input_tokens,
-        output_tokens,
-        cache_creation_input_tokens,
-        cache_read_input_tokens,
-        source_vendor,
-        usage_source
-      FROM token_usage_events`
+        source_instance_id AS sourceInstanceId,
+        session_id AS sessionId,
+        SUM(
+          displayed_input_tokens + output_tokens +
+          cache_read_input_tokens + cache_creation_input_tokens
+        ) AS totalTokens
+      FROM usage_events
+      WHERE usage_measurement = 'increment'
+      GROUP BY source_instance_id, session_id`
     )
     .all()) {
-    if (!isAdditiveUsage(row)) {
-      continue;
-    }
-    totalsBySession.set(
-      row.session_id,
-      (totalsBySession.get(row.session_id) ?? 0) + resolveTotalTokens(row)
-    );
+    totalsBySession.set(sessionKey(row.sourceInstanceId, row.sessionId), row.totalTokens ?? 0);
   }
 
-  return sessions.map((session) => ({
+  return sessions.map(({ sourceInstanceId, ...session }) => ({
     ...session,
-    totalTokens: totalsBySession.get(session.sessionId) ?? 0
+    totalTokens: totalsBySession.get(sessionKey(sourceInstanceId, session.sessionId)) ?? 0
   }));
 }
 
@@ -217,13 +205,16 @@ export function selectSourceBreakdown(
   };
 
   const sessionWindow = buildTimeWindow("started_at", scope, sourceVendor);
-  const promptWindow = buildTimeWindow("created_at", scope, sourceVendor);
-  const tokenWindow = buildTimeWindow("created_at", scope, sourceVendor);
+  const eventWindow = buildTimeWindow("timestamp", scope, sourceVendor);
+  const toolWindow = buildToolActivityWindow(scope, sourceVendor);
 
+  // domain_sessions keys sessions by (source instance, session id) while the
+  // legacy table keyed them by session id alone, so COUNT(DISTINCT ...) keeps
+  // the V1 session count.
   for (const row of db
     .prepare<{ sourceVendor: SourceVendor; sessionCount: number }>(`
-      SELECT source_vendor AS sourceVendor, COUNT(*) AS sessionCount
-      FROM sessions
+      SELECT source_vendor AS sourceVendor, COUNT(DISTINCT session_id) AS sessionCount
+      FROM domain_sessions
       ${sessionWindow.whereSql}
       GROUP BY source_vendor
     `)
@@ -234,63 +225,43 @@ export function selectSourceBreakdown(
   for (const row of db
     .prepare<{ sourceVendor: SourceVendor; turnCount: number }>(`
       SELECT source_vendor AS sourceVendor, COUNT(*) AS turnCount
-      FROM prompt_events
-      ${promptWindow.whereSql}
+      FROM normalized_events
+      ${andWhere(eventWindow, "event_type = 'prompt.submitted'")}
       GROUP BY source_vendor
     `)
-    .all(...promptWindow.params)) {
+    .all(...eventWindow.params)) {
     ensureRow(row.sourceVendor).turnCount = row.turnCount;
   }
 
-  for (const row of selectSourceToolCallCounts(db, scope, sourceVendor)) {
+  for (const row of db
+    .prepare<{ sourceVendor: SourceVendor; toolCalls: number }>(`
+      SELECT domain_sessions.source_vendor AS sourceVendor, COUNT(*) AS toolCalls
+      ${TOOL_CALLS_SESSION_JOIN}
+      ${andWhere(toolWindow, "tool_calls.status IN ('succeeded', 'failed')")}
+      GROUP BY domain_sessions.source_vendor
+    `)
+    .all(...toolWindow.params)) {
     ensureRow(row.sourceVendor).toolCalls = row.toolCalls;
   }
 
-  for (const row of tokenUsageRows ?? dropCursorGenerationShadowedByOfficial(
-    db
-      .prepare<{
-        source_vendor: SourceVendor;
-        model: string | null;
-        input_tokens: number;
-        output_tokens: number;
-        cache_creation_input_tokens: number;
-        cache_read_input_tokens: number;
-        usage_source: string | null;
-        created_at: string;
-      }>(`
-      SELECT
-        source_vendor,
-        model,
-        input_tokens,
-        output_tokens,
-        cache_creation_input_tokens,
-        cache_read_input_tokens,
-        usage_source,
-        created_at
-      FROM token_usage_events
-      ${tokenWindow.whereSql}
-    `)
-      .all(...tokenWindow.params)
-  )) {
+  for (const row of tokenUsageRows ?? selectTokenUsageRows(db, scope, sourceVendor)) {
     if (!isAdditiveUsage(row)) {
       continue;
     }
-    const usage = {
-      source_vendor: row.source_vendor,
-      usage_source: row.usage_source,
-      input_tokens: row.input_tokens,
-      output_tokens: row.output_tokens,
-      cache_creation_input_tokens: row.cache_creation_input_tokens,
-      cache_read_input_tokens: row.cache_read_input_tokens
-    };
     const target = ensureRow(row.source_vendor);
-    target.totalTokens += resolveTotalTokens(usage);
+    target.totalTokens +=
+      row.input_tokens +
+      row.output_tokens +
+      row.cache_read_input_tokens +
+      row.cache_creation_input_tokens;
+    // input_tokens already carries the displayed (gross-adjusted) input, which
+    // is what the price table expects since cache reads are priced separately.
     const costUsd = estimateCostUsd({
       model: row.model,
-      inputTokens: resolveDisplayedInputTokens(usage),
-      outputTokens: usage.output_tokens,
-      cacheReadTokens: usage.cache_read_input_tokens,
-      cacheCreationTokens: usage.cache_creation_input_tokens
+      inputTokens: row.input_tokens,
+      outputTokens: row.output_tokens,
+      cacheReadTokens: row.cache_read_input_tokens,
+      cacheCreationTokens: row.cache_creation_input_tokens
     });
     if (costUsd !== null) {
       target.costUsd = (target.costUsd ?? 0) + costUsd;
@@ -306,37 +277,9 @@ export function selectProviderBreakdown(
   sourceVendor: SourceVendorFilter = "all",
   tokenUsageRows?: readonly TokenUsageOverviewRow[]
 ): ProviderBreakdownRow[] {
-  const window = buildTimeWindow("created_at", scope, sourceVendor);
   const grouped = new Map<string, ProviderBreakdownRow>();
 
-  for (const row of tokenUsageRows ?? dropCursorGenerationShadowedByOfficial(
-    db
-      .prepare<{
-        provider_host: string | null;
-        provider_id: string | null;
-        input_tokens: number;
-        output_tokens: number;
-        cache_creation_input_tokens: number;
-        cache_read_input_tokens: number;
-        source_vendor: SourceVendor;
-        usage_source: string | null;
-        created_at: string;
-      }>(`
-      SELECT
-        provider_host,
-        provider_id,
-        input_tokens,
-        output_tokens,
-        cache_creation_input_tokens,
-        cache_read_input_tokens,
-        source_vendor,
-        usage_source,
-        created_at
-      FROM token_usage_events
-      ${window.whereSql}
-    `)
-      .all(...window.params)
-  )) {
+  for (const row of tokenUsageRows ?? selectTokenUsageRows(db, scope, sourceVendor)) {
     if (!isAdditiveUsage(row)) {
       continue;
     }
@@ -347,7 +290,11 @@ export function selectProviderBreakdown(
       providerId: row.provider_id,
       totalTokens: 0
     };
-    current.totalTokens += resolveTotalTokens(row);
+    current.totalTokens +=
+      row.input_tokens +
+      row.output_tokens +
+      row.cache_read_input_tokens +
+      row.cache_creation_input_tokens;
     grouped.set(key, current);
   }
 
@@ -364,25 +311,8 @@ export function selectTokenTrend(
   scope?: ResolvedTimeScope,
   sourceVendor: SourceVendorFilter = "all"
 ): TokenTrendRow[] {
-  const window = buildTimeWindow("created_at", scope, sourceVendor);
-  const rows = db
-    .prepare<TokenTrendUsageRow>(`
-      SELECT
-        created_at AS createdAt,
-        input_tokens AS inputTokens,
-        output_tokens AS outputTokens,
-        cache_read_input_tokens AS cacheReadTokens,
-        cache_creation_input_tokens AS cacheCreationTokens,
-        source_vendor AS sourceVendor,
-        usage_source AS usageSource
-      FROM token_usage_events
-      ${window.whereSql}
-      ORDER BY created_at ASC, event_id ASC
-    `)
-    .all(...window.params);
-
-  const countableRows = dropCursorGenerationShadowedByOfficial(rows);
-  if (countableRows.length === 0) {
+  const rows = selectTokenUsageRows(db, scope, sourceVendor);
+  if (rows.length === 0) {
     return [];
   }
 
@@ -399,23 +329,16 @@ export function selectTokenTrend(
   });
   const buckets = new Map<string, TokenTrendRow>();
 
-  for (const row of countableRows) {
+  for (const row of rows) {
     // Session-context snapshots (cursor-composer-context) MUST NOT contribute
-    // to additive trend totals (spec sections 9.5 and 9.6).
-    if (row.usageSource === "cursor-composer-context") {
+    // to additive trend totals (spec sections 9.5 and 9.6). The window query
+    // drops them already; the guard keeps the rule at the point of use.
+    if (!isAdditiveUsage(row)) {
       continue;
     }
-    const bucket = resolveTokenTrendBucket(row.createdAt, formatter, bucketType);
-    const displayedInputTokens = resolveDisplayedInputTokens({
-      source_vendor: row.sourceVendor,
-      usage_source: row.usageSource,
-      input_tokens: row.inputTokens,
-      output_tokens: row.outputTokens,
-      cache_creation_input_tokens: row.cacheCreationTokens,
-      cache_read_input_tokens: row.cacheReadTokens
-    });
+    const bucket = resolveTokenTrendBucket(row.created_at, formatter, bucketType);
     const current = buckets.get(bucket.key) ?? {
-      bucketStart: row.createdAt,
+      bucketStart: row.created_at,
       bucket: bucket.bucket,
       label: bucket.label,
       totalTokens: 0,
@@ -426,15 +349,15 @@ export function selectTokenTrend(
       cacheHitRate: 0
     };
 
-    current.inputTokens += displayedInputTokens;
-    current.outputTokens += row.outputTokens;
-    current.cacheReadTokens += row.cacheReadTokens;
-    current.cacheCreationTokens += row.cacheCreationTokens;
+    current.inputTokens += row.input_tokens;
+    current.outputTokens += row.output_tokens;
+    current.cacheReadTokens += row.cache_read_input_tokens;
+    current.cacheCreationTokens += row.cache_creation_input_tokens;
     current.totalTokens +=
-      displayedInputTokens +
-      row.outputTokens +
-      row.cacheReadTokens +
-      row.cacheCreationTokens;
+      row.input_tokens +
+      row.output_tokens +
+      row.cache_read_input_tokens +
+      row.cache_creation_input_tokens;
     buckets.set(bucket.key, current);
   }
 
@@ -446,6 +369,10 @@ export function selectTokenTrend(
       cacheHitRate: cacheableInput > 0 ? row.cacheReadTokens / cacheableInput : 0
     };
   });
+}
+
+function sessionKey(sourceInstanceId: string, sessionId: string): string {
+  return `${sourceInstanceId}\0${sessionId}`;
 }
 
 const HOUR_MS = 60 * 60 * 1000;

@@ -218,7 +218,13 @@ function ensureSourceRegistry(
 }
 
 function ensureSession(db: SqliteDatabaseLike, event: NormalizedEventV2): void {
-  const startedAt = event.type === "session.started" ? event.timestamp : null;
+  // session.started anchors the windowed session views; it merges with MIN so
+  // repeated announcements keep the earliest one. Every other event only seeds
+  // started_at when it is still NULL: Claude transcripts (and any source that
+  // skips session.started) must not drop out of windowed session counts, while
+  // garbage timestamps on late events cannot drag an anchored start backwards.
+  const isSessionStart = event.type === "session.started" ? 1 : 0;
+  const startedAt = event.timestamp;
   const endedAt = event.type === "session.ended" ? event.timestamp : null;
   const exitCode = event.type === "session.ended" ? event.exit_code ?? null : null;
 
@@ -231,10 +237,12 @@ function ensureSession(db: SqliteDatabaseLike, event: NormalizedEventV2): void {
       source_vendor = excluded.source_vendor,
       workspace_path = excluded.workspace_path,
       started_at = CASE
-        WHEN excluded.started_at IS NULL THEN domain_sessions.started_at
-        WHEN domain_sessions.started_at IS NULL OR excluded.started_at < domain_sessions.started_at
-          THEN excluded.started_at
-        ELSE domain_sessions.started_at
+        WHEN ? = 1 THEN CASE
+          WHEN domain_sessions.started_at IS NULL OR excluded.started_at < domain_sessions.started_at
+            THEN excluded.started_at
+          ELSE domain_sessions.started_at
+        END
+        ELSE COALESCE(domain_sessions.started_at, excluded.started_at)
       END,
       ended_at = CASE
         WHEN excluded.ended_at IS NULL THEN domain_sessions.ended_at
@@ -250,7 +258,8 @@ function ensureSession(db: SqliteDatabaseLike, event: NormalizedEventV2): void {
     event.workspace_path,
     startedAt,
     endedAt,
-    exitCode
+    exitCode,
+    isSessionStart
   );
 }
 

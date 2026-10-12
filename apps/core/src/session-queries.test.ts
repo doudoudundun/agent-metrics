@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 import { describe, expect, it } from "vitest";
 import { selectTokenTrend } from "./session-queries.js";
+import { runDomainMigrations, type SqliteDatabaseLike } from "./domain-migrations.js";
 import type { MetricsDatabase } from "./core-types.js";
 import type { ResolvedTimeScope, TimeScopeRange } from "./time-scope.js";
 
@@ -18,33 +19,24 @@ type UsageSeed = {
 
 function createDb(): InstanceType<typeof Database> {
   const db = new Database(":memory:");
-  db.exec(`
-    CREATE TABLE token_usage_events (
-      event_id TEXT PRIMARY KEY,
-      session_id TEXT NOT NULL,
-      message_id TEXT NOT NULL,
-      model TEXT,
-      input_tokens INTEGER NOT NULL,
-      output_tokens INTEGER NOT NULL,
-      cache_creation_input_tokens INTEGER NOT NULL,
-      cache_read_input_tokens INTEGER NOT NULL,
-      server_tool_use TEXT NOT NULL DEFAULT '{}',
-      usage_source TEXT NOT NULL,
-      source_vendor TEXT NOT NULL,
-      source_adapter TEXT NOT NULL,
-      created_at TEXT NOT NULL
-    );
-  `);
+  runDomainMigrations(db as unknown as SqliteDatabaseLike, "2026-01-01T00:00:00.000Z");
   return db;
 }
 
+/**
+ * claude-transcript rows are delta-semantic, so the displayed input token count
+ * stored by the projection equals the reported input tokens.
+ */
 function seedUsage(db: InstanceType<typeof Database>, seeds: UsageSeed[]): void {
   const insert = db.prepare(`
-    INSERT INTO token_usage_events (
-      event_id, session_id, message_id, model,
-      input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens,
-      usage_source, source_vendor, source_adapter, created_at
-    ) VALUES (?, ?, ?, 'claude-sonnet-4-20250514', ?, ?, ?, ?, 'claude-transcript', 'claude-code', 'claude-transcript', ?)
+    INSERT INTO usage_events (
+      event_id, schema_version, source_instance_id, source_vendor, session_id, message_id,
+      occurred_at, model_id, provider_id, input_token_semantics, usage_measurement,
+      raw_input_tokens, displayed_input_tokens, output_tokens, cache_creation_input_tokens,
+      cache_read_input_tokens, server_tool_use, usage_source, semantic_fingerprint
+    ) VALUES (?, 2, 'claude:default', 'claude-code', ?, ?,
+      ?, 'claude-sonnet-4-20250514', 'anthropic', 'delta', 'increment',
+      ?, ?, ?, ?, ?, '{}', 'claude-transcript', ?)
   `);
 
   for (const seed of seeds) {
@@ -52,11 +44,13 @@ function seedUsage(db: InstanceType<typeof Database>, seeds: UsageSeed[]): void 
       seed.eventId,
       `ses-${seed.eventId}`,
       `msg-${seed.eventId}`,
+      seed.createdAt,
+      seed.inputTokens,
       seed.inputTokens,
       seed.outputTokens,
       seed.cacheCreationTokens ?? 0,
       seed.cacheReadTokens ?? 0,
-      seed.createdAt
+      `fp-${seed.eventId}`
     );
   }
 }
@@ -256,5 +250,42 @@ describe("selectTokenTrend bucket granularity", () => {
     expect(calendarWeek).toEqual([{ bucket: "day", label: "03-02" }]);
     expect(calendarMonth).toEqual([{ bucket: "day", label: "03-01" }]);
     expect(rollingMonth).toEqual([{ bucket: "day", label: "02-10" }]);
+  });
+});
+
+describe("selectTokenTrend usage selection", () => {
+  it("counts displayed input tokens and skips session-context snapshots", () => {
+    const db = createDb();
+    db.prepare(`
+      INSERT INTO usage_events (
+        event_id, schema_version, source_instance_id, source_vendor, session_id, message_id,
+        occurred_at, model_id, provider_id, input_token_semantics, usage_measurement,
+        raw_input_tokens, displayed_input_tokens, output_tokens, cache_creation_input_tokens,
+        cache_read_input_tokens, server_tool_use, usage_source, semantic_fingerprint
+      ) VALUES
+        ('delta-1', 2, 'opencode:default', 'opencode', 'ses-open', 'msg-1',
+         '2026-03-01T10:05:00.000Z', 'hy3-preview-free', 'opencode', 'gross', 'increment',
+         27470, 25422, 207, 0, 2048, '{}', 'opencode-step-finish', 'fp-1'),
+        ('snapshot-1', 2, 'cursor:default', 'cursor', 'ses-cursor', 'msg-2',
+         '2026-03-01T10:06:00.000Z', 'composer-2', 'cursor', 'delta', 'session-context-snapshot',
+         2500, 2500, 999, 0, 0, '{}', 'cursor-composer-context', 'fp-2')
+    `).run();
+
+    const rows = selectTokenTrend(
+      db as unknown as MetricsDatabase,
+      customScope("2026-03-01T00:00:00.000Z", "2026-03-02T06:00:00.000Z")
+    );
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      label: "03-01 10:00",
+      // displayed input (25422), not the gross raw input (27470)
+      inputTokens: 25422,
+      outputTokens: 207,
+      cacheReadTokens: 2048,
+      totalTokens: 27677
+    });
+
+    db.close();
   });
 });

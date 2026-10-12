@@ -168,7 +168,8 @@ describe("runDomainMigrations", () => {
       { version: 3, name: "003-split-zcode-vendor", applied_at: "2026-07-17T12:00:00.000Z" },
       { version: 4, name: "004-optimize-aggregate-queries", applied_at: "2026-07-17T12:00:00.000Z" },
       { version: 5, name: "005-cover-tool-aggregate-queries", applied_at: "2026-07-17T12:00:00.000Z" },
-      { version: 6, name: "006-add-usage-timing-columns", applied_at: "2026-07-17T12:00:00.000Z" }
+      { version: 6, name: "006-add-usage-timing-columns", applied_at: "2026-07-17T12:00:00.000Z" },
+      { version: 7, name: "007-backfill-session-started-at", applied_at: "2026-07-17T12:00:00.000Z" }
     ]);
 
     db.close();
@@ -283,6 +284,41 @@ describe("runDomainMigrations", () => {
     expect(
       db.prepare("SELECT version, name FROM schema_migrations WHERE name = ?").get("006-add-usage-timing-columns")
     ).toEqual({ version: 6, name: "006-add-usage-timing-columns" });
+
+    db.close();
+  });
+
+  it("backfills started_at for sessions without session.started when upgrading a pre-007 database", async () => {
+    const db = new Database(":memory:");
+    const runDomainMigrations = await loadRunner();
+
+    runDomainMigrations(db, new Date("2026-07-17T12:00:00.000Z"));
+    // Simulate a database projected before migration 007: transcript sessions
+    // carry events but no session.started anchor, so started_at stayed NULL.
+    db.exec("DELETE FROM schema_migrations WHERE name = '007-backfill-session-started-at'");
+    db.prepare(
+      `INSERT INTO normalized_events (
+         event_id, schema_version, session_id, source_instance_id, timestamp, type, event_type,
+         source_vendor, source_adapter, adapter_instance_id, source_record_namespace, source_record_id,
+         workspace_path, semantic_fingerprint, payload_json, created_at
+       ) VALUES (?, 2, 'ses_transcript', 'claude:default', '2026-07-17T10:00:00.000Z', 'token.usage.recorded',
+         'token.usage.recorded', 'claude-code', 'claude-transcript', 'claude-transcript@claude:default',
+         'transcript', 'record-1', '.', 'fp-1', '{}', '2026-07-17T10:00:00.000Z')`
+    ).run("ev-1");
+    db.prepare(
+      `INSERT INTO domain_sessions (
+         source_instance_id, session_id, source_vendor, workspace_path, started_at, ended_at, exit_code
+       ) VALUES ('claude:default', 'ses_transcript', 'claude-code', '.', NULL, NULL, NULL)`
+    ).run();
+
+    runDomainMigrations(db, new Date("2026-07-18T12:00:00.000Z"));
+
+    expect(
+      db.prepare("SELECT started_at FROM domain_sessions WHERE session_id = ?").get("ses_transcript")
+    ).toEqual({ started_at: "2026-07-17T10:00:00.000Z" });
+    expect(
+      db.prepare("SELECT version, name FROM schema_migrations WHERE name = ?").get("007-backfill-session-started-at")
+    ).toEqual({ version: 7, name: "007-backfill-session-started-at" });
 
     db.close();
   });

@@ -40,7 +40,9 @@ const TOOL_AGGREGATE_INDEX_VERSION = 5;
 const TOOL_AGGREGATE_INDEX_NAME = "005-cover-tool-aggregate-queries";
 const USAGE_TIMING_VERSION = 6;
 const USAGE_TIMING_NAME = "006-add-usage-timing-columns";
-const LATEST_VERSION = USAGE_TIMING_VERSION;
+const SESSION_START_BACKFILL_VERSION = 7;
+const SESSION_START_BACKFILL_NAME = "007-backfill-session-started-at";
+const LATEST_VERSION = SESSION_START_BACKFILL_VERSION;
 
 const LEGACY_TABLES = [
   "sessions",
@@ -127,6 +129,28 @@ export function runDomainMigrations(db: SqliteDatabaseLike, now: MigrationNow = 
         db.exec("ALTER TABLE usage_events ADD COLUMN decode_duration_ms INTEGER");
       }
       insertMigration(db, USAGE_TIMING_VERSION, USAGE_TIMING_NAME, appliedAt);
+    })();
+  }
+  if (!hasMigration(db, SESSION_START_BACKFILL_NAME)) {
+    db.transaction(() => {
+      // Sessions observed before 007 only kept started_at when a session.started
+      // event existed; sources without that event (Claude transcripts) left it
+      // NULL and dropped out of windowed counts. Seed from the earliest observed
+      // event instead — mirrors the projection fallback added alongside.
+      db.prepare(
+        `UPDATE domain_sessions SET started_at = (
+           SELECT MIN(events.timestamp) FROM normalized_events events
+           WHERE events.source_instance_id = domain_sessions.source_instance_id
+             AND events.session_id = domain_sessions.session_id
+         )
+         WHERE started_at IS NULL
+           AND EXISTS (
+             SELECT 1 FROM normalized_events events
+             WHERE events.source_instance_id = domain_sessions.source_instance_id
+               AND events.session_id = domain_sessions.session_id
+           )`
+      ).run();
+      insertMigration(db, SESSION_START_BACKFILL_VERSION, SESSION_START_BACKFILL_NAME, appliedAt);
     })();
   }
 }

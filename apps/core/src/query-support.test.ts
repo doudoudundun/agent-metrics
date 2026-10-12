@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { resolveSourceVendor, withScopeMetadata } from "./query-support.js";
+import {
+  andWhere,
+  buildToolActivityWindow,
+  resolveSourceVendor,
+  withScopeMetadata
+} from "./query-support.js";
 
 describe("resolveSourceVendor", () => {
   it("does not treat an unrecognized sourceVendor as all", () => {
@@ -45,5 +50,38 @@ describe("withScopeMetadata trend bucket", () => {
       expect(payload).not.toHaveProperty("bucket");
     }
     expect(unrelated.mode).toBe("custom");
+  });
+});
+
+describe("buildToolActivityWindow", () => {
+  it("dates tool activity by COALESCE(started_at, finished_at) and filters on the joined session vendor", () => {
+    expect(buildToolActivityWindow()).toEqual({ whereSql: "", params: [] });
+
+    const window = buildToolActivityWindow(scope, "codex");
+
+    expect(window.whereSql).toBe(
+      " WHERE COALESCE(tool_calls.started_at, tool_calls.finished_at) >= ?" +
+        " AND COALESCE(tool_calls.started_at, tool_calls.finished_at) <= ?" +
+        " AND domain_sessions.source_vendor = ?"
+    );
+    expect(window.params).toEqual([
+      "2026-03-01T00:00:00.000Z",
+      "2026-04-01T00:00:00.000Z",
+      "codex"
+    ]);
+  });
+});
+
+describe("andWhere", () => {
+  it("joins an extra predicate to a window and opens its own WHERE clause when empty", () => {
+    expect(andWhere({ whereSql: "", params: [] }, "event_type = 'prompt.submitted'")).toBe(
+      " WHERE event_type = 'prompt.submitted'"
+    );
+    expect(
+      andWhere(
+        { whereSql: " WHERE timestamp >= ?", params: ["2026-03-01T00:00:00.000Z"] },
+        "event_type = 'code.edit.applied'"
+      )
+    ).toBe(" WHERE timestamp >= ? AND event_type = 'code.edit.applied'");
   });
 });

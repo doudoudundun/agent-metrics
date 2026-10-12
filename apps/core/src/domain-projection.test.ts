@@ -383,4 +383,58 @@ describe("canonical V2 projection", () => {
 
     db.close();
   });
+
+  it("seeds started_at from the first non-lifecycle event but keeps session.started authoritative", () => {
+    const db = createDb();
+    runDomainMigrations(db);
+
+    // Transcript-style stream: no session.started at all, so the first
+    // observed event must anchor the session window.
+    projectNormalizedEvents(db, [
+      event({
+        event_id: "seed-usage",
+        source_record_id: "seed-usage",
+        timestamp: "2026-07-17T10:00:00.000Z",
+        type: "token.usage.recorded",
+        message_id: "message-1",
+        model: "sonnet",
+        input_tokens: 10,
+        input_token_semantics: "delta",
+        usage_measurement: "increment",
+        output_tokens: 5,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0,
+        server_tool_use: "{}",
+        usage_source: "claude-transcript",
+        provider_id: "unknown"
+      })
+    ]);
+    expect(
+      db.prepare("SELECT started_at FROM domain_sessions WHERE session_id = ?").get("session-1")
+    ).toEqual({ started_at: "2026-07-17T10:00:00.000Z" });
+
+    // A later session.started announcement refines the anchor to the earlier
+    // of the two timestamps, and a late junk timestamp cannot drag it back.
+    projectNormalizedEvents(db, [
+      event({
+        event_id: "seed-session",
+        source_record_id: "seed-session",
+        timestamp: "2026-07-17T09:59:00.000Z",
+        type: "session.started"
+      }),
+      event({
+        event_id: "seed-late",
+        source_record_id: "seed-late",
+        timestamp: "2026-07-17T11:00:00.000Z",
+        type: "prompt.submitted",
+        prompt_id: "prompt-1",
+        prompt_chars: 4
+      })
+    ]);
+    expect(
+      db.prepare("SELECT started_at FROM domain_sessions WHERE session_id = ?").get("session-1")
+    ).toEqual({ started_at: "2026-07-17T09:59:00.000Z" });
+
+    db.close();
+  });
 });

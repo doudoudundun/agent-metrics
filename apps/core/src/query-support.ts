@@ -60,6 +60,44 @@ export function buildTimeWindow(
   };
 }
 
+/**
+ * tool_calls is keyed by (source_instance_id, session_id) and carries no vendor
+ * column, so tool aggregates join the owning session row to filter and group by
+ * source vendor.
+ */
+export const TOOL_CALLS_SESSION_JOIN = `
+  FROM tool_calls
+  INNER JOIN domain_sessions
+    ON domain_sessions.source_instance_id = tool_calls.source_instance_id
+   AND domain_sessions.session_id = tool_calls.session_id
+`;
+
+/**
+ * Tool activity is dated by COALESCE(started_at, finished_at): a call observed
+ * only through its terminal event has no started_at but still belongs to the
+ * window. idx_tool_calls_activity_at covers the expression.
+ */
+export function buildToolActivityWindow(
+  scope?: ResolvedTimeScope,
+  sourceVendor: SourceVendorFilter = "all"
+): TimeWindow {
+  return buildTimeWindow(
+    "COALESCE(tool_calls.started_at, tool_calls.finished_at)",
+    scope,
+    sourceVendor,
+    "domain_sessions.source_vendor"
+  );
+}
+
+/**
+ * buildTimeWindow emits either an empty string or a leading " WHERE ...", so an
+ * extra predicate has to join the window clause when one exists and open its own
+ * WHERE clause when it does not.
+ */
+export function andWhere(window: TimeWindow, predicate: string): string {
+  return window.whereSql.length > 0 ? `${window.whereSql} AND ${predicate}` : ` WHERE ${predicate}`;
+}
+
 export function resolveRequestScope(
   query: unknown,
   input: ScopeInput
