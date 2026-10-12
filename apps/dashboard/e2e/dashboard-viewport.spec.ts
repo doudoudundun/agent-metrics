@@ -120,15 +120,17 @@ async function installDashboardApiMocks(page: Page): Promise<void> {
           ...scopedFixture,
           rows: [
             {
+              sourceInstanceId: "claude-transcript",
               sessionId: "ses_1",
               workspacePath: "D:/projects/dev/agent-metrics",
               sourceVendor: "claude-code",
               sourceAdapters: ["claude-transcript"],
-              providerId: null,
+              providerId: "claude-code",
               providerHost: null,
               turnCount: 14,
               totalTokens: 45678,
-              lastModel: "gpt-5-codex"
+              lastModel: "gpt-5-codex",
+              lastActivityAt: "2026-05-27T10:00:00.000Z"
             }
           ],
           nextCursor: null

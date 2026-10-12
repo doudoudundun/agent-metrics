@@ -4,8 +4,6 @@ import {
   fetchCursorAccountUsage,
   fetchKeyUsage,
   fetchOverview,
-  fetchSessionDetail,
-  fetchSessions,
   fetchSyncRun,
   fetchSyncStatus,
   fetchTokenTrend,
@@ -14,8 +12,6 @@ import {
   type OverviewResponse,
   type CursorAccountUsageResponse,
   type KeyUsageResponse,
-  type SessionDetailResponse,
-  type SessionRow as ContractSessionRow,
   type SourceBreakdownRow,
   type SourceVendor,
   type TokenTrendPoint,
@@ -26,11 +22,8 @@ import { KeyUsagePanel } from "./components/KeyUsagePanel";
 import { KpiGrid } from "./components/KpiGrid";
 import { ModelUsagePanel } from "./components/ModelUsagePanel";
 import { ProviderBreakdownPanel } from "./components/ProviderBreakdownPanel";
-import { RecentSessionsTable, type SessionKey } from "./components/RecentSessionsTable";
-import { SessionTimelinePanel } from "./components/SessionTimelinePanel";
 import { TimeScopeToolbar } from "./components/TimeScopeToolbar";
 import { TokenTrendPanel } from "./components/TokenTrendPanel";
-import { ToolRankingTable } from "./components/ToolRankingTable";
 import { TrendChart } from "./components/TrendChart";
 import {
   deriveDashboardStatus,
@@ -146,7 +139,6 @@ export function DashboardPage() {
   const [tokenTrendOverride, setTokenTrendOverride] = useState<TimeScopeSelection | null>(null);
   const [rankingOverride, setRankingOverride] = useState<TimeScopeSelection | null>(null);
   const [othersOpen, setOthersOpen] = useState(false);
-  const [selectedSession, setSelectedSession] = useState<SessionKey | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const syncControllerRef = useRef<AbortController | null>(null);
@@ -177,25 +169,6 @@ export function DashboardPage() {
     (signal: AbortSignal) => fetchTokenTrend(tokenTrendScope, sourceVendor, signal),
     [tokenTrendScope, sourceVendor]
   );
-  const sessionsLoader = useCallback(
-    (signal: AbortSignal) => fetchSessions(scope, sourceVendor, signal),
-    [scope, sourceVendor]
-  );
-  const sessionDetailLoader = useCallback(
-    (signal: AbortSignal) => {
-      if (selectedSession === null) {
-        return Promise.resolve(null);
-      }
-      return fetchSessionDetail(
-        selectedSession.sourceInstanceId,
-        selectedSession.sessionId,
-        scope,
-        50,
-        signal
-      );
-    },
-    [selectedSession, scope]
-  );
   const cursorUsageLoader = useCallback(
     (signal: AbortSignal) => fetchCursorAccountUsage(signal),
     []
@@ -220,19 +193,6 @@ export function DashboardPage() {
     queryClient,
     `token-trend:${tokenTrendKey}`,
     tokenTrendLoader
-  );
-  const sessionsQuery = useQuery<{ rows: ContractSessionRow[] }>(
-    queryClient,
-    `sessions:${queryKey}`,
-    sessionsLoader
-  );
-  const sessionDetailQuery = useQuery<SessionDetailResponse | null>(
-    queryClient,
-    selectedSession
-      ? `session:${selectedSession.sourceInstanceId}:${selectedSession.sessionId}:${scopeKey}`
-      : "session:none",
-    sessionDetailLoader,
-    { enabled: selectedSession !== null }
   );
   const cursorUsageQuery = useQuery<CursorAccountUsageResponse | null>(
     queryClient,
@@ -282,11 +242,9 @@ export function DashboardPage() {
           sourceVendor !== "all" ? sourceUsageQuery.refresh() : Promise.resolve(),
           toolsQuery.refresh(),
           tokenTrendQuery.refresh(),
-          sessionsQuery.refresh(),
           cursorUsageQuery.refresh(),
           keyUsageQuery.refresh(),
-          syncQuery.refresh(),
-          selectedSession ? sessionDetailQuery.refresh() : Promise.resolve()
+          syncQuery.refresh()
         ]);
       } catch (refreshError) {
         if (!controller.signal.aborted && mountedRef.current && failedRuns.length === 0) {
@@ -344,7 +302,6 @@ export function DashboardPage() {
   const othersSelected = otherSourceOptions.some((option) => option.value === sourceVendor);
   const tools = toolsQuery.data?.rows ?? [];
   const tokenTrend = tokenTrendQuery.data?.rows ?? [];
-  const sessions = sessionsQuery.data?.rows ?? [];
   const status = deriveDashboardStatus(
     overviewQuery.status,
     overview,
@@ -503,58 +460,41 @@ export function DashboardPage() {
             statusMessage={toolsQuery.error?.message ?? null}
             emptyMessage={pendingEmptyMessage(toolsQuery, "Loading tool activity...")}
           />
-          <ToolRankingTable
-            rows={tools}
-            scope={scope}
-            scopeLabel={scopeLabel}
-            override={rankingOverride}
-            onOverrideChange={setRankingOverride}
-            statusMessage={toolsQuery.error?.message ?? null}
-            emptyMessage={pendingEmptyMessage(toolsQuery, "Loading tool rankings...")}
-          />
         </div>
         <div className="dashboard-column">
-          <RecentSessionsTable
-            rows={sessions}
-            loading={isQueryPending(sessionsQuery)}
-            errorMessage={sessionsQuery.error?.message ?? null}
-            selectedSession={selectedSession}
-            onSelect={setSelectedSession}
-          />
           <ModelUsagePanel rows={overview?.tokensByModel ?? []} />
           <ProviderBreakdownPanel rows={overview?.providerBreakdown ?? []} />
-          <SessionTimelinePanel
-            detail={sessionDetailQuery.data}
-            loading={selectedSession !== null && isQueryPending(sessionDetailQuery)}
-            statusMessage={
-              selectedSession === null
-                ? null
-                : sessionDetailQuery.error?.message ?? null
-            }
-          />
         </div>
       </section>
 
-      <CursorAccountUsagePanel
-        usage={cursorUsageQuery.data ?? null}
-        loading={cursorUsageQuery.status === "loading" && showCursorOfficialUsage}
-        errorMessage={
-          showCursorOfficialUsage && cursorUsageQuery.status === "error"
-            ? cursorUsageQuery.error?.message ?? "Unable to load Cursor official usage."
-            : null
+      <section
+        className={
+          showCursorOfficialUsage
+            ? "dashboard-bottom-grid"
+            : "dashboard-bottom-grid dashboard-bottom-grid--single"
         }
-        visible={showCursorOfficialUsage}
-      />
+      >
+        <CursorAccountUsagePanel
+          usage={cursorUsageQuery.data ?? null}
+          loading={cursorUsageQuery.status === "loading" && showCursorOfficialUsage}
+          errorMessage={
+            showCursorOfficialUsage && cursorUsageQuery.status === "error"
+              ? cursorUsageQuery.error?.message ?? "Unable to load Cursor official usage."
+              : null
+          }
+          visible={showCursorOfficialUsage}
+        />
 
-      <KeyUsagePanel
-        data={keyUsageQuery.data ?? null}
-        loading={keyUsageQuery.status === "loading"}
-        errorMessage={
-          keyUsageQuery.status === "error"
-            ? keyUsageQuery.error?.message ?? "Unable to load official key usage."
-            : null
-        }
-      />
+        <KeyUsagePanel
+          data={keyUsageQuery.data ?? null}
+          loading={keyUsageQuery.status === "loading"}
+          errorMessage={
+            keyUsageQuery.status === "error"
+              ? keyUsageQuery.error?.message ?? "Unable to load official key usage."
+              : null
+          }
+        />
+      </section>
 
       <footer className="dashboard-footer">
         <span>Local data stays on this device.</span>

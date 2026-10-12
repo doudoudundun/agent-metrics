@@ -115,7 +115,7 @@ describe("DashboardPage", () => {
     expect(within(snapshot as HTMLElement).getByText("Top 5 by calls")).toBeInTheDocument();
     expect(within(snapshot as HTMLElement).getByText("6 calls total")).toBeInTheDocument();
     expect(within(snapshot as HTMLElement).getByText("Following global: Today")).toBeInTheDocument();
-    // Snapshot chart and tool ranking table share one tools query.
+    // The snapshot chart issues the dashboard's single tools query.
     await waitFor(() => expect(fetchTools).toHaveBeenCalledTimes(1));
 
     view.unmount();
@@ -565,26 +565,6 @@ describe("DashboardPage", () => {
 
     view.unmount();
   });
-
-  it("loads a session timeline using sourceInstanceId and sessionId", async () => {
-    const view = render(<DashboardPage />);
-    await screen.findByRole("region", { name: "Overview metrics for Today" });
-
-    fireEvent.click(screen.getByRole("button", { name: "ses_1" }));
-
-    await waitFor(() =>
-      expect(fetchSessionDetail).toHaveBeenCalledWith(
-        "claude:default",
-        "ses_1",
-        { mode: "calendar", range: "day" },
-        50,
-        expect.any(AbortSignal)
-      )
-    );
-    expect(await screen.findByText("Session started")).toBeInTheDocument();
-
-    view.unmount();
-  });
 });
 
 function seedApiMocks(): void {
@@ -663,7 +643,6 @@ function seedApiMocks(): void {
   });
   vi.mocked(fetchCursorAccountUsage).mockResolvedValue(null);
   vi.mocked(fetchKeyUsage).mockResolvedValue({ updatedAt: null, entries: [] });
-  vi.mocked(fetchSessionDetail).mockResolvedValue(buildSessionDetail());
   vi.mocked(fetchSyncRun).mockImplementation(async (runId) => buildSyncRun(runId, "succeeded"));
   vi.mocked(buildExportUrl).mockImplementation((format: "csv" | "json") => `/api/exports/${format}`);
   vi.mocked(triggerSync).mockResolvedValue({
@@ -671,60 +650,6 @@ function seedApiMocks(): void {
     acceptedAt: "2026-05-27T10:30:00.000Z",
     runs: [{ adapterInstanceId: "claude", runId: "run_seed", disposition: "queued" }]
   });
-}
-
-function buildSessionDetail() {
-  return {
-    mode: "calendar" as const,
-    range: "day" as const,
-    timezone: "Asia/Shanghai",
-    windowStart: "2026-05-26T16:00:00.000Z",
-    windowEnd: "2026-05-27T16:00:00.000Z",
-    updatedAt: "2026-05-27T10:30:00.000Z",
-    sourceInstanceId: "claude:default",
-    sessionId: "ses_1",
-    workspacePath: "D:/projects/dev/agent-metrics",
-    sourceVendor: "claude-code" as const,
-    sourceAdapters: ["claude-transcript" as const],
-    context: {
-      executionPath: null,
-      skillsLoaded: false,
-      skillNames: []
-    },
-    timeline: {
-      rows: [
-        {
-          eventId: "evt_1",
-          createdAt: "2026-05-25T08:00:00.000Z",
-          type: "session.started" as const,
-          sourceVendor: "claude-code" as const,
-          sourceAdapters: ["claude-transcript" as const],
-          toolCallId: null,
-          toolName: null,
-          status: null,
-          durationMs: null,
-          providerId: null,
-          providerHost: null,
-          filesChanged: [],
-          insertions: null,
-          deletions: null,
-          promptId: null,
-          promptChars: null,
-          messageId: null,
-          model: null,
-          stopReason: null,
-          responseChars: null,
-          inputTokens: null,
-          outputTokens: null,
-          cacheReadTokens: null,
-          cacheCreationTokens: null,
-          totalTokens: null,
-          usageSource: null
-        }
-      ],
-      nextCursor: null
-    }
-  };
 }
 
 function buildSyncRun(runId: string, status: "succeeded" | "failed" | "aborted" | "syncing") {

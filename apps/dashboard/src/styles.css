@@ -1852,14 +1852,14 @@ tbody tr[data-selected="true"] .session-select {
 .dashboard-page {
   width: min(1220px, calc(100% - 32px));
   margin: 0 auto;
-  padding: 12px 0 28px;
+  padding: 10px 0 20px;
   color: var(--ink);
 }
 
 .dashboard-overview-band {
   display: grid;
-  gap: 10px;
-  margin-bottom: 12px;
+  gap: 8px;
+  margin-bottom: 10px;
 }
 
 .dashboard-topbar,
@@ -2032,6 +2032,7 @@ tbody tr[data-selected="true"] .session-select {
 
 .dashboard-page .kpi-card,
 .dashboard-page .panel {
+  padding: 12px 14px;
   border-radius: 6px;
   box-shadow: none;
 }
@@ -2078,14 +2079,29 @@ tbody tr[data-selected="true"] .session-select {
 .dashboard-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr);
-  gap: 10px;
+  gap: 8px;
 }
 
 .dashboard-column {
   display: grid;
   align-content: start;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
+}
+
+.dashboard-bottom-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr);
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.dashboard-bottom-grid--single {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.dashboard-bottom-grid .cursor-account-usage-panel--footer {
+  margin-top: 0;
 }
 
 .dashboard-footer {
@@ -2158,6 +2174,114 @@ tbody tr[data-selected="true"] .session-select {
   background: rgba(16, 32, 48, 0.08);
 }
 
+/* Key usage, Cursor usage and model usage panels still carry dark-surface
+   colors; remap them onto the light dashboard palette. */
+.dashboard-page .key-usage-panel__eyebrow,
+.dashboard-page .key-usage-panel__meta,
+.dashboard-page .key-usage-card__limit,
+.dashboard-page .key-usage-card__empty,
+.dashboard-page .key-usage-card__expires,
+.dashboard-page .key-usage-window__label,
+.dashboard-page .key-usage-window__length,
+.dashboard-page .key-usage-window__reset {
+  color: var(--ink-soft);
+}
+
+.dashboard-page .key-usage-panel__error {
+  color: #a64937;
+}
+
+.dashboard-page .key-usage-list {
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+}
+
+.dashboard-page .key-usage-card {
+  border-color: rgba(16, 32, 48, 0.12);
+  background: rgba(16, 32, 48, 0.02);
+}
+
+.dashboard-page .key-usage-card__vendor {
+  color: var(--ink);
+}
+
+.dashboard-page .key-usage-card__credits {
+  border-color: rgba(16, 32, 48, 0.2);
+  color: var(--ink-soft);
+}
+
+.dashboard-page .key-usage-card__credits[data-state="available"] {
+  border-color: rgba(38, 114, 77, 0.45);
+  color: #26724d;
+}
+
+.dashboard-page .key-usage-card__credits[data-state="unlimited"] {
+  border-color: rgba(29, 111, 209, 0.4);
+  color: #1d6fd1;
+}
+
+.dashboard-page .key-usage-window__percent {
+  color: var(--ink);
+}
+
+.dashboard-page .key-usage-window__bar {
+  background: rgba(16, 32, 48, 0.08);
+}
+
+.dashboard-page .key-usage-window__fill {
+  background: #4f9cf5;
+}
+
+.dashboard-page .key-usage-window__fill[data-tone="warn"] {
+  background: #d99a16;
+}
+
+.dashboard-page .key-usage-window__fill[data-tone="danger"] {
+  background: #d95540;
+}
+
+.dashboard-page .cursor-account-usage-strip {
+  color: var(--ink-soft);
+}
+
+.dashboard-page .cursor-account-usage-strip strong {
+  color: var(--ink);
+}
+
+.dashboard-page .cursor-model-usage__toggle,
+.dashboard-page .cursor-model-usage__row {
+  border-color: rgba(16, 32, 48, 0.12);
+  background: rgba(16, 32, 48, 0.02);
+}
+
+.dashboard-page .cursor-model-usage__toggle:hover {
+  border-color: rgba(16, 32, 48, 0.22);
+}
+
+.dashboard-page .cursor-model-usage__header span,
+.dashboard-page .cursor-model-usage__meta {
+  color: var(--ink-soft);
+}
+
+.dashboard-page .cursor-model-usage__main span {
+  color: var(--ink);
+}
+
+.dashboard-page .model-usage-row {
+  border-color: rgba(16, 32, 48, 0.12);
+  background: rgba(16, 32, 48, 0.02);
+}
+
+.dashboard-page .model-usage-main span,
+.dashboard-page .model-usage-meta,
+.dashboard-page .model-usage-main .model-usage-source,
+.dashboard-page .model-usage-timing {
+  color: var(--ink-soft);
+}
+
+.dashboard-page .model-usage-main .model-usage-cost {
+  color: #1d6fd1;
+}
+
 @media (max-width: 1024px) {
   .hero-grid {
     grid-template-columns: 1fr;
@@ -2181,6 +2305,10 @@ tbody tr[data-selected="true"] .session-select {
   }
 
   .dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-bottom-grid {
     grid-template-columns: 1fr;
   }
 }
