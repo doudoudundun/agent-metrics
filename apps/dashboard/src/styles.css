@@ -649,12 +649,12 @@ body[data-desktop-surface="desktop-widget"] .app-shell--floating {
   min-height: 224px;
 }
 
-.dashboard-column .chart-panel {
+.dashboard-grid .chart-panel {
   display: flex;
   flex-direction: column;
 }
 
-.dashboard-column .chart-frame {
+.dashboard-grid .chart-frame {
   flex: 1 1 auto;
 }
 
@@ -2086,13 +2086,11 @@ tbody tr[data-selected="true"] .session-select {
 .dashboard-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr);
+  grid-template-rows: auto auto;
   gap: 8px;
 }
 
-.dashboard-column {
-  display: grid;
-  grid-auto-rows: 1fr;
-  gap: 8px;
+.dashboard-grid > .panel {
   min-width: 0;
 }
 

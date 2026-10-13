@@ -441,30 +441,26 @@ export function DashboardPage() {
       </div>
 
       <section className="dashboard-grid">
-        <div className="dashboard-column">
-          <TokenTrendPanel
-            rows={tokenTrend}
-            scope={scope}
-            scopeLabel={scopeLabel}
-            override={tokenTrendOverride}
-            onOverrideChange={setTokenTrendOverride}
-            statusMessage={tokenTrendQuery.error?.message ?? null}
-            emptyMessage={pendingEmptyMessage(tokenTrendQuery, "Loading token trend...")}
-          />
-          <TrendChart
-            rows={tools}
-            scope={scope}
-            scopeLabel={scopeLabel}
-            override={rankingOverride}
-            onOverrideChange={setRankingOverride}
-            statusMessage={toolsQuery.error?.message ?? null}
-            emptyMessage={pendingEmptyMessage(toolsQuery, "Loading tool activity...")}
-          />
-        </div>
-        <div className="dashboard-column">
-          <ModelUsagePanel rows={overview?.tokensByModel ?? []} />
-          <ProviderBreakdownPanel rows={overview?.providerBreakdown ?? []} />
-        </div>
+        <TokenTrendPanel
+          rows={tokenTrend}
+          scope={scope}
+          scopeLabel={scopeLabel}
+          override={tokenTrendOverride}
+          onOverrideChange={setTokenTrendOverride}
+          statusMessage={tokenTrendQuery.error?.message ?? null}
+          emptyMessage={pendingEmptyMessage(tokenTrendQuery, "Loading token trend...")}
+        />
+        <ModelUsagePanel rows={overview?.tokensByModel ?? []} />
+        <TrendChart
+          rows={tools}
+          scope={scope}
+          scopeLabel={scopeLabel}
+          override={rankingOverride}
+          onOverrideChange={setRankingOverride}
+          statusMessage={toolsQuery.error?.message ?? null}
+          emptyMessage={pendingEmptyMessage(toolsQuery, "Loading tool activity...")}
+        />
+        <ProviderBreakdownPanel rows={overview?.providerBreakdown ?? []} />
       </section>
 
       <KeyUsagePanel
