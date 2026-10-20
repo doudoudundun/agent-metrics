@@ -1,0 +1,24 @@
+apps/desktop/scripts/verify-package.mjs
+  s_3df9703a16de61::t_eb9caaf0f98f23 2-3,61-69
+apps/desktop/src/verify-package.test.ts
+  s_3df9703a16de61::t_320c139ff6efc7 9-13,16
+  s_3df9703a16de61::t_6e50d9ee3af5ae 1-8,14-15,17-31
+apps/desktop/scripts/stage-runtime.mjs
+  s_3df9703a16de61::t_eb9caaf0f98f23 85-87
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.8",
+  "base_commit_sha": "2fcc70d1818b4a869509722d52f471c6f5cc8c83",
+  "prompts": {},
+  "sessions": {
+    "s_3df9703a16de61": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1537e-942a-7ea1-8e46-51c204b5cf04",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Anonymous <anonymous@users.noreply.github.com>"
+    }
+  }
+}
