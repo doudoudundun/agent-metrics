@@ -30,6 +30,7 @@ data/sources/state/*.json
 # Local IDE / tool state
 .idea/
 .zcode/
+.workbuddy/
 
 # Scratch files & local database
 .tmp/
