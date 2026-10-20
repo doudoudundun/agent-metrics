@@ -4,10 +4,12 @@
  * api-docs.deepseek.com, platform.minimax.io, mimo.mi.com, platform.kimi.ai,
  * x.ai API docs.
  *
- * DeepSeek rows use peak-hour pricing (off-peak is half price), GLM rows the
- * <32K input tier, MiniMax-M3 the <=512K tier at its 50% discount, Claude
- * cache writes the 5-minute tier, and Kimi K3 cache writes the 5-minute TTL
- * tier. Estimates for reference only, not billing data.
+ * DeepSeek rows use peak-hour pricing (off-peak is half price); the discount is
+ * deliberately not applied per-row because relays/providers bill DeepSeek at
+ * their own dynamic rates, so a uniform peak-hour estimate is the common
+ * denominator. GLM rows use the <32K input tier, MiniMax-M3 the <=512K tier at
+ * its 50% discount, Claude cache writes the 5-minute tier, and Kimi K3 cache
+ * writes the 5-minute TTL tier. Estimates for reference only, not billing data.
  */
 
 export type ModelPricing = {
@@ -60,6 +62,14 @@ export const MODEL_PRICING_USD: Record<string, ModelPricing> = {
     inputPer1M: 0.3,
     outputPer1M: 1.2,
     cacheReadPer1M: 0.006,
+    cacheWritePer1M: 0
+  },
+  // Dynamic-rate panel snapshot 2026-10-20 (group default, endpoint openai):
+  // 1017 dated snapshot billed at the panel's current-period rates.
+  "deepseek-v4.1-flash-1017": {
+    inputPer1M: 0.294118,
+    outputPer1M: 1.1765,
+    cacheReadPer1M: 0.029412,
     cacheWritePer1M: 0
   },
   // Current official model id for v4.1-flash, and the 0731 dated snapshot of v4-flash.
@@ -122,6 +132,9 @@ export const MODEL_PRICING_USD: Record<string, ModelPricing> = {
   },
   // Retired; requests are forwarded to mimo-v2.5-pro and billed at its rates.
   "mimo-v2-pro": { inputPer1M: 0.435, outputPer1M: 0.87, cacheReadPer1M: 0.0036, cacheWritePer1M: 0 },
+  // MiMo Desktop subscription alias; the app serves mimo-v2.6-pro behind it,
+  // so that rate card is the reference estimate.
+  "mimo-pro": { inputPer1M: 0.435, outputPer1M: 0.87, cacheReadPer1M: 0.0036, cacheWritePer1M: 0 },
   // Free model served by opencode.
   "big-pickle": { inputPer1M: 0, outputPer1M: 0, cacheReadPer1M: 0, cacheWritePer1M: 0 },
   "deepseek-v4-flash-free": { inputPer1M: 0, outputPer1M: 0, cacheReadPer1M: 0, cacheWritePer1M: 0 },

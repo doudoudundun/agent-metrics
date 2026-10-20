@@ -37,6 +37,14 @@ describe("estimateCostUsd", () => {
     expect(estimateCostUsd({ ...USAGE, model: "mimo-v2.6-flash" })).toBeCloseTo(0.42, 6);
   });
 
+  it("prices the MiMo Desktop alias mimo-pro at mimo-v2.6-pro rates", () => {
+    const alias = estimateCostUsd({ ...USAGE, model: "mimo-pro" });
+    const canonical = estimateCostUsd({ ...USAGE, model: "mimo-v2.6-pro" });
+
+    expect(alias).toBeCloseTo(1.305, 6);
+    expect(alias).toBe(canonical);
+  });
+
   it("prices kimi-for-coding at the kimi-k2.8-preview reference rate", () => {
     expect(estimateCostUsd({ ...USAGE, model: "kimi-code/kimi-for-coding" })).toBeCloseTo(5, 6);
   });
