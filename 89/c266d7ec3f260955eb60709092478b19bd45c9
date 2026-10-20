@@ -1,0 +1,21 @@
+packages/adapters-kimicode/src/kimicode-sync.ts
+  s_16fc4d4b4489ae::t_1afaa3647256fa 16-17,20-24,28,287-292,333-342,363-366,401-423
+packages/adapters-dsh/src/dsh.ts
+  s_16fc4d4b4489ae::t_d7a7f624d452bf 362,365-366,368,373,438-466
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.8",
+  "base_commit_sha": "89c266d7ec3f260955eb60709092478b19bd45c9",
+  "prompts": {},
+  "sessions": {
+    "s_16fc4d4b4489ae": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a15224-6571-72b3-b859-41b7516e07f1",
+        "model": "gpt-6-luna"
+      },
+      "human_author": "Anonymous <anonymous@users.noreply.github.com>"
+    }
+  }
+}
