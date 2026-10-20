@@ -1,6 +1,11 @@
 import { randomBytes } from "node:crypto";
 import { buildApp } from "./app.js";
 import { repairBrokenIngestionCursor } from "./event-log-projector.js";
+import {
+  compressEventLogArchive,
+  resolveEventLogRotationConfig,
+  rotateEventLogIfNeeded
+} from "./event-log-rotation.js";
 import { resolveCoreRuntimeConfig } from "./server-runtime.js";
 
 function resolveLocalAccessToken(env: NodeJS.ProcessEnv): string {
@@ -28,6 +33,28 @@ const app = buildApp({
 const port = Number(process.env.AGENT_METRICS_CORE_PORT ?? "45183");
 
 async function main(): Promise<void> {
+  // Keep events.jsonl bounded before anything reads it. A multi-gigabyte log is
+  // what wedges startup: the catch-up ingest never lets the event loop answer
+  // /api/health, so the desktop supervisor sees a readiness timeout. Trimming
+  // here means the projector below only ever faces a bounded backlog.
+  let archiveToCompress: string | null = null;
+  if (runtimeConfig.eventLogPath) {
+    try {
+      const rotationConfig = resolveEventLogRotationConfig(process.env);
+      const rotation = await rotateEventLogIfNeeded({
+        eventLogPath: runtimeConfig.eventLogPath,
+        maxBytes: rotationConfig.maxBytes,
+        retentionDays: rotationConfig.retentionDays,
+        logger: app.log
+      });
+      if (rotation.rotated) {
+        archiveToCompress = rotation.archivePath;
+      }
+    } catch (error) {
+      app.log.error(error as Error);
+    }
+  }
+
   // Repair cursors before listen, but do NOT run catch-up ingest here.
   // projectEventLog uses better-sqlite3 synchronously; a large backlog wedges the
   // Node event loop so /api/health accepts TCP but never responds, and the
@@ -52,6 +79,22 @@ async function main(): Promise<void> {
   }
 
   await app.listen({ host: "127.0.0.1", port });
+
+  // Compression runs off the readiness path; a failure just leaves the plain
+  // archive in place, which is still a valid backup.
+  if (archiveToCompress !== null) {
+    const pending = archiveToCompress;
+    void compressEventLogArchive(pending)
+      .then((gzPath) => {
+        app.log.info({ archivePath: gzPath }, "compressed rotated events.jsonl archive");
+      })
+      .catch((error: unknown) => {
+        app.log.warn(
+          { archivePath: pending, error: error instanceof Error ? error.message : String(error) },
+          "failed to compress rotated events.jsonl archive"
+        );
+      });
+  }
 }
 
 main().catch((error: unknown) => {

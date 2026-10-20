@@ -18,11 +18,25 @@ After startup, open Claude Code in any workspace and trigger a few real tools su
 
 ## How Collection Works
 
-- Claude Code hooks call the local ingress collector in `apps/cli`; other vendors are collected by source adapters (Codex rollouts, Cursor tracking DB, OpenCode/ZCode/MiMo SQLite, Kimi Code wire records, DSH JSONL).
+- Claude Code hooks call the local ingress collector in `apps/cli`; other vendors are collected by source adapters (Codex rollouts, Cursor tracking DB, OpenCode/ZCode/MiMo SQLite, Kimi Code wire records, DSH JSONL, WorkBuddy session transcripts under `~/.workbuddy/projects`).
 - Raw hook envelopes append to `data/hooks/raw/claude-code.jsonl`.
 - `agent-metrics hooks parse --follow` converts raw envelopes into normalized events at `data/events/events.jsonl`.
 - `apps/core` ingests normalized events into SQLite on API requests.
 - `apps/dashboard` renders sessions, tool rankings, edit metrics, a session timeline, model usage with cost estimation and generation speed (TTFT / tok/s), provider breakdown, and official key usage quotas.
+
+## Event Log Retention
+
+`data/events/events.jsonl` is append-only and grows by roughly 15 MB/day. Core trims it on startup so a multi-gigabyte log can never wedge the catch-up ingest (which manifests as a hung `/api/health`, a supervisor readiness timeout, and dashboards that look stale):
+
+- When the file exceeds `AGENT_METRICS_EVENT_LOG_MAX_BYTES` (default 512 MB), Core streams it, keeps records inside `AGENT_METRICS_EVENT_LOG_RETENTION_DAYS` (default 14), moves the original to `data/events/archive/events-<mtime>.jsonl`, gzips that archive in the background, and atomically replaces the live log with the trimmed copy.
+- The ingestion cursor is not rewritten. The next sync sees a smaller file and resets to offset 0; reprojection is idempotent (`INSERT OR IGNORE` on `normalized_events`, event-id keyed replaces elsewhere), so history already in SQLite is never lost or duplicated.
+- Retention only limits the *replay source*. Dashboards read SQLite, which keeps everything that was ever projected.
+
+For a cold archive, split it into replayable per-day chunks:
+
+- `node scripts/split-event-log-archive.mjs data/events/archive/events-<stamp>.jsonl --out-dir data/events/archive/by-day`
+- Produces `events-YYYY-MM-DD.jsonl.gz` plus `manifest.json` and verifies the line accounting.
+- Replay one day (Core stopped): `gunzip -c events-2026-09-15.jsonl.gz >> data/events/events.jsonl`.
 
 ## Dashboard Behavior
 
