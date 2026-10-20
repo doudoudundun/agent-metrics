@@ -35,7 +35,12 @@ describe("clean release", () => {
     let nestedRoot = join(testRoot, "release");
 
     try {
-      for (let index = 0; index < 18; index += 1) {
+      // Grow past MAX_PATH (260) so the recursive delete has to cope with long
+      // names, but stop well short of the ~483 character ceiling some Windows
+      // hosts impose on unlink: lstat and mkdir accept namespaced paths at any
+      // length there, yet unlink still fails with EPERM. A fixed depth cannot
+      // express that, because how deep 260 chars is depends on the temp dir.
+      while (nestedRoot.length < 300) {
         nestedRoot = join(nestedRoot, "nested-release-runtime");
       }
 
