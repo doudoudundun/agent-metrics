@@ -13,12 +13,19 @@ import {
   createKimicodeWireParseState,
   normalizeKimicodeSessionState,
   normalizeKimicodeWireRecord,
-  type KimicodeSessionState
+  type KimicodeSessionState,
+  type KimicodeWireParseState
 } from "./kimicode.js";
+
+type WireParseStateSnapshot = Pick<
+  KimicodeWireParseState,
+  "lastModel" | "lastProviderId" | "lastMessageId" | "pendingStepTiming"
+>;
 
 type WireCursor = {
   offset: number;
   remainder: string;
+  parseState?: WireParseStateSnapshot;
 };
 
 type KimicodeCursorState = {
@@ -277,6 +284,12 @@ async function syncWireFile(input: {
     const decoder = new StringDecoder("utf8");
     const buffer = Buffer.alloc(Math.min(256 * 1024, size - offset));
     const parseState = createKimicodeWireParseState();
+    if (cursor.parseState !== undefined) {
+      parseState.lastModel = cursor.parseState.lastModel;
+      parseState.lastProviderId = cursor.parseState.lastProviderId;
+      parseState.lastMessageId = cursor.parseState.lastMessageId;
+      parseState.pendingStepTiming = cursor.parseState.pendingStepTiming;
+    }
 
     // Read only appended bytes, yielding to HTTP between bounded chunks. Old
     // wire histories can be large even when the current tick adds no records.
@@ -317,7 +330,16 @@ async function syncWireFile(input: {
     // An append can stop partway through a UTF-8 character. Leave those bytes
     // behind the cursor so the next tick can decode the complete character.
     const pendingBytes = Math.max(0, offset - cursor.offset - decodedBytes);
-    return { offset: offset - pendingBytes, remainder };
+    return {
+      offset: offset - pendingBytes,
+      remainder,
+      parseState: {
+        lastModel: parseState.lastModel,
+        lastProviderId: parseState.lastProviderId,
+        lastMessageId: parseState.lastMessageId,
+        pendingStepTiming: parseState.pendingStepTiming
+      }
+    };
   } finally {
     await handle.close();
   }
@@ -338,7 +360,10 @@ async function loadCursorState(cursorPath: string): Promise<KimicodeCursorState>
               }
               const offset = typeof value.offset === "number" && value.offset >= 0 ? value.offset : 0;
               const remainder = typeof value.remainder === "string" ? value.remainder : "";
-              return [[key, { offset, remainder }]] as Array<[string, WireCursor]>;
+              const parseState = readWireParseStateSnapshot(value.parseState);
+              return [[key, { offset, remainder, ...(parseState === undefined ? {} : { parseState }) }]] as Array<
+                [string, WireCursor]
+              >;
             })
           )
         : {},
@@ -372,4 +397,28 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function readString(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function readWireParseStateSnapshot(value: unknown): WireParseStateSnapshot | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const timing = isRecord(value.pendingStepTiming) ? value.pendingStepTiming : null;
+  return {
+    lastModel: readString(value.lastModel),
+    lastProviderId: readString(value.lastProviderId),
+    lastMessageId: readString(value.lastMessageId),
+    pendingStepTiming:
+      timing === null
+        ? null
+        : {
+            firstTokenLatencyMs: readNonNegativeInt(timing.firstTokenLatencyMs),
+            decodeDurationMs: readNonNegativeInt(timing.decodeDurationMs)
+          }
+  };
+}
+
+function readNonNegativeInt(value: unknown): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null;
 }

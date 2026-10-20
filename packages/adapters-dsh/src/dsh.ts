@@ -359,16 +359,18 @@ function normalizeAssistantMessage(
     const cacheReadTokens = readNonNegativeInt(usage.cacheReadTokens) ?? 0;
     const cacheWriteTokens = readNonNegativeInt(usage.cacheWriteTokens) ?? 0;
     if (inputTokens > 0 || outputTokens > 0 || cacheReadTokens > 0 || cacheWriteTokens > 0) {
+      const streamTiming = readAssistantStreamTiming(data.stream);
       // dsh session logs record step boundaries and streaming chunks with
       // millisecond timestamps, giving client-observed TTFT (step start to
-      // first chunk) and decode duration (first chunk to usage chunk).
+      // first chunk) and decode duration (first chunk to usage chunk). Some
+      // session versions pack these chunk records into assistant/message.data.stream.
       const step = state.pendingStep;
-      const firstChunkMs = step?.firstChunkMs ?? null;
+      const firstChunkMs = step?.firstChunkMs ?? streamTiming.firstChunkMs;
       const firstTokenLatencyMs =
         step !== null && firstChunkMs !== null && firstChunkMs >= step.startedAtMs
           ? firstChunkMs - step.startedAtMs
           : null;
-      const streamEndMs = step?.usageChunkMs ?? time;
+      const streamEndMs = step?.usageChunkMs ?? streamTiming.usageChunkMs ?? time;
       const decodeDurationMs =
         firstChunkMs !== null && streamEndMs >= firstChunkMs
           ? streamEndMs - firstChunkMs
@@ -431,6 +433,37 @@ function rememberAssistantChunk(record: Record<string, unknown>, state: DshParse
   if (readString(chunk?.type) === "usage") {
     step.usageChunkMs = time;
   }
+}
+
+function readAssistantStreamTiming(value: unknown): {
+  firstChunkMs: number | null;
+  usageChunkMs: number | null;
+} {
+  let firstChunkMs: number | null = null;
+  let usageChunkMs: number | null = null;
+  if (!Array.isArray(value)) {
+    return { firstChunkMs, usageChunkMs };
+  }
+
+  for (const item of value) {
+    const entry = asRecord(item);
+    if (entry?.type !== "chunk") {
+      continue;
+    }
+    const time = readTimestamp(entry.time);
+    if (time === null) {
+      continue;
+    }
+    if (firstChunkMs === null) {
+      firstChunkMs = time;
+    }
+    const chunk = asRecord(entry.chunk);
+    if (readString(chunk?.type) === "usage") {
+      usageChunkMs = time;
+    }
+  }
+
+  return { firstChunkMs, usageChunkMs };
 }
 
 function extractTextLength(value: unknown): number {
