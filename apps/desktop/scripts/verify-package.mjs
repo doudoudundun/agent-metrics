@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { lstat, readdir, readFile } from "node:fs/promises";
-import { basename, join, relative, resolve } from "node:path";
+import { lstat, readdir, readFile, readlink, realpath } from "node:fs/promises";
+import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { managedNodeFolderName, parseTargetArgs } from "./package-target.mjs";
 
@@ -58,7 +58,15 @@ async function collectFiles(root) {
   async function visit(directory) {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
       const path = join(directory, entry.name);
-      if (entry.isDirectory()) {
+      if (entry.isSymbolicLink()) {
+        const target = await readlink(path);
+        const resolvedTarget = await realpath(path).catch(() => null);
+        const relativeTarget = resolvedTarget === null ? null : relative(root, resolvedTarget);
+        if (isAbsolute(target) || relativeTarget === null || relativeTarget === ".." ||
+            relativeTarget.startsWith("../") || relativeTarget.startsWith("..\\") || isAbsolute(relativeTarget)) {
+          throw new Error(`Non-portable runtime link: ${path} -> ${target}`);
+        }
+      } else if (entry.isDirectory()) {
         await visit(path);
       } else if (entry.isFile()) {
         result.push(path);

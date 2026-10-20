@@ -82,7 +82,9 @@ function buildWorkspacePackage(packageName) {
 function deployWorkspacePackage(packageName, destination, runtime) {
   execFileSync(
     corepackCommand,
-    ["pnpm", "--dir", repoRoot, "deploy", "--legacy", "--filter", packageName, "--prod", destination],
+    // Windows junctions retain absolute staging paths when electron-builder
+    // copies extraResources. Deploy real directories so the package can move.
+    ["pnpm", "--dir", repoRoot, "deploy", "--legacy", "--filter", packageName, "--prod", "--config.node-linker=hoisted", destination],
     {
       ...corepackExecOptions,
       // Deploy triggers install scripts (better-sqlite3). Prepend the managed
