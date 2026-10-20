@@ -255,6 +255,9 @@ function defaultSourceInstanceId(sourceVendor: SourceVendor, sourceAdapter: Sour
   if (sourceAdapter === "dsh-jsonl") {
     return "dsh:default";
   }
+  if (sourceAdapter === "workbuddy-jsonl") {
+    return "workbuddy:default";
+  }
 
   return `${sourceVendor === "claude-code" ? "claude" : sourceVendor}:default`;
 }
@@ -273,6 +276,7 @@ function defaultRecordNamespace(sourceAdapter: SourceAdapter, eventType: AnyEven
   }
   if (sourceAdapter === "kimicode-wire") return "wire";
   if (sourceAdapter === "dsh-jsonl") return "session";
+  if (sourceAdapter === "workbuddy-jsonl") return "session";
   if (sourceAdapter === "codex-rollout") return "rollout";
   if (sourceAdapter === "codex-logs") return "logs";
   if (sourceAdapter === "cursor-ide") return "cursor";

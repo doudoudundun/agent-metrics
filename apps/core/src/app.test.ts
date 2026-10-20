@@ -532,9 +532,18 @@ describe("ingestEventLog", () => {
       sourceVendor: "claude-code",
       nextScheduledAt: expect.any(String)
     });
-    // Cursor / Codex / OpenCode / ZCode / Kimi Code / DSH / MiMo use the light
-    // refresh loop; coordinator only starts them once.
-    for (const vendor of ["cursor", "codex", "opencode", "zcode", "kimicode", "dsh", "mimo"] as const) {
+    // Cursor / Codex / OpenCode / ZCode / Kimi Code / DSH / MiMo / WorkBuddy use
+    // the light refresh loop; coordinator only starts them once.
+    for (const vendor of [
+      "cursor",
+      "codex",
+      "opencode",
+      "zcode",
+      "kimicode",
+      "dsh",
+      "mimo",
+      "workbuddy"
+    ] as const) {
       expect(states.find((state) => state.sourceVendor === vendor)).toMatchObject({
         sourceVendor: vendor,
         lastStartedAt: expect.any(String),

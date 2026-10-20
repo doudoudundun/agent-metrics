@@ -213,7 +213,7 @@ describe("DashboardPage", () => {
 
     expect(readSourceChips()).toEqual({
       primary: ["All sources", "Kimi Code", "MiMo", "Codex", "Claude Code", "Cursor", "Others"],
-      others: ["ZCode", "OpenCode", "DSH"]
+      others: ["ZCode", "OpenCode", "DSH", "WorkBuddy"]
     });
     expect(screen.getByRole("button", { name: /Kimi Code/ })).toHaveTextContent("$9.00");
     expect(screen.getByRole("button", { name: "All sources" })).not.toHaveTextContent("$");
@@ -452,6 +452,7 @@ describe("DashboardPage", () => {
       "Cursor",
       "OpenCode",
       "DSH",
+      "WorkBuddy",
       "Export CSV",
       "Export JSON"
     ]);

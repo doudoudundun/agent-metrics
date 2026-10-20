@@ -67,5 +67,6 @@ export const USAGE_SOURCE_SEMANTICS: Record<
   },
   "cursor-official": { inputTokenSemantics: "delta", usageMeasurement: "increment" },
   "codex-rollout": { inputTokenSemantics: "gross", usageMeasurement: "increment" },
-  "codex-logs": { inputTokenSemantics: "gross", usageMeasurement: "increment" }
+  "codex-logs": { inputTokenSemantics: "gross", usageMeasurement: "increment" },
+  "workbuddy-usage": { inputTokenSemantics: "gross", usageMeasurement: "increment" }
 };

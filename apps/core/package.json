@@ -19,6 +19,7 @@
     "@agent-metrics/adapters-kimicode": "workspace:*",
     "@agent-metrics/adapters-mimo": "workspace:*",
     "@agent-metrics/adapters-opencode": "workspace:*",
+    "@agent-metrics/adapters-workbuddy": "workspace:*",
     "@agent-metrics/contracts": "workspace:*",
     "@agent-metrics/event-schema": "workspace:*",
     "@agent-metrics/export-kit": "workspace:*",

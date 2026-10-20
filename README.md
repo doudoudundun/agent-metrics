@@ -1,6 +1,6 @@
 # Agent Metrics
 
-Local-first metrics dashboard for AI coding agents (Claude Code, Codex, Cursor, OpenCode, ZCode, Kimi Code, DSH, MiMo).
+Local-first metrics dashboard for AI coding agents (Claude Code, Codex, Cursor, OpenCode, ZCode, Kimi Code, DSH, MiMo, WorkBuddy).
 
 ## Quick Start
 

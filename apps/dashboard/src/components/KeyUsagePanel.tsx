@@ -20,7 +20,8 @@ const VENDOR_LABELS: Record<string, string> = {
   kimicode: "Kimi Code",
   mimo: "MiMo",
   zcode: "ZCode",
-  dsh: "DSH"
+  dsh: "DSH",
+  workbuddy: "WorkBuddy"
 };
 
 const PERCENT_FORMAT = new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 });

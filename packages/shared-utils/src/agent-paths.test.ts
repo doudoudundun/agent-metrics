@@ -20,6 +20,8 @@ describe("getAgentMetricsPaths", () => {
       kimicodeLedgerPath: "D:/projects/dev/agent-metrics/data/sources/state/kimicode-ledger.json",
       dshCursorPath: "D:/projects/dev/agent-metrics/data/sources/state/dsh-cursor.json",
       dshLedgerPath: "D:/projects/dev/agent-metrics/data/sources/state/dsh-ledger.json",
+      workbuddyCursorPath: "D:/projects/dev/agent-metrics/data/sources/state/workbuddy-cursor.json",
+      workbuddyLedgerPath: "D:/projects/dev/agent-metrics/data/sources/state/workbuddy-ledger.json",
       cursorIdeStatePath: "D:/projects/dev/agent-metrics/data/sources/state/cursor-ide-state.json",
       cursorIdeLedgerPath: "D:/projects/dev/agent-metrics/data/sources/state/cursor-ide-ledger.json",
       codexCursorPath: "D:/projects/dev/agent-metrics/data/sources/state/codex-cursor.json",
@@ -58,6 +60,10 @@ describe("getAgentMetricsPaths", () => {
         "D:\\projects\\dev\\agent-metrics\\data\\sources\\state\\dsh-cursor.json",
       dshLedgerPath:
         "D:\\projects\\dev\\agent-metrics\\data\\sources\\state\\dsh-ledger.json",
+      workbuddyCursorPath:
+        "D:\\projects\\dev\\agent-metrics\\data\\sources\\state\\workbuddy-cursor.json",
+      workbuddyLedgerPath:
+        "D:\\projects\\dev\\agent-metrics\\data\\sources\\state\\workbuddy-ledger.json",
       cursorIdeStatePath:
         "D:\\projects\\dev\\agent-metrics\\data\\sources\\state\\cursor-ide-state.json",
       cursorIdeLedgerPath:
@@ -102,6 +108,10 @@ describe("getAgentMetricsPaths", () => {
         "\\\\server\\share\\repo\\data\\sources\\state\\dsh-cursor.json",
       dshLedgerPath:
         "\\\\server\\share\\repo\\data\\sources\\state\\dsh-ledger.json",
+      workbuddyCursorPath:
+        "\\\\server\\share\\repo\\data\\sources\\state\\workbuddy-cursor.json",
+      workbuddyLedgerPath:
+        "\\\\server\\share\\repo\\data\\sources\\state\\workbuddy-ledger.json",
       cursorIdeStatePath:
         "\\\\server\\share\\repo\\data\\sources\\state\\cursor-ide-state.json",
       cursorIdeLedgerPath:

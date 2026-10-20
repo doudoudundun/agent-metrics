@@ -13,6 +13,7 @@ import { resolveOpenCodeSourcePaths, resolveZCodeSourcePaths } from "@agent-metr
 import { resolveKimicodeSourcePaths } from "@agent-metrics/adapters-kimicode";
 import { resolveMiMoSourcePaths } from "@agent-metrics/adapters-mimo";
 import { resolveDshSourcePaths } from "@agent-metrics/adapters-dsh";
+import { resolveWorkbuddySourcePaths } from "@agent-metrics/adapters-workbuddy";
 import {
   AGENT_METRICS_SOURCE_ENV_VARS,
   isolateSources,
@@ -49,8 +50,8 @@ function expectOutsideFixtureRoot(path: string): void {
 }
 
 describe("source isolation guard", () => {
-  it("resolves all 17 production source paths under the fixture root", () => {
-    expect(AGENT_METRICS_SOURCE_ENV_VARS).toHaveLength(17);
+  it("resolves all 18 production source paths under the fixture root", () => {
+    expect(AGENT_METRICS_SOURCE_ENV_VARS).toHaveLength(18);
 
     const claudeRoots = resolveDefaultClaudeDiscoveryRoots("unused-by-resolver");
     const opencode = resolveOpenCodeSourcePaths();
@@ -58,6 +59,7 @@ describe("source isolation guard", () => {
     const mimo = resolveMiMoSourcePaths();
     const kimicode = resolveKimicodeSourcePaths();
     const dsh = resolveDshSourcePaths();
+    const workbuddy = resolveWorkbuddySourcePaths();
     const codex = resolveCodexSourcePaths();
     const cursor = resolveCursorSourcePaths();
 
@@ -95,6 +97,13 @@ describe("source isolation guard", () => {
     });
     expectInsideFixtureRoot(dsh.homePath);
     expectInsideFixtureRoot(dsh.sessionsRoot);
+
+    expect(workbuddy).toEqual({
+      homePath: expectedPath("AGENT_METRICS_WORKBUDDY_HOME"),
+      projectsRoot: join(expectedPath("AGENT_METRICS_WORKBUDDY_HOME"), "projects")
+    });
+    expectInsideFixtureRoot(workbuddy.homePath);
+    expectInsideFixtureRoot(workbuddy.projectsRoot);
 
     expect(codex).toEqual({
       sessionsRoot: expectedPath("AGENT_METRICS_CODEX_SESSIONS_ROOT"),

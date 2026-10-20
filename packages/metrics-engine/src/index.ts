@@ -191,7 +191,7 @@ export function totalTokens(usage: NormalizedUsage): number {
 // removed.
 
 /** Vendors whose legacy adapters record input_tokens as gross prompt size. */
-const LEGACY_VENDORS_WITH_GROSS_INPUT_TOKENS = new Set(["codex", "opencode", "zcode", "mimo"]);
+const LEGACY_VENDORS_WITH_GROSS_INPUT_TOKENS = new Set(["codex", "opencode", "zcode", "mimo", "workbuddy"]);
 
 export type TokenUsageRow = {
   input_tokens: number;

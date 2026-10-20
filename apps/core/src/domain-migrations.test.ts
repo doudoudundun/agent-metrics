@@ -407,7 +407,8 @@ describe("runDomainMigrations", () => {
         "dsh-usage",
         "kimicode-usage",
         "opencode-message",
-        "opencode-step-finish"
+        "opencode-step-finish",
+        "workbuddy-usage"
       ].sort()
     );
     // codex-history is a SourceAdapter but has no usage_source row (spec 9.5).

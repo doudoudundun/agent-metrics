@@ -46,7 +46,8 @@ export const SOURCE_DEFAULTS: Record<string, string> = {
   dsh: "dsh:default",
   codex: "codex:default",
   cursor: "cursor:default",
-  mimo: "mimo:default"
+  mimo: "mimo:default",
+  workbuddy: "workbuddy:default"
 };
 
 /**
@@ -75,7 +76,8 @@ export const USAGE_REGISTRY: Record<
     adapters: ["cursor-ide"]
   },
   "codex-rollout": { semantics: "gross", measurement: "increment", adapters: ["codex-rollout"] },
-  "codex-logs": { semantics: "gross", measurement: "increment", adapters: ["codex-logs"] }
+  "codex-logs": { semantics: "gross", measurement: "increment", adapters: ["codex-logs"] },
+  "workbuddy-usage": { semantics: "gross", measurement: "increment", adapters: ["workbuddy-jsonl"] }
 };
 
 export function registerSource(db: SqliteDatabaseLike, sourceInstanceId: string, sourceVendor: string, at: string): void {

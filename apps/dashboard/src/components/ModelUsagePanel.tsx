@@ -14,7 +14,8 @@ const SOURCE_LABELS: Record<RowSourceVendor, string> = {
   kimicode: "Kimi Code",
   mimo: "MiMo",
   zcode: "ZCode",
-  dsh: "DSH"
+  dsh: "DSH",
+  workbuddy: "WorkBuddy"
 };
 
 const NUMBER_FORMAT = new Intl.NumberFormat("en-US");

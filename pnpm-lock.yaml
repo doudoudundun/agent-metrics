@@ -86,6 +86,9 @@ importers:
       '@agent-metrics/adapters-opencode':
         specifier: workspace:*
         version: link:../../packages/adapters-opencode
+      '@agent-metrics/adapters-workbuddy':
+        specifier: workspace:*
+        version: link:../../packages/adapters-workbuddy
       '@agent-metrics/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
@@ -233,6 +236,19 @@ importers:
       better-sqlite3:
         specifier: ^11.10.0
         version: 11.10.0
+    devDependencies:
+      '@agent-metrics/test-utils':
+        specifier: workspace:*
+        version: link:../test-utils
+
+  packages/adapters-workbuddy:
+    dependencies:
+      '@agent-metrics/event-schema':
+        specifier: workspace:*
+        version: link:../event-schema
+      '@agent-metrics/shared-utils':
+        specifier: workspace:*
+        version: link:../shared-utils
     devDependencies:
       '@agent-metrics/test-utils':
         specifier: workspace:*

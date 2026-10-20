@@ -9,6 +9,7 @@ import * as kimicodeAdapter from "@agent-metrics/adapters-kimicode";
 import * as mimoAdapter from "@agent-metrics/adapters-mimo";
 import * as dshAdapter from "@agent-metrics/adapters-dsh";
 import * as cursorAdapter from "@agent-metrics/adapters-cursor";
+import * as workbuddyAdapter from "@agent-metrics/adapters-workbuddy";
 import { appendJsonLine } from "@agent-metrics/shared-utils";
 import { buildApp } from "./app.js";
 import * as eventLogProjector from "./event-log-projector.js";
@@ -44,6 +45,9 @@ describe("GET routes have no synchronization side effects", () => {
     const codexSpy = vi.spyOn(codexAdapter, "syncCodexRollouts").mockResolvedValue(undefined);
     const cursorSpy = vi.spyOn(cursorAdapter, "syncCursorArtifacts").mockResolvedValue(undefined);
     const cursorOfficialSpy = vi.spyOn(cursorAdapter, "syncCursorOfficialUsage").mockResolvedValue(null);
+    const workbuddySpy = vi
+      .spyOn(workbuddyAdapter, "syncWorkbuddySessions")
+      .mockResolvedValue(undefined);
     const ingestSpy = vi.spyOn(eventLogProjector, "ingestEventLog");
 
     const app = buildApp({
@@ -68,6 +72,7 @@ describe("GET routes have no synchronization side effects", () => {
     dshSpy.mockClear();
     codexSpy.mockClear();
     cursorSpy.mockClear();
+    workbuddySpy.mockClear();
     ingestSpy.mockClear();
 
     const triggerSpy = vi.spyOn(app.syncCoordinator, "trigger");
@@ -107,6 +112,7 @@ describe("GET routes have no synchronization side effects", () => {
     expect(dshSpy).not.toHaveBeenCalled();
     expect(codexSpy).not.toHaveBeenCalled();
     expect(cursorSpy).not.toHaveBeenCalled();
+    expect(workbuddySpy).not.toHaveBeenCalled();
     expect(ingestSpy).not.toHaveBeenCalled();
     expect(triggerSpy).not.toHaveBeenCalled();
     expect(manualSyncSpy).not.toHaveBeenCalled();

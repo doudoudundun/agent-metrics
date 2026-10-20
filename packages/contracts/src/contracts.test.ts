@@ -72,6 +72,7 @@ describe("common filters and pagination", () => {
     expect(SourceVendorSchema.safeParse("kimicode").success).toBe(true);
     expect(SourceVendorSchema.safeParse("dsh").success).toBe(true);
     expect(SourceVendorSchema.safeParse("mimo").success).toBe(true);
+    expect(SourceVendorSchema.safeParse("workbuddy").success).toBe(true);
     expect(EventTypeSchema.safeParse("tool.called").success).toBe(true);
     expect(EventTypeSchema.safeParse("not.a.type").success).toBe(false);
     expect(

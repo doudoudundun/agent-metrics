@@ -17,6 +17,8 @@ export type AgentMetricsPaths = {
   kimicodeLedgerPath: string;
   dshCursorPath: string;
   dshLedgerPath: string;
+  workbuddyCursorPath: string;
+  workbuddyLedgerPath: string;
   cursorIdeStatePath: string;
   cursorIdeLedgerPath: string;
   codexCursorPath: string;
@@ -108,6 +110,20 @@ export function getAgentMetricsPaths(repoRoot: string): AgentMetricsPaths {
       "sources",
       "state",
       "dsh-ledger.json"
+    ),
+    workbuddyCursorPath: buildAgentMetricsPath(
+      repoRoot,
+      "data",
+      "sources",
+      "state",
+      "workbuddy-cursor.json"
+    ),
+    workbuddyLedgerPath: buildAgentMetricsPath(
+      repoRoot,
+      "data",
+      "sources",
+      "state",
+      "workbuddy-ledger.json"
     ),
     cursorIdeStatePath: buildAgentMetricsPath(
       repoRoot,

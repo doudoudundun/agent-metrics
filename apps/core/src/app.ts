@@ -10,6 +10,7 @@ import { syncOpenCodeDatabase, syncZCodeDatabase } from "@agent-metrics/adapters
 import { syncKimicodeSessions } from "@agent-metrics/adapters-kimicode";
 import { syncMiMoDatabase } from "@agent-metrics/adapters-mimo";
 import { syncDshSessions } from "@agent-metrics/adapters-dsh";
+import { syncWorkbuddySessions } from "@agent-metrics/adapters-workbuddy";
 import { getAgentMetricsPaths } from "@agent-metrics/shared-utils";
 import { runDomainMigrations, type SqliteDatabaseLike } from "./domain-migrations.js";
 import {
@@ -39,7 +40,7 @@ import { runIsolatedSourceRefreshTasks, startSourceLightRefreshLoop } from "./so
 import type { BuildAppInput, MetricsDatabase } from "./core-types.js";
 
 /** Vendors covered by dedicated light refresh loops (not the heavy periodic coordinator). */
-const LIGHT_REFRESH_VENDORS = new Set(["cursor", "codex", "opencode", "zcode", "kimicode", "dsh", "mimo"]);
+const LIGHT_REFRESH_VENDORS = new Set(["cursor", "codex", "opencode", "zcode", "kimicode", "dsh", "mimo", "workbuddy"]);
 
 export { createEventLogSynchronizer } from "./event-log-projector.js";
 
@@ -247,6 +248,23 @@ export function buildApp(input: BuildAppInput): MetricsApp {
         }
       ,
       {
+        adapterInstanceId: "workbuddy-jsonl@workbuddy:default",
+        sourceInstanceId: "workbuddy:default",
+        sourceAdapter: "workbuddy-jsonl",
+        sourceVendor: "workbuddy",
+        enabled: true,
+        sync: async ({ signal }) =>
+          runWithCanonicalWriterLease(signal, async () => {
+            await syncWorkbuddySessions({
+              eventLogPath: canonicalEventLogPath,
+              cursorPath: agentPaths.workbuddyCursorPath,
+              ledgerPath: agentPaths.workbuddyLedgerPath
+            });
+            return projectAfterSourceSync();
+          })
+        }
+      ,
+      {
         adapterInstanceId: "cursor-ide@cursor:default",
         sourceInstanceId: "cursor:default",
         sourceAdapter: "cursor-ide",
@@ -419,6 +437,15 @@ export function buildApp(input: BuildAppInput): MetricsApp {
                         eventLogPath,
                         cursorPath: paths.dshCursorPath,
                         ledgerPath: paths.dshLedgerPath
+                      })
+                  },
+                  {
+                    id: "workbuddy-jsonl@workbuddy:default",
+                    run: () =>
+                      syncWorkbuddySessions({
+                        eventLogPath,
+                        cursorPath: paths.workbuddyCursorPath,
+                        ledgerPath: paths.workbuddyLedgerPath
                       })
                   },
                   {

@@ -654,6 +654,7 @@ function sourceInstanceIdForVendor(sourceVendor: SourceVendor | null): string {
   if (sourceVendor === "codex") return "codex:default";
   if (sourceVendor === "cursor") return "cursor:default";
   if (sourceVendor === "mimo") return "mimo:default";
+  if (sourceVendor === "workbuddy") return "workbuddy:default";
   return "unknown:default";
 }
 
