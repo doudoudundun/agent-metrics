@@ -53,8 +53,63 @@ describe("estimateCostUsd", () => {
     expect(estimateCostUsd({ ...USAGE, model: "kimi-code/kimi-for-coding-highspeed" })).toBeCloseTo(9.9, 6);
   });
 
+  it("prices WorkBuddy's kimi-k3-2 at the kimi-k3 rate", () => {
+    const alias = estimateCostUsd({ ...USAGE, model: "kimi-k3-2" });
+    const canonical = estimateCostUsd({ ...USAGE, model: "kimi-k3" });
+
+    expect(alias).toBeCloseTo(18, 6);
+    expect(alias).toBe(canonical);
+  });
+
+  it("prices WorkBuddy's hunyuan rows (CNY converted at 7.194)", () => {
+    expect(estimateCostUsd({ ...USAGE, model: "hy4-preview" })).toBeCloseTo(3.335, 6);
+    expect(estimateCostUsd({ ...USAGE, model: "hy3" })).toBeCloseTo(0.695, 6);
+    expect(
+      estimateCostUsd({
+        ...USAGE,
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 1_000_000,
+        cacheCreationTokens: 0,
+        model: "hy3"
+      })
+    ).toBeCloseTo(0.035, 6);
+  });
+
+  it("prices WorkBuddy's GLM 5.0 / 4.6 rows", () => {
+    expect(estimateCostUsd({ ...USAGE, model: "glm-5.0" })).toBeCloseTo(4.2, 6);
+    expect(estimateCostUsd({ ...USAGE, model: "glm-4.6v" })).toBeCloseTo(1.2, 6);
+    expect(estimateCostUsd({ ...USAGE, model: "glm-5v-turbo" })).toBeCloseTo(5.2, 6);
+  });
+
+  it("bills MiniMax M2.5/M2.7 cache writes from the official card", () => {
+    expect(
+      estimateCostUsd({
+        ...USAGE,
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 1_000_000,
+        model: "minimax-m2.7"
+      })
+    ).toBeCloseTo(0.375, 6);
+    expect(estimateCostUsd({ ...USAGE, model: "minimax-m2.5" })).toBeCloseTo(1.5, 6);
+    // M3 alias shares the <=512K tier with minimax-m3.
+    expect(estimateCostUsd({ ...USAGE, model: "minimax-m3-pay" })).toBeCloseTo(
+      estimateCostUsd({ ...USAGE, model: "minimax-m3" })!,
+      6
+    );
+  });
+
+  it("prices WorkBuddy's kimi-k2.6 at platform.kimi.ai rates", () => {
+    expect(estimateCostUsd({ ...USAGE, model: "kimi-k2.6" })).toBeCloseTo(4.95, 6);
+    expect(estimateCostUsd({ ...USAGE, model: "kimi-k2.7" })).toBeCloseTo(4.95, 6);
+  });
+
   it("returns null for models without a published list price", () => {
     expect(estimateCostUsd({ ...USAGE, model: "mimo/mimo-auto" })).toBeNull();
+    expect(estimateCostUsd({ ...USAGE, model: "hunyuan-chat" })).toBeNull();
+    expect(estimateCostUsd({ ...USAGE, model: "default" })).toBeNull();
     expect(estimateCostUsd({ ...USAGE, model: "unknown" })).toBeNull();
     expect(estimateCostUsd({ ...USAGE, model: null })).toBeNull();
   });

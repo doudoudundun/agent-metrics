@@ -4,12 +4,26 @@
  * api-docs.deepseek.com, platform.minimax.io, mimo.mi.com, platform.kimi.ai,
  * x.ai API docs.
  *
+ * WorkBuddy/CodeBuddy coverage added 2026-10-21 from the model table shipped
+ * inside the desktop app (`resources/app.asar.unpacked/cli/product.json`, 58
+ * rows) plus `product.cloudhosted.json`; the per-token rates for those rows come
+ * from api-docs.deepseek.com, platform.minimax.io (M2/M3),
+ * platform.kimi.ai (K2/K3), docs.z.ai (GLM), cloud.tencent.com Token Plan and
+ * hy.tencent.com (Hunyuan). CNY rows are converted at the rate Tencent itself
+ * publishes on its Token Plan page (CNY 6 -> $0.834, i.e. 7.194 CNY/USD).
+ *
  * DeepSeek rows use peak-hour pricing (off-peak is half price); the discount is
  * deliberately not applied per-row because relays/providers bill DeepSeek at
  * their own dynamic rates, so a uniform peak-hour estimate is the common
  * denominator. GLM rows use the <32K input tier, MiniMax-M3 the <=512K tier at
  * its 50% discount, Claude cache writes the 5-minute tier, and Kimi K3 cache
  * writes the 5-minute TTL tier. Estimates for reference only, not billing data.
+ *
+ * WorkBuddy routing aliases (`default`, `auto`, `default-model`, `fast-model`,
+ * `balanced-model`, `primary-model`, `deep-model`) are deliberately absent: they
+ * land on whichever model the router picks, so they have no list price of their
+ * own. Same for `hunyuan-chat` (Hunyuan-Turbos) and `hunyuan-2.0-*`, which have
+ * no published per-token rate.
  */
 
 export type ModelPricing = {
@@ -51,6 +65,14 @@ export const MODEL_PRICING_USD: Record<string, ModelPricing> = {
   "glm-5.1": { inputPer1M: 1.4, outputPer1M: 4.4, cacheReadPer1M: 0.26, cacheWritePer1M: 0 },
   "glm-5": { inputPer1M: 1, outputPer1M: 3.2, cacheReadPer1M: 0.2, cacheWritePer1M: 0 },
   "glm-4.7": { inputPer1M: 0.6, outputPer1M: 2.2, cacheReadPer1M: 0.11, cacheWritePer1M: 0 },
+  // WorkBuddy serves GLM-5.0 / 5.0-Turbo / 5v-Turbo / 4.6 / 4.6V alongside the
+  // 5.1+ rows above; z.ai's own rate card (docs.z.ai, snapshot 2026-10-20).
+  "glm-5.0": { inputPer1M: 1, outputPer1M: 3.2, cacheReadPer1M: 0.2, cacheWritePer1M: 0 },
+  "glm-5.0-turbo": { inputPer1M: 1.2, outputPer1M: 4, cacheReadPer1M: 0.24, cacheWritePer1M: 0 },
+  "glm-5-turbo": { inputPer1M: 1.2, outputPer1M: 4, cacheReadPer1M: 0.24, cacheWritePer1M: 0 },
+  "glm-5v-turbo": { inputPer1M: 1.2, outputPer1M: 4, cacheReadPer1M: 0.24, cacheWritePer1M: 0 },
+  "glm-4.6": { inputPer1M: 0.6, outputPer1M: 2.2, cacheReadPer1M: 0.11, cacheWritePer1M: 0 },
+  "glm-4.6v": { inputPer1M: 0.3, outputPer1M: 0.9, cacheReadPer1M: 0.05, cacheWritePer1M: 0 },
   "deepseek-v4-flash": {
     inputPer1M: 0.3,
     outputPer1M: 1.2,
@@ -79,6 +101,13 @@ export const MODEL_PRICING_USD: Record<string, ModelPricing> = {
     cacheReadPer1M: 0.006,
     cacheWritePer1M: 0
   },
+  // Singapore-channel slug of v4.1-flash (same credits multiplier, same card).
+  "deepseek-v4.1-flash-sg": {
+    inputPer1M: 0.3,
+    outputPer1M: 1.2,
+    cacheReadPer1M: 0.006,
+    cacheWritePer1M: 0
+  },
   "deepseek-v4-flash-0731": {
     inputPer1M: 0.3,
     outputPer1M: 1.2,
@@ -95,11 +124,25 @@ export const MODEL_PRICING_USD: Record<string, ModelPricing> = {
   "kimi-k3": { inputPer1M: 3, outputPer1M: 15, cacheReadPer1M: 0.3, cacheWritePer1M: 3 },
   "k3-256k": { inputPer1M: 3, outputPer1M: 15, cacheReadPer1M: 0.3, cacheWritePer1M: 3 },
   "k3": { inputPer1M: 3, outputPer1M: 15, cacheReadPer1M: 0.3, cacheWritePer1M: 3 },
+  // WorkBuddy's current K3 slug; same rate card as kimi-k3.
+  "kimi-k3-2": { inputPer1M: 3, outputPer1M: 15, cacheReadPer1M: 0.3, cacheWritePer1M: 3 },
+  "kimi-k3-1": { inputPer1M: 3, outputPer1M: 15, cacheReadPer1M: 0.3, cacheWritePer1M: 3 },
   // Multiple trackers refreshed 2026-10 report $0.95/$4.00 (AICoder's official-linked
   // crawl says $1.20/$4.80 — official table is JS-rendered and unverifiable here).
   "kimi-k2.7-code": { inputPer1M: 0.95, outputPer1M: 4, cacheReadPer1M: 0.19, cacheWritePer1M: 0 },
   // Highspeed tier is 2x the standard rate per llmabacus (official-synced) and aihubmix.
   "kimi-k2.7-code-highspeed": { inputPer1M: 1.9, outputPer1M: 8, cacheReadPer1M: 0.38, cacheWritePer1M: 0 },
+  // WorkBuddy's bare K2.7 slug is the same model as kimi-k2.7-code.
+  "kimi-k2.7": { inputPer1M: 0.95, outputPer1M: 4, cacheReadPer1M: 0.19, cacheWritePer1M: 0 },
+  // K2.6: platform.kimi.ai lists $0.95 uncached / $0.16 cached / $4 output.
+  "kimi-k2.6": { inputPer1M: 0.95, outputPer1M: 4, cacheReadPer1M: 0.16, cacheWritePer1M: 0 },
+  // K2.5 trackers disagree ($0.49/$2.50 with $0.095 cached vs $0.60/$3.00 with
+  // $0.10 cached); the lower, cache-explicit card is used here.
+  "kimi-k2.5": { inputPer1M: 0.49, outputPer1M: 2.5, cacheReadPer1M: 0.095, cacheWritePer1M: 0 },
+  "kimi-k2-thinking": { inputPer1M: 0.6, outputPer1M: 2.5, cacheReadPer1M: 0.15, cacheWritePer1M: 0 },
+  // Kimi-K2 (0905 exacto), exposed by WorkBuddy as kimi-k2-instruct-taiji.
+  "kimi-k2-instruct-taiji": { inputPer1M: 0.6, outputPer1M: 2.5, cacheReadPer1M: 0.15, cacheWritePer1M: 0 },
+  "kimi-k2": { inputPer1M: 0.6, outputPer1M: 2.5, cacheReadPer1M: 0.15, cacheWritePer1M: 0 },
   // $1/$4, cache read $0.25 (Tencent Cloud's Moonshot listing matches B.AI).
   "kimi-k2.8-preview": { inputPer1M: 1, outputPer1M: 4, cacheReadPer1M: 0.25, cacheWritePer1M: 0 },
   // Kimi Code subscription alias — sold per seat with a quota pool, never per
@@ -117,6 +160,14 @@ export const MODEL_PRICING_USD: Record<string, ModelPricing> = {
   "grok-4.6": { inputPer1M: 2, outputPer1M: 6, cacheReadPer1M: 0.5, cacheWritePer1M: 0 },
   "grok-4.5": { inputPer1M: 2, outputPer1M: 6, cacheReadPer1M: 0.5, cacheWritePer1M: 0 },
   "minimax-m3": { inputPer1M: 0.3, outputPer1M: 1.2, cacheReadPer1M: 0.06, cacheWritePer1M: 0 },
+  // WorkBuddy's metered M3 alias; same <=512K tier as minimax-m3.
+  "minimax-m3-pay": { inputPer1M: 0.3, outputPer1M: 1.2, cacheReadPer1M: 0.06, cacheWritePer1M: 0 },
+  // M2.7 / M2.5 from platform.minimax.io (cache write is billed at $0.375/1M);
+  // highspeed doubles input and output only.
+  "minimax-m2.7": { inputPer1M: 0.3, outputPer1M: 1.2, cacheReadPer1M: 0.06, cacheWritePer1M: 0.375 },
+  "minimax-m2.7-highspeed": { inputPer1M: 0.6, outputPer1M: 2.4, cacheReadPer1M: 0.06, cacheWritePer1M: 0.375 },
+  "minimax-m2.5": { inputPer1M: 0.3, outputPer1M: 1.2, cacheReadPer1M: 0.03, cacheWritePer1M: 0.375 },
+  "minimax-m2.5-highspeed": { inputPer1M: 0.6, outputPer1M: 2.4, cacheReadPer1M: 0.03, cacheWritePer1M: 0.375 },
   // mimo.mi.com overseas rate card (verified 2026-10-09); cache writes are
   // free for a limited time per the official docs.
   "mimo-v2.6-flash": { inputPer1M: 0.14, outputPer1M: 0.28, cacheReadPer1M: 0.0028, cacheWritePer1M: 0 },
@@ -135,6 +186,21 @@ export const MODEL_PRICING_USD: Record<string, ModelPricing> = {
   // MiMo Desktop subscription alias; the app serves mimo-v2.6-pro behind it,
   // so that rate card is the reference estimate.
   "mimo-pro": { inputPer1M: 0.435, outputPer1M: 0.87, cacheReadPer1M: 0.0036, cacheWritePer1M: 0 },
+  // Tencent Hunyuan rows (WorkBuddy's own family). CNY per 1M tokens divided by
+  // 7.194, the rate Tencent publishes on its Token Plan page (CNY 6 -> $0.834).
+  // hy.tencent.com: Hy4 preview = input 6 / output 18 / cache-hit 0.3 CNY.
+  "hy4-preview": { inputPer1M: 0.834, outputPer1M: 2.501, cacheReadPer1M: 0.042, cacheWritePer1M: 0 },
+  // WorkBuddy's "-x" slugs are the same model ids routed through another channel.
+  "hy4-preview-x": { inputPer1M: 0.834, outputPer1M: 2.501, cacheReadPer1M: 0.042, cacheWritePer1M: 0 },
+  // cloud.tencent.com Token Plan: Hy3 = input 1 / output 4 / cache 0.25 CNY.
+  "hy3": { inputPer1M: 0.139, outputPer1M: 0.556, cacheReadPer1M: 0.035, cacheWritePer1M: 0 },
+  "hy3-x": { inputPer1M: 0.139, outputPer1M: 0.556, cacheReadPer1M: 0.035, cacheWritePer1M: 0 },
+  // WorkBuddy legacy Claude aliases (default-1.1 = Claude-3.7-Sonnet,
+  // default-1.2 = Claude-4.0-Sonnet); priced at Sonnet's standard card.
+  "default-1.1": { inputPer1M: 3, outputPer1M: 15, cacheReadPer1M: 0.3, cacheWritePer1M: 3.75 },
+  "default-1.2": { inputPer1M: 3, outputPer1M: 15, cacheReadPer1M: 0.3, cacheWritePer1M: 3.75 },
+  "claude-3.7-sonnet": { inputPer1M: 3, outputPer1M: 15, cacheReadPer1M: 0.3, cacheWritePer1M: 3.75 },
+  "claude-4.0-sonnet": { inputPer1M: 3, outputPer1M: 15, cacheReadPer1M: 0.3, cacheWritePer1M: 3.75 },
   // Free model served by opencode.
   "big-pickle": { inputPer1M: 0, outputPer1M: 0, cacheReadPer1M: 0, cacheWritePer1M: 0 },
   "deepseek-v4-flash-free": { inputPer1M: 0, outputPer1M: 0, cacheReadPer1M: 0, cacheWritePer1M: 0 },
@@ -143,6 +209,8 @@ export const MODEL_PRICING_USD: Record<string, ModelPricing> = {
   // "hy3-preview" (no -free suffix) is intentionally absent: no published list
   // price, so lookups return null. "mimo-auto" is a router alias billed at
   // whichever model it lands on, so it has no list price of its own either.
+  // WorkBuddy's `hunyuan-chat` (Hunyuan-Turbos) and `hunyuan-2.0-*` rows are
+  // absent for the same reason: no per-token list price is published.
 };
 
 /**

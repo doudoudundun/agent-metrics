@@ -1,0 +1,627 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI 编程 Agent 订阅性价比调研报告 · 2026-10</title>
+<style>
+  :root{
+    --ink:#1a1d23; --ink-2:#3d4451; --ink-3:#6b7280;
+    --line:#e4e7ec; --line-2:#f0f2f5;
+    --bg:#ffffff; --bg-soft:#fafbfc;
+    --accent:#1f5fa8; --accent-soft:#eaf2fb;
+    --good:#1d7a4c; --good-soft:#e8f5ee;
+    --warn:#a86414; --warn-soft:#fdf3e3;
+    --bad:#a83a35; --bad-soft:#fbeceb;
+  }
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    margin:0; padding:48px 24px 80px;
+    background:var(--bg); color:var(--ink);
+    font-family:"PingFang SC","Microsoft YaHei","Hiragino Sans GB","Source Han Sans SC",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    font-size:15px; line-height:1.82;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:940px; margin:0 auto}
+
+  /* ---------- header ---------- */
+  header{border-bottom:2px solid var(--ink); padding-bottom:22px; margin-bottom:38px}
+  .kicker{font-size:12px; letter-spacing:.18em; text-transform:uppercase; color:var(--accent); font-weight:600; margin-bottom:12px}
+  h1{font-size:31px; line-height:1.35; margin:0 0 12px; font-weight:700; letter-spacing:-.01em}
+  .sub{font-size:16px; color:var(--ink-2); margin:0 0 16px; line-height:1.68}
+  .meta{font-size:13px; color:var(--ink-3); display:flex; gap:20px; flex-wrap:wrap}
+  .meta b{color:var(--ink-2); font-weight:600}
+
+  /* ---------- typography ---------- */
+  h2{font-size:21px; margin:52px 0 16px; padding-bottom:9px; border-bottom:1px solid var(--line); font-weight:700; letter-spacing:-.005em}
+  h2 .num{color:var(--accent); font-variant-numeric:tabular-nums; margin-right:10px; font-weight:600}
+  h3{font-size:16px; margin:30px 0 10px; font-weight:650; color:var(--ink)}
+  p{margin:0 0 14px}
+  strong{font-weight:650; color:var(--ink)}
+  em{font-style:normal; background:linear-gradient(transparent 62%, #ffe9a8 62%); padding:0 2px}
+  code{font-family:"SF Mono",Consolas,"Cascadia Mono",monospace; font-size:13px; background:var(--bg-soft); border:1px solid var(--line); border-radius:4px; padding:1px 5px}
+  ul,ol{margin:0 0 14px; padding-left:22px}
+  li{margin-bottom:7px}
+  hr{border:0; border-top:1px solid var(--line-2); margin:34px 0}
+
+  /* ---------- key figures ---------- */
+  .figs{display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin:24px 0 30px}
+  .fig{border:1px solid var(--line); border-radius:8px; padding:15px 16px 14px; background:var(--bg-soft)}
+  .fig .n{font-size:23px; font-weight:700; letter-spacing:-.02em; font-variant-numeric:tabular-nums; color:var(--accent); line-height:1.2}
+  .fig .n small{font-size:13px; font-weight:600; color:var(--ink-2); margin-left:2px}
+  .fig .l{font-size:12.5px; color:var(--ink-3); margin-top:5px; line-height:1.5}
+
+  /* ---------- tables ---------- */
+  table{width:100%; border-collapse:collapse; margin:18px 0 22px; font-size:14px}
+  th,td{padding:9px 11px; text-align:left; border-bottom:1px solid var(--line); vertical-align:top}
+  th{background:var(--bg-soft); font-weight:650; font-size:12.5px; color:var(--ink-2); letter-spacing:.02em; border-bottom:1.5px solid var(--line)}
+  td.num,th.num{text-align:right; font-variant-numeric:tabular-nums}
+  tbody tr:hover{background:#fcfdfe}
+  tr.hl td{background:var(--accent-soft)}
+  tr.hl:hover td{background:#e2edf9}
+  .muted{color:var(--ink-3); font-size:13px}
+  .tag{display:inline-block; font-size:11.5px; padding:1px 7px; border-radius:20px; font-weight:600; white-space:nowrap; line-height:1.7}
+  .t-best{background:var(--good-soft); color:var(--good)}
+  .t-mid{background:var(--accent-soft); color:var(--accent)}
+  .t-weak{background:var(--warn-soft); color:var(--warn)}
+  .t-bad{background:var(--bad-soft); color:var(--bad)}
+
+  /* ---------- bars ---------- */
+  .bars{margin:22px 0 26px; border-top:1px solid var(--line-2); padding-top:18px}
+  .bar-row{display:grid; grid-template-columns:216px 1fr 58px; align-items:center; gap:12px; margin-bottom:9px; font-size:13.5px}
+  .bar-name{color:var(--ink-2); text-align:right; line-height:1.4}
+  .bar-track{background:var(--line-2); height:17px; border-radius:3px; overflow:hidden}
+  .bar-fill{height:100%; border-radius:3px; background:linear-gradient(90deg,#4a86c8,#1f5fa8)}
+  .bar-fill.mid{background:linear-gradient(90deg,#8fb8dd,#5b93c6)}
+  .bar-fill.low{background:linear-gradient(90deg,#d8dde5,#c3cad4)}
+  .bar-fill.neg{background:linear-gradient(90deg,#e8b3b0,#d98f8a)}
+  .bar-val{font-variant-numeric:tabular-nums; font-weight:650; color:var(--ink)}
+  .bar-val.dim{color:var(--ink-3); font-weight:500}
+
+  /* ---------- callouts ---------- */
+  .box{border-radius:8px; padding:15px 18px; margin:20px 0; font-size:14px; line-height:1.75}
+  .box p:last-child{margin-bottom:0}
+  .box .bt{font-weight:650; display:block; margin-bottom:5px; font-size:13px; letter-spacing:.03em}
+  .box.key{background:var(--accent-soft); border-left:3px solid var(--accent)}
+  .box.key .bt{color:var(--accent)}
+  .box.warn{background:var(--warn-soft); border-left:3px solid var(--warn)}
+  .box.warn .bt{color:var(--warn)}
+  .box.note{background:var(--bg-soft); border-left:3px solid var(--line)}
+  .box.note .bt{color:var(--ink-3)}
+
+  /* ---------- conclusion ---------- */
+  .verdicts{display:grid; gap:12px; margin:22px 0}
+  .verdict{border:1px solid var(--line); border-radius:8px; padding:16px 18px; background:var(--bg-soft)}
+  .verdict .vh{font-weight:650; margin-bottom:6px; font-size:14.5px}
+  .verdict .vh span{color:var(--accent); margin-right:7px}
+  .verdict p{margin:0; font-size:14px; color:var(--ink-2); line-height:1.75}
+
+  footer{margin-top:56px; padding-top:18px; border-top:1px solid var(--line); font-size:12.5px; color:var(--ink-3); line-height:1.75}
+
+  @media (max-width:760px){
+    body{padding:28px 16px 56px; font-size:14.5px}
+    h1{font-size:24px}
+    .figs{grid-template-columns:repeat(2,1fr)}
+    .bar-row{grid-template-columns:130px 1fr 46px; font-size:12.5px}
+    table{font-size:13px}
+    th,td{padding:7px 8px}
+  }
+  @media print{
+    body{padding:0; font-size:11pt}
+    .wrap{max-width:none}
+    h2{page-break-after:avoid}
+    table{page-break-inside:avoid}
+    .box,.verdict,.fig{page-break-inside:avoid}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="kicker">Cost Benchmark · 2026-10-20</div>
+  <h1>AI 编程 Agent 订阅性价比调研报告</h1>
+  <p class="sub">以 <code>deepseek-v4.1-flash</code> 为统一基准，把 WorkBuddy（国内版／国际版）、OpenCode Go／Zen、OpenDesign、Cline Pass、DevPass 等平台的订阅制，折算成「每付 1 元能换到多少按官方 API 价计算的用量」，并给出一个固定用量下的月支出对比。</p>
+  <div class="meta">
+    <span><b>基准样本</b> 2026-10-20 实测 927 条计量</span>
+    <span><b>汇率</b> $1 = ¥7.1</span>
+    <span><b>价格时点</b> 2026-10</span>
+  </div>
+</header>
+
+<h2><span class="num">摘要</span>四句话说完</h2>
+
+<div class="figs">
+  <div class="fig">
+    <div class="n">¥0.07</div>
+    <div class="l">1 个 WorkBuddy 积分对应的官方 API 成本，与时段无关</div>
+  </div>
+  <div class="fig">
+    <div class="n">8.0<small>×</small></div>
+    <div class="l">OpenCode Go 杠杆，锁死 DeepSeek 时的编程 Agent 最优解</div>
+  </div>
+  <div class="fig">
+    <div class="n">17.1<small>×</small></div>
+    <div class="l">OpenDesign Go 年付杠杆，全样本最高但有硬窗口</div>
+  </div>
+  <div class="fig">
+    <div class="n">7.1–8.9<small>×</small></div>
+    <div class="l">WorkBuddy 国内标准版杠杆（含签到 + 连续包月/包年折扣）</div>
+  </div>
+</div>
+
+<ol>
+  <li><strong>WorkBuddy 的积分不是营销货币，而是 token 成本的线性折算。</strong>1 积分 ≈ ¥0.07 ≈ $0.01 的模型成本，误差中位 6%。所以「一个积分值多少钱」有确定答案，可以跨平台比。</li>
+  <li><strong>闲时半价落在积分消耗量上，不落在积分单价上。</strong>WorkBuddy 与 DeepSeek 官方的峰谷窗口完全一致（工作日 9–12、14–18 为高峰），因此 ¥/积分 恒为 0.07，任何时段都成立；错峰省的是「扣几个积分」，不是「每个积分更便宜」。</li>
+  <li><strong>三个被漏算的加量项，把国内标准版从 2.87× 一路抬到 8.9×。</strong>每日签到（100/天，第 7 天 1,000）、连续包月 7 折（¥70，可随时取消）、连续包年 5.6 折（¥56/月）。三者叠加后，国内标准版额度 7,000 积分/月，对你 4,350/月的强度<em>富余 61%</em>，杠杆反超 OpenCode Go 的 8.0×。</li>
+  <li><strong>国际版在同一价位上只有国内的一半额度。</strong>国际 Pro 年付 $8（¥57/月）拿 3,500 积分，国内标准版连续包年 ¥56/月拿 7,000 积分——<strong>几乎同样的钱，国内给两倍</strong>。对国内用户，国际版没有存在理由。</li>
+  <li><strong>把体验版也算进来，最优解会再变一次：体验版 + OpenCode Go = 11.5×。</strong>体验版每月 500 基础积分 + 签到 3,000 = 3,500 积分（$35）零成本，配 Go 的 $80，¥71 换 $115 额度。唯一需要确认的是 <strong>CLI 权限</strong>——官方表格写体验版不支持，但 CodeBuddy 定价页没有这一限制、第三方资料说法相反，可自行用 <code>/login</code> 后发一条 prompt 验证；不过即使能绕，CLI 烧的仍是同一积分池，<strong>额度绕不过去</strong>。</li>
+</ol>
+
+<h2><span class="num">一</span>统一口径：什么才能被比较</h2>
+
+<p>各家定价的计量单位完全不同——WorkBuddy 用积分、OpenCode 用美元额度、Cline 用「几倍 API 价」、其他国内平台用自家 Credits。直接比月费没有意义，必须先归一。</p>
+
+<h3>1.1 两个基准值</h3>
+
+<table>
+  <thead>
+    <tr><th style="width:34%">基准</th><th class="num" style="width:20%">数值</th><th>依据</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>1 积分的官方 API 成本</strong></td>
+      <td class="num"><strong>¥0.07</strong> / $0.0099</td>
+      <td>用 927 条真实计量做线性回归反推（见 §2.1），且与平台售价 ¥0.05/积分 形成稳定 7 折关系</td>
+    </tr>
+    <tr>
+      <td><strong>当日实测用量</strong></td>
+      <td class="num"><strong>145.1 积分</strong> = $1.43</td>
+      <td>2026-10-20 10:37 起，8 个会话、927 次计量，全部为 deepseek-v4.1-flash</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>1.2 「杠杆」的定义</h3>
+
+<div class="box key">
+  <span class="bt">杠杆倍数 = 套餐提供的额度（按官方 API 零售价折算成美元）÷ 实付月费（美元）</span>
+  <p>杠杆 8.0x 意味着：你花 $10，拿到值 $80 官方价的 token。这是唯一能跨积分制／美元额度制／「N 倍 API 价」制比较的单位。官方直充的杠杆定义为 1.0x。</p>
+</div>
+
+<p class="muted">已知局限：只有「额度按美元计价」的平台能精确算杠杆。智谱、Trae、Qoder、Kimi、腾讯云 Token Plan 等卖的是自家模型，credit→token 比例不公开，只能按「同价位谁给得多」定性比较，不进入总表。</p>
+
+<h2><span class="num">二</span>WorkBuddy 积分定价解构</h2>
+
+<h3>2.1 积分 = token 成本的线性折算</h3>
+
+<p>对 927 条带 <code>providerData.rawUsage.credit</code> 的真实记录拟合 <code>credit = a·miss + b·hit + c·out</code>，得到每 <strong>100 万 token</strong> 的积分系数：</p>
+
+<table>
+  <thead>
+    <tr><th>token 类型</th><th class="num">积分 / 1M token</th><th class="num">DeepSeek 官方高峰价</th><th class="num">反推 ¥ / 1M token</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>输入 · 缓存未命中</td><td class="num">28.17</td><td class="num">¥2.00</td><td class="num">¥1.97</td></tr>
+    <tr><td>输入 · 缓存命中</td><td class="num">0.5045</td><td class="num">¥0.04</td><td class="num">¥0.035</td></tr>
+    <tr><td>输出</td><td class="num">115.06</td><td class="num">¥8.00</td><td class="num">¥8.05</td></tr>
+  </tbody>
+</table>
+
+<p>三者比例 <strong>hit : miss : out = 1 : 56 : 4.08</strong>，与 deepseek 官方高峰价卡的 <strong>1 : 50 : 4</strong> 几乎重合。这意味着积分就是按官方高峰价卡折算出来的，可以直接相除：</p>
+
+<ul>
+  <li>2 元 ÷ 28.17 = <strong>¥0.0710 / 积分</strong></li>
+  <li>8 元 ÷ 115.06 = <strong>¥0.0695 / 积分</strong></li>
+  <li>逐条实测中位 = <strong>¥0.0701</strong>（p10–p90 = 0.0678–0.0740），聚合 = ¥0.0731</li>
+</ul>
+
+<h3>2.2 闲时半价：买的是「少扣积分」</h3>
+
+<p>这是本轮调研里最容易算错的一处。按官方<em>高峰价</em>对同一天记录计算 ¥/积分，再按小时分组：</p>
+
+<table>
+  <thead>
+    <tr><th>时段</th><th class="num">记录数</th><th class="num">积分</th><th class="num">按高峰价算的 ¥/积分</th><th>判定</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>10:00</td><td class="num">87</td><td class="num">18.87</td><td class="num">0.0700</td><td>高峰</td></tr>
+    <tr><td>11:00</td><td class="num">375</td><td class="num">56.40</td><td class="num">0.0699</td><td>高峰</td></tr>
+    <tr class="hl"><td>12:00</td><td class="num">20</td><td class="num">1.28</td><td class="num"><strong>0.1404</strong></td><td><span class="tag t-weak">闲时，2.01×</span></td></tr>
+    <tr class="hl"><td>13:00</td><td class="num">63</td><td class="num">5.08</td><td class="num"><strong>0.1407</strong></td><td><span class="tag t-weak">闲时，2.01×</span></td></tr>
+    <tr><td>14:00</td><td class="num">85</td><td class="num">12.81</td><td class="num">0.0706</td><td>高峰</td></tr>
+    <tr><td>15:00</td><td class="num">295</td><td class="num">50.29</td><td class="num">0.0700</td><td>高峰</td></tr>
+  </tbody>
+</table>
+
+<p>12–14 点恰好是高峰的 2.02 倍，说明<strong>那两个小时只扣了一半积分</strong>。因此：</p>
+
+<div class="box key">
+  <span class="bt">结论：积分单价恒为 ¥0.07，与时段无关</span>
+  <p>闲时官方价减半，同时 WorkBuddy 扣的积分也减半，分子分母同步减半，比值不变。用时段加权官方价验算总账：145.1 积分 ↔ ¥10.16 → <strong>¥0.0700 / 积分</strong>，与高峰单独算出的 0.0700 完全一致。</p>
+  <p>实操含义：今天这 145.1 积分的活，如果全放在 12–14 点、18 点后或周末跑，只需 <strong>75.7 积分，直接省一半</strong>。省钱靠错峰，不靠换汇率。</p>
+</div>
+
+<h3>2.3 套餐折价率</h3>
+
+<table>
+  <thead>
+    <tr><th>套餐</th><th class="num">实付</th><th class="num">实得积分</th><th class="num">单价</th><th class="num">相对 ¥0.07</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>标准版（基础）</td><td class="num">¥99</td><td class="num">2,000</td><td class="num">¥0.0495</td><td class="num">7.1 折</td></tr>
+    <tr><td>高级版（基础）</td><td class="num">¥199</td><td class="num">4,000</td><td class="num">¥0.0498</td><td class="num">7.1 折</td></tr>
+    <tr><td>旗舰版（基础）</td><td class="num">¥999</td><td class="num">20,000</td><td class="num">¥0.0500</td><td class="num">7.1 折</td></tr>
+    <tr class="hl"><td>标准版（含促销赠）</td><td class="num">¥99</td><td class="num">4,000</td><td class="num">¥0.0248</td><td class="num"><strong>3.5 折</strong></td></tr>
+    <tr class="hl"><td>高级版（含促销赠）</td><td class="num">¥199</td><td class="num">9,000</td><td class="num">¥0.0221</td><td class="num"><strong>3.2 折</strong></td></tr>
+    <tr class="hl"><td>旗舰版（含促销赠）</td><td class="num">¥999</td><td class="num">50,000</td><td class="num">¥0.0200</td><td class="num"><strong>2.9 折</strong></td></tr>
+    <tr><td>加量包</td><td class="num">—</td><td class="num">按量</td><td class="num">¥0.046–0.050</td><td class="num">6.6–7.1 折</td></tr>
+    <tr><td>企业版</td><td class="num">¥198/席</td><td class="num">2,000</td><td class="num">¥0.099</td><td class="num"><span class="tag t-bad">1.4 倍（含坐席）</span></td></tr>
+  </tbody>
+</table>
+
+<p>所以「买套餐打了 7 折」这句话，<strong>按基础积分口径成立（准确说是 7.1 折）；算上促销赠送，你实际拿到的是 3 折左右</strong>，赠送到期后回到 7.1 折。而超额部分买的加量包没有任何额外优惠。</p>
+
+<p class="muted">注意别把这里的「7 折」和 §2.5 的「连续包月 7 折」混为一谈：本节比较的是<strong>积分单价 vs 官方 API 成本</strong>，§2.5 比较的是<strong>你付的月费 vs 套餐原价</strong>。两个「7 折」含义完全不同，而且会叠加影响最终杠杆。</p>
+
+<h3>2.4 每日签到：漏算的第一块加量</h3>
+
+<p>国内版客户端左下角头像里有「领取今日礼包」：<strong>每天 100 积分，连续第 7 天给 1,000，7 天一循环</strong>。这是免费积分（单价 ¥0），但需要<strong>手动领取、断签重计</strong>。下表以连续包月价（下节说明）为基准，看签到对杠杆的抬升：</p>
+
+<table>
+  <thead>
+    <tr><th>套餐</th><th class="num">连续包月</th><th class="num">月积分<br><span class="muted">套餐内，不含签到</span></th><th class="num">杠杆</th><th class="num">月积分<br><span class="muted">含签到 3,000</span></th><th class="num">杠杆</th></tr>
+  </thead>
+  <tbody>
+    <tr class="hl"><td><strong>标准版</strong></td><td class="num">¥70</td><td class="num">4,000</td><td class="num">4.06×</td><td class="num"><strong>7,000</strong></td><td class="num"><strong>7.10×</strong></td></tr>
+    <tr><td>高级版</td><td class="num">¥140</td><td class="num">9,000</td><td class="num">4.60×</td><td class="num">12,000</td><td class="num">6.09×</td></tr>
+    <tr><td>旗舰版</td><td class="num">¥700</td><td class="num">50,000</td><td class="num">5.08×</td><td class="num">53,000</td><td class="num">5.38×</td></tr>
+  </tbody>
+</table>
+
+<p>注意一个反直觉现象：<strong>不算签到时，包月价下反而是旗舰版杠杆最高（5.08×）、标准版最低（4.06×）</strong>——因为高级和旗舰的赠送比例更厚（高级赠 5,000/基础 4,000，旗舰赠 30,000/基础 20,000，标准版只赠 2,000/基础 2,000）。是那 3,000 签到积分把排序重新翻了过来：标准版 +75%、高级 +33%、旗舰 +6%。</p>
+
+<div class="box key">
+  <span class="bt">签到对越小的套餐越值钱：标准版 +75%，旗舰版只有 +6%</span>
+  <p>原因很简单：3,000 在标准版 4,000 里占 75%，在旗舰版 50,000 里只占 6%。<strong>所以「买最小档 + 每天签到」是 WorkBuddy 里杠杆最高的使用方式</strong>，而不是买大套餐。</p>
+  <p>满勤口径更高：30 天按 7 天循环约 4 轮周礼包，签到可拿 <strong>6,600/月</strong>，标准版合计 10,600 积分 ≈ <strong>10.8×</strong>（连续包月价）。但断签一天就丢掉当周 1,000，所以本报告基准取保守值 3,000。</p>
+</div>
+
+<h3>2.5 连续包月 / 连续包年折扣：第二块加量</h3>
+
+<p>套餐页还给了一个更直接的折扣结构。以标准版为例（¥99 原价）：</p>
+
+<table>
+  <thead>
+    <tr><th>付费方式</th><th class="num">标准版</th><th class="num">高级版</th><th class="num">旗舰版</th><th class="num">折扣</th><th>约束</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>按月付（1 个月）</td><td class="num">¥99</td><td class="num">¥199</td><td class="num">¥999</td><td class="num">100%</td><td>无</td></tr>
+    <tr class="hl"><td><strong>连续包月</strong></td><td class="num"><strong>¥70</strong></td><td class="num">¥140</td><td class="num">¥700</td><td class="num"><strong>7 折</strong></td><td><strong>可随时取消</strong>，等价于白拿 30%</td></tr>
+    <tr><td>单买 1 年（一次付清）</td><td class="num">¥70/月</td><td class="num">¥140/月</td><td class="num">¥700/月</td><td class="num">7 折</td><td>承诺 1 年，不可退</td></tr>
+    <tr class="hl"><td><strong>连续包年</strong></td><td class="num"><strong>¥56</strong></td><td class="num">¥112</td><td class="num">¥560</td><td class="num"><strong>5.6 折</strong></td><td>年付 ¥672 起，承诺 1 年</td></tr>
+  </tbody>
+</table>
+
+<p class="muted">高级版与旗舰版的折扣金额按页面标示的 7 折 / 5.6 折等比推算（页面只明示了标准版 ¥70 / ¥672 / ¥840）。</p>
+
+<p>把折扣与签到叠在一起，WorkBuddy 国内的最终杠杆矩阵：</p>
+
+<table>
+  <thead>
+    <tr><th>套餐</th><th class="num">原价月付</th><th class="num">连续包月（7 折）</th><th class="num">连续包年（5.6 折）</th></tr>
+  </thead>
+  <tbody>
+    <tr class="hl"><td><strong>标准版</strong></td><td class="num">5.02×</td><td class="num"><strong>7.10×</strong></td><td class="num"><strong>8.88×</strong></td></tr>
+    <tr><td>高级版</td><td class="num">4.28×</td><td class="num">6.09×</td><td class="num">7.61×</td></tr>
+    <tr><td>旗舰版</td><td class="num">3.77×</td><td class="num">5.38×</td><td class="num">6.72×</td></tr>
+  </tbody>
+</table>
+
+<div class="box key">
+  <span class="bt">标准版连续包年 8.88×，是唯一反超 OpenCode Go（8.0×）的 WorkBuddy 档位</span>
+  <p>而<strong>连续包月 7 折可以随时取消</strong>——这是整份报告里「零风险收益」最高的一条：不用承诺、不用年付，点一下就从 5.02× 跳到 7.10×。对比 OpenCode Go 的 8.0×，差距从原价的 1.6 倍缩到 12%；如果走包年 8.88×，则直接反超 11%。而你换来的是完整的桌面产品、全模型可选和腾讯生态。</p>
+</div>
+
+<div class="box warn">
+  <span class="bt">一个容易误解的点：包年不等于「一次性拿到 12 个月额度」</span>
+  <p>基础积分与赠送积分<strong>有效期都是 1 个月</strong>，签到积分按月结算。所以包年只是把月费降到 ¥56，额度仍然是每月 4,000（+签到 3,000）刷新、当月用完，不能攒、不能一次性刷 84,000 积分做长期项目。<strong>判断够不够用，始终要按月看。</strong></p>
+</div>
+
+<div class="box warn">
+  <span class="bt">国际版在同一价位上只有国内的一半额度</span>
+  <p>国际 Pro 年付 $8（¥57/月）拿 3,500 积分；国内标准版连续包年 ¥56/月拿 7,000 积分。<strong>几乎同样的钱，国内给两倍</strong>——因为国际版日赠只有 50（国内 100）、基础赠送也薄（1,000+1,000 vs 2,000+2,000）。</p>
+  <p>所以对国内用户来说，国际版不存在「海外更划算」的情况，除非你在境外结算或确实需要国际站点。之前把国际年付算成 WorkBuddy 最优档，是因为漏了国内这 100/天和连续包月折扣。</p>
+</div>
+
+<h2><span class="num">三</span>杠杆总表</h2>
+
+<p>所有平台折算到同一尺度后排序。WorkBuddy 国内档位一律按<strong>连续包月 / 连续包年 + 每日签到 3,000</strong> 的组合计算；「原价 + 签到」那一行留着，说明折扣值多少。</p>
+
+<div class="bars">
+  <div class="bar-row"><div class="bar-name">OpenDesign Go · 年付</div><div class="bar-track"><div class="bar-fill" style="width:100%"></div></div><div class="bar-val">17.1×</div></div>
+  <div class="bar-row"><div class="bar-name">OpenDesign Go · 月付</div><div class="bar-track"><div class="bar-fill" style="width:70.2%"></div></div><div class="bar-val">12.0×</div></div>
+  <div class="bar-row"><div class="bar-name">WorkBuddy 国内标准 · 包年+签到</div><div class="bar-track"><div class="bar-fill mid" style="width:51.9%"></div></div><div class="bar-val">8.88×</div></div>
+  <div class="bar-row"><div class="bar-name">OpenCode Go</div><div class="bar-track"><div class="bar-fill" style="width:46.8%"></div></div><div class="bar-val">8.0×</div></div>
+  <div class="bar-row"><div class="bar-name">OpenDesign Plus</div><div class="bar-track"><div class="bar-fill" style="width:46.8%"></div></div><div class="bar-val">8.0×</div></div>
+  <div class="bar-row"><div class="bar-name">WorkBuddy 国内高级 · 包年+签到</div><div class="bar-track"><div class="bar-fill mid" style="width:44.4%"></div></div><div class="bar-val">7.61×</div></div>
+  <div class="bar-row"><div class="bar-name">WorkBuddy 国内标准 · 包月+签到</div><div class="bar-track"><div class="bar-fill mid" style="width:41.5%"></div></div><div class="bar-val">7.10×</div></div>
+  <div class="bar-row"><div class="bar-name">WorkBuddy 国内旗舰 · 包年+签到</div><div class="bar-track"><div class="bar-fill mid" style="width:39.2%"></div></div><div class="bar-val">6.72×</div></div>
+  <div class="bar-row"><div class="bar-name">WorkBuddy 国内标准 · 原价+签到</div><div class="bar-track"><div class="bar-fill mid" style="width:29.4%"></div></div><div class="bar-val dim">5.02×</div></div>
+  <div class="bar-row"><div class="bar-name">WorkBuddy 国际 Pro · 年付+日赠</div><div class="bar-track"><div class="bar-fill mid" style="width:25.6%"></div></div><div class="bar-val">4.38×</div></div>
+  <div class="bar-row"><div class="bar-name">OpenCode Go Plus</div><div class="bar-track"><div class="bar-fill mid" style="width:23.4%"></div></div><div class="bar-val">4.0×</div></div>
+  <div class="bar-row"><div class="bar-name">WorkBuddy 国际 Pro · 月付+日赠</div><div class="bar-track"><div class="bar-fill mid" style="width:20.5%"></div></div><div class="bar-val">3.50×</div></div>
+  <div class="bar-row"><div class="bar-name">DevPass（全档）</div><div class="bar-track"><div class="bar-fill low" style="width:11.7%"></div></div><div class="bar-val">2.0×</div></div>
+  <div class="bar-row"><div class="bar-name">WorkBuddy 国际 Pro · 裸额</div><div class="bar-track"><div class="bar-fill low" style="width:11.7%"></div></div><div class="bar-val">2.00×</div></div>
+  <div class="bar-row"><div class="bar-name">DeepSeek 官方直充 / OpenCode Zen</div><div class="bar-track"><div class="bar-fill low" style="width:5.8%"></div></div><div class="bar-val">1.00×</div></div>
+  <div class="bar-row"><div class="bar-name">WorkBuddy 国际 Team 加量包</div><div class="bar-track"><div class="bar-fill neg" style="width:2.9%"></div></div><div class="bar-val">0.50×</div></div>
+  <div class="bar-row"><div class="bar-name">WorkBuddy 国际 Pro 加量包</div><div class="bar-track"><div class="bar-fill neg" style="width:1.9%"></div></div><div class="bar-val">0.33×</div></div>
+  <div class="bar-row"><div class="bar-name">WorkBuddy 国际 Team（每人）</div><div class="bar-track"><div class="bar-fill neg" style="width:1.5%"></div></div><div class="bar-val">0.25×</div></div>
+</div>
+
+<table>
+  <thead>
+    <tr><th>方案</th><th class="num">月费</th><th class="num">可用额度</th><th class="num">杠杆</th><th>关键约束</th></tr>
+  </thead>
+  <tbody>
+    <tr class="hl"><td><strong>OpenDesign Go</strong>（年付 $84）</td><td class="num">$7 / ¥50</td><td class="num">$120</td><td class="num"><strong>17.1×</strong></td><td>5h $10 + 7 日 $30 双窗口，很紧；只有便宜模型池</td></tr>
+    <tr><td>OpenDesign Go（月付）</td><td class="num">$10 / ¥71</td><td class="num">$120</td><td class="num">12.0×</td><td>同上；额度不滚存</td></tr>
+    <tr class="hl"><td><strong>WorkBuddy 国内标准（连续包年 + 签到）</strong></td><td class="num"><strong>¥56</strong> / $7.9</td><td class="num">7,000 积分 = $70<br><span class="muted">4,000 含赠 + 3,000 签到</span></td><td class="num"><strong>8.88×</strong></td><td>需年付 ¥672 承诺 1 年；积分按月过期不能攒</td></tr>
+    <tr><td>OpenCode Go</td><td class="num">$10 / ¥71</td><td class="num">$80</td><td class="num">8.0×</td><td>5h $16 / 周 $40 / 月 $80；无 Claude、GPT 官方直连</td></tr>
+    <tr><td>OpenDesign Plus</td><td class="num">$20 / ¥142</td><td class="num">$160 + $20</td><td class="num">8.0×</td><td>7 日 $40；开始给 Opus、GPT-6 Sol 等贵模型</td></tr>
+    <tr><td>WorkBuddy 国内高级（连续包年 + 签到）</td><td class="num">¥112 / $15.7</td><td class="num">12,000 积分 = $120</td><td class="num">7.61×</td><td>签到占比降到 25%，杠杆低于标准版</td></tr>
+    <tr class="hl"><td><strong>WorkBuddy 国内标准（连续包月 + 签到）</strong></td><td class="num"><strong>¥70</strong> / $9.9</td><td class="num">7,000 积分 = $70</td><td class="num"><strong>7.10×</strong></td><td><span class="tag t-best">可随时取消</span>无承诺拿到 7 折，全表最划算的风险收益比</td></tr>
+    <tr><td>WorkBuddy 国内旗舰（连续包年 + 签到）</td><td class="num">¥560 / $78.8</td><td class="num">53,000 积分 = $530</td><td class="num">6.72×</td><td>签到只占额度 6%；对你的强度严重过配</td></tr>
+    <tr><td>WorkBuddy 国内标准（原价 + 签到）</td><td class="num">¥99 / $13.9</td><td class="num">7,000 积分 = $70</td><td class="num">5.02×</td><td>对照组：不选折扣就白丢 30%</td></tr>
+    <tr><td>WorkBuddy 国际 Pro（年付+日赠）</td><td class="num">$8 / ¥57</td><td class="num">3,500 积分 = $35<br><span class="muted">2,000 + 50/天</span></td><td class="num">4.38×</td><td>与国内标准版同价，额度只有一半</td></tr>
+    <tr><td>OpenCode Go Plus</td><td class="num">$40 / ¥284</td><td class="num">$160</td><td class="num">4.0×</td><td><span class="tag t-weak">升档反而变差</span>性价比只有 Go 的一半</td></tr>
+    <tr><td>WorkBuddy 国际 Pro（月付+日赠）</td><td class="num">$10 / ¥71</td><td class="num">3,500 积分 = $35</td><td class="num">3.50×</td><td>满勤才有的上限值；日赠是国内的一半</td></tr>
+    <tr><td>Cline Pass</td><td class="num">$9.99 / ¥71</td><td class="num">宣称 2–5× API 价</td><td class="num">2–5×</td><td><span class="tag t-weak">额度从不公开</span>仅 12 个开源模型且已砍过 4 个</td></tr>
+    <tr><td>DevPass（Lite / Pro / Max）</td><td class="num">$29 / $79 / $179</td><td class="num">$58 / $158 / $358</td><td class="num">2.0×</td><td>10-15 起由 3× 降到 2×；卖点是含 Claude/GPT/Gemini</td></tr>
+    <tr><td>WorkBuddy 国际 Pro（只有月赠）</td><td class="num">$10 / ¥71</td><td class="num">2,000 积分 = $20</td><td class="num">2.00×</td><td>比国内标准版还贵</td></tr>
+    <tr><td>OpenCode Zen / DeepSeek 官方直充</td><td class="num">按量</td><td class="num">成本价</td><td class="num">1.00×</td><td>Zen 另收 4.4% + $0.30 通道费；官方闲时 0.5×</td></tr>
+    <tr><td>WorkBuddy 国际 Team 加量包</td><td class="num">$40</td><td class="num">2,000 积分 = $20</td><td class="num">0.50×</td><td><span class="tag t-bad">纯亏</span></td></tr>
+    <tr><td>WorkBuddy 国际 Pro 加量包</td><td class="num">$15</td><td class="num">500 积分 = $5</td><td class="num">0.33×</td><td><span class="tag t-bad">额度用爆后最贵的补法</span></td></tr>
+    <tr><td>WorkBuddy 国际 Team（每席）</td><td class="num">$40 / ¥284</td><td class="num">1,000 积分 = $10</td><td class="num">0.25×</td><td><span class="tag t-bad">共享池，单价最差</span></td></tr>
+  </tbody>
+</table>
+
+<h2><span class="num">四</span>按固定用量的绝对成本</h2>
+
+<h3>4.1 单买一个平台</h3>
+
+<p>杠杆高不等于总支出低——如果额度小到不够用，就得买加量包补，单价立刻崩掉。所以更该看的是：<strong>达成同一个用量目标，每月实际掏多少钱</strong>。</p>
+
+<p>你 10-20 的强度折算为月度：<strong>145.1 积分/天 × 30 = 4,350 积分 ≈ $43.5 官方 API 价</strong>，对应约 <strong>28.3 亿缓存命中 + 4,530 万缓存未命中 + 1,266 万输出</strong> token 的混合结构（按当日实测分布等比放大）。</p>
+
+<table>
+  <thead>
+    <tr><th>方案</th><th class="num">月支出</th><th class="num">可用额度</th><th class="num">覆盖度</th><th>说明</th></tr>
+  </thead>
+  <tbody>
+    <tr class="hl"><td><strong>OpenDesign Go 年付</strong></td><td class="num"><strong>¥50</strong> ($7)</td><td class="num">$120</td><td class="num">276%</td><td>绝对价格最低，但受 5h $10 窗口压制</td></tr>
+    <tr class="hl"><td><strong>WorkBuddy 国内标准 · 连续包年</strong></td><td class="num"><strong>¥56</strong></td><td class="num">7,000 积分 = $70</td><td class="num">161%</td><td>带完整产品；需年付 ¥672</td></tr>
+    <tr><td>WorkBuddy 国内标准 · 连续包月</td><td class="num">¥70</td><td class="num">7,000 积分 = $70</td><td class="num">161%</td><td>可随时取消，只比 Go 贵 ¥1</td></tr>
+    <tr><td>OpenCode Go</td><td class="num">¥71 ($10)</td><td class="num">$80</td><td class="num">184%</td><td>额度最稳、窗口最宽松</td></tr>
+    <tr><td>WorkBuddy 国内高级 · 连续包月</td><td class="num">¥140</td><td class="num">12,000 积分 = $120</td><td class="num">276%</td><td>给长期跑大项目留余量</td></tr>
+    <tr><td>OpenDesign Plus</td><td class="num">¥142 ($20)</td><td class="num">$160</td><td class="num">368%</td><td>Design 桶口径；plan models 桶另计，开始能用 Claude／GPT-6 Sol</td></tr>
+    <tr><td>DeepSeek 官方直充 · 全闲时</td><td class="num">¥154 ($21.8)</td><td class="num">按量</td><td class="num">—</td><td>需全部错峰运行，不可控</td></tr>
+    <tr><td>WorkBuddy 国内高级 · 原价月付</td><td class="num">¥199</td><td class="num">12,000 积分 = $120</td><td class="num">276%</td><td>不选折扣，多付 ¥60/月</td></tr>
+    <tr><td>DeepSeek 官方直充 · 全高峰</td><td class="num">¥309 ($43.5)</td><td class="num">按量</td><td class="num">—</td><td>成本基准线</td></tr>
+    <tr><td>DevPass Pro</td><td class="num">¥561 ($79)</td><td class="num">$158</td><td class="num">363%</td><td>贵在能切 Claude／GPT</td></tr>
+    <tr><td>WorkBuddy 国内旗舰 · 连续包月</td><td class="num">¥700</td><td class="num">53,000 积分 = $530</td><td class="num">1218%</td><td>对你的强度严重过配</td></tr>
+    <tr><td>WorkBuddy 国内旗舰 · 原价月付</td><td class="num">¥999</td><td class="num">53,000 积分 = $530</td><td class="num">1218%</td><td>同上</td></tr>
+    <tr class="hl"><td colspan="5" style="background:#fbeceb; color:#a83a35; font-weight:650">额度不足、必须加购的档位</td></tr>
+    <tr><td>WorkBuddy 国际 Pro（年付+日赠）</td><td class="num">¥57 <span class="muted">(+加量包)</span></td><td class="num">3,500 积分 = $35</td><td class="num"><span class="tag t-bad">80%</span></td><td>和国内包年同价，额度只有一半；加 2 个 $15 包 → 实际 ≈ ¥163</td></tr>
+    <tr><td>WorkBuddy 国际 Pro（只有月赠）</td><td class="num">¥71 <span class="muted">(+加量包)</span></td><td class="num">2,000 积分 = $20</td><td class="num"><span class="tag t-bad">46%</span></td><td>差一半，补包后单价 0.33× 反成最贵</td></tr>
+    <tr><td>WorkBuddy 国内标准（<em>不签到</em>）</td><td class="num">¥70/¥99</td><td class="num">4,000 积分 = $40</td><td class="num"><span class="tag t-weak">92%</span></td><td>差 350 积分/月——签到恰好补上这个缺口</td></tr>
+  </tbody>
+</table>
+
+<div class="box warn">
+  <span class="bt">这一张表比杠杆表更重要</span>
+  <p><strong>国内标准版是分水岭：</strong>不签到 4,000 积分差 8%，签上到 7,000 就有 61% 富余——差的正是那 3,000。这说明签到不是「锦上添花」，而是把标准版从「差一点」变成「够用」的决定性变量。</p>
+  <p><strong>国际版是反例：</strong>杠杆看着有 4.38×（年付+日赠），但 3,500 积分撑不住 4,350/月，一旦缺口用 $15/500 的加量包补，边际单价从 4.38× 掉到 0.33×，<strong>整体比官方直充还贵</strong>。判断套餐划算与否，「额度够不够用」的权重高于「杠杆高不高」。</p>
+</div>
+
+<h3>4.2 组合方案：体验版 + 外部平台</h3>
+
+<p>上面的表都假设「只买一家」。但体验版是免费的，它每月给 500 基础积分，加上每日签到 3,000，<strong>零成本就有 3,500 积分 = $35 官方价等值</strong>。把它当成一份「免费的基础额度」，再配一个外部平台，杠杆会跳到另一个量级：</p>
+
+<table>
+  <thead>
+    <tr><th>方案</th><th class="num">月支出</th><th class="num">WorkBuddy 额度</th><th class="num">外部额度</th><th class="num">总额度</th><th class="num">杠杆</th><th class="num">覆盖 4,350</th></tr>
+  </thead>
+  <tbody>
+    <tr class="hl"><td><strong>体验版 + OpenDesign Go 年付</strong></td><td class="num"><strong>¥50</strong></td><td class="num">$35</td><td class="num">$120</td><td class="num">$155</td><td class="num"><strong>22.1×</strong></td><td class="num">356%</td></tr>
+    <tr><td>体验版 + OpenDesign Go 月付</td><td class="num">¥71</td><td class="num">$35</td><td class="num">$120</td><td class="num">$155</td><td class="num">15.5×</td><td class="num">356%</td></tr>
+    <tr class="hl"><td><strong>体验版 + OpenCode Go</strong></td><td class="num"><strong>¥71</strong></td><td class="num">$35</td><td class="num">$80</td><td class="num">$115</td><td class="num"><strong>11.5×</strong></td><td class="num">264%</td></tr>
+    <tr><td>体验版 + 官方直充补差（全闲时）</td><td class="num">¥30</td><td class="num">$35</td><td class="num">$8.5</td><td class="num">$43.5</td><td class="num">10.3×</td><td class="num">100%</td></tr>
+    <tr><td>标准版 · 连续包年（不买外部）</td><td class="num">¥56</td><td class="num">$70</td><td class="num">—</td><td class="num">$70</td><td class="num">8.88×</td><td class="num">161%</td></tr>
+    <tr><td>标准版 · 连续包月（不买外部）</td><td class="num">¥70</td><td class="num">$70</td><td class="num">—</td><td class="num">$70</td><td class="num">7.10×</td><td class="num">161%</td></tr>
+    <tr><td>体验版单用（不买任何东西）</td><td class="num">¥0</td><td class="num">$35</td><td class="num">—</td><td class="num">$35</td><td class="num">免费</td><td class="num"><span class="tag t-weak">80%</span></td></tr>
+  </tbody>
+</table>
+
+<div class="box key">
+  <span class="bt">纯成本口径：你的判断是对的，体验版 + OpenCode Go 是 11.5×，比标准版连续包月的 7.10× 高 62%</span>
+  <p>同样掏 ¥70–71，<strong>体验版 + Go 拿到 $115 额度，标准版只拿到 $70</strong>。差额全部来自那 3,500 免费积分——它是零成本，所以每一分都算纯赚。想更极端就是体验版 + OpenDesign Go 年付（22.1×，¥50/月）。</p>
+  <p>甚至还有更省的：体验版 3,500 积分已覆盖你 4,350 需求的 80%，<strong>只补剩下的 850 积分（$8.5），全部走闲时就是 ¥30/月</strong>——但前提是能把所有活都排到 12–14 点、18 点后和周末。</p>
+</div>
+
+<h3>4.3 但体验版有一个硬缺口，必须单独说</h3>
+
+<p>官方定价页把四个版本逐项列了出来。关键在于：<strong>体验版大部分能力差距目前都被「限免」兜住了，只有一项没有。</strong></p>
+
+<table>
+  <thead>
+    <tr><th>权益</th><th>体验版</th><th>标准版</th><th>当前差距</th></tr>
+  </thead>
+  <tbody>
+    <tr class="hl"><td><strong>积分 / 月</strong></td><td>500</td><td>2,000 + 2,000 赠 = 4,000</td><td><span class="tag t-bad">真实差 3,500</span>靠签到只能补 3,000</td></tr>
+    <tr class="hl"><td><strong>CLI 访问</strong></td><td><strong>不支持</strong></td><td>支持</td><td><span class="tag t-bad">无任何限免</span>见下方辨析：可能可绕</td></tr>
+    <tr><td>代码实时补全</td><td>5,000 次/月</td><td>无限</td><td><span class="tag t-best">限免无限</span>已抹平</td></tr>
+    <tr><td>自动任务</td><td>3 个</td><td>15 个</td><td><span class="tag t-best">限免 99 个</span>已抹平</td></tr>
+    <tr><td>模型调度</td><td>Auto</td><td>全模型可选</td><td><span class="tag t-best">限免全模型</span>已抹平</td></tr>
+    <tr><td>单项目成员</td><td>3 人</td><td>5 人</td><td><span class="tag t-best">限免 5 人</span>已抹平</td></tr>
+    <tr><td>创建项目数</td><td>5 个</td><td>10 个</td><td>差 5 个，个人用通常够</td></tr>
+    <tr><td>资料库容量</td><td>5 GB</td><td>10 GB</td><td>差 5 GB</td></tr>
+    <tr><td>可托管应用 / 个人助理</td><td>10 个 / 3 个</td><td>30 个 / 5 个</td><td>个人用通常够</td></tr>
+  </tbody>
+</table>
+
+<div class="box warn">
+  <span class="bt">关于 CLI：官方表格写「不支持」，但这一条存在第二种可能性，别急着下结论</span>
+  <p><strong>官方写法是确定的：</strong>WorkBuddy 定价页的「CLI 访问支持」一栏，体验版是「—」，标准版起是「✓」。这是四个版本里唯一没有被「限免」兜住的差异。</p>
+  <p><strong>但它没说清是哪个 CLI。</strong>而 CodeBuddy 的定价页（同一套账号体系、积分共享）<em>根本没有这一行</em>。第三方资料的说法与之相反——「CLI 是产品的另一种形态，账号体系与 IDE 共用，订阅方案对 IDE 和 CLI 通用，免费版额度同样适用于 CLI」。两条信息冲突，官方文档没有给出可引用的澄清。</p>
+  <p><strong>一种合理的解读：</strong>这一栏指的是「能否通过 CLI 访问 WorkBuddy 侧的能力」，而不是「CodeBuddy Code 这个 CLI 能不能跑」。若是后者，CodeBuddy 定价页不该省略这一行。</p>
+  <p><strong>30 秒可以自证：</strong>终端执行 <code>codebuddy</code> → <code>/login</code> 登录 → 发一条极短 prompt（消耗不到 1 积分）。能出结果就是可用；若返回额度或套餐相关报错，就是被限制。<strong>实测本机 <code>codebuddy</code> CLI 已装（v2.170.0），但需要独立 <code>/login</code>，桌面端的登录态不会自动共享。</strong></p>
+</div>
+
+<div class="box note">
+  <span class="bt">但有一点绕不过去：就算 CLI 能用，它烧的是同一个积分池</span>
+  <p>官方明确「WorkBuddy 和 CodeBuddy 同一账号积分共享，无需分别订阅」，而 CLI 的模型列表里就有 <code>deepseek-v4.1-flash</code>。<strong>所以「用 CodeBuddy CLI 绕过限制」只在「CLI 权限被单独锁死」的情况下成立；如果锁的是积分，绕不过——体验版 500 积分跑 CLI，几轮就用完了。</strong></p>
+  <p>这也是为什么下一节的判断要分开看：<strong>权限</strong>可能是可绕的，<strong>额度</strong>不可绕。</p>
+</div>
+
+<div class="box warn">
+  <span class="bt">所以真正的分水岭只有一个问题：你的额度够不够</span>
+  <p><strong>只用桌面客户端、CLI 也用不上</strong> → 体验版的实际能力约等于标准版，只差额度。那 <strong>体验版 + OpenCode Go 的组合确实最优</strong>，11.5× 对 7.10×。</p>
+  <p><strong>要在终端跑 agent、接 hooks、做自动化</strong> → 先花 30 秒自证 CLI 能不能在体验版下跑。能跑，就仍走体验版 + Go；不能跑，那 ¥70 买的是「CLI 权限 + 额度不断档」两样东西，而不是单纯买积分。</p>
+</div>
+
+<div class="box note">
+  <span class="bt">还有两个隐性成本，量化不了但要算进去</span>
+  <p><strong>① 额度墙提前到达，而且补不了。</strong>体验版 3,500 积分对你 4,350/月的强度只够 24 天，月末约一周会「WorkBuddy 用不了」。更麻烦的是<strong>加量包只有付费会员（标准版及以上）能买</strong>，体验版没有补救通道——用完了只能等签到累积或等下月刷新，或者把活挪到外部平台。标准版 7,000 则始终有富余。</p>
+  <p><strong>② 双工具的心智开销。</strong>WorkBuddy 强在生态（文档、企微、资料库、桌面 agent），Go 只是模型通道。两边任务分工一旦模糊，你会反复判断「这活该在哪跑」，这个成本不进账本但真实存在。</p>
+</div>
+
+<div class="box note">
+  <span class="bt">③ 「限免」是活动，不是条款</span>
+  <p>上面标「已抹平」的四项——无限补全、99 个自动任务、全模型可选、5 人协作——都是限时免费名额，官方页面写的是「部分功能限免生效中」。一旦结束，体验版会退回 3 个自动任务 + Auto 调度（不能选全模型），而标准版的差距会立刻扩大。<strong>所以「体验版 ≈ 标准版」这个判断有时效性。</strong></p>
+</div>
+
+<h2><span class="num">五</span>各平台定性对比</h2>
+
+<h3>5.1 能精确换算的（美元额度制）</h3>
+
+<table>
+  <thead>
+    <tr><th style="width:18%">平台</th><th style="width:22%">定价结构</th><th>要点</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>OpenCode Go</strong></td>
+      <td>$10 / $40 月</td>
+      <td>额度<strong>分模型</strong>：DeepSeek V4.1 Flash 给 Go $80 / Plus $160（近期由 $60 上调），贵模型如 Kimi K3、Qwen3.8 Max 只有 1.5×。三层窗口 5h $16 / 周 $40 / 月全额。Zen 直充是成本价零加价，另有 <em>DeepSeek V4.1 Flash Free</em> 限量免费通道（200K 上下文，仅 OpenCode 应用内可用）。</td>
+    </tr>
+    <tr>
+      <td><strong>OpenDesign</strong></td>
+      <td>$0 / $10 / $20 / $100 / $200</td>
+      <td>设计工作台，但 API key 可直接用于 Codex / Claude Code / OpenCode，本质是便宜模型通道。额度拆两个桶：Design Plan（便宜模型，含 DeepSeek V4.1 Flash）+ plan models（Claude Opus、GPT-6 Sol 等）。Flash 在 Design Plan 内有「model-specific usage equivalent」翻倍待遇。</td>
+    </tr>
+    <tr>
+      <td><strong>Cline Pass</strong></td>
+      <td>$9.99 月</td>
+      <td>宣称 2–5× API 价，额度从不公开。仅 12 个开源模型（含 V4.1 Flash），且已下线过 4 个模型——说明名单可随时收缩，不适合作为长期主力。</td>
+    </tr>
+    <tr>
+      <td><strong>DevPass</strong></td>
+      <td>$29 / $79 / $179</td>
+      <td>自 10-15 起由 3× 降到 2×，性价比已明显退化。仍有 8–10% 日限额与 10–15% 高级模型周限额。卖点在于含 Claude / GPT / Gemini 官方直连。</td>
+    </tr>
+    <tr>
+      <td><strong>DeepSeek 官方</strong></td>
+      <td>按量</td>
+      <td>高峰 ¥2 / ¥0.04 / ¥8 每 1M token，闲时全部减半。是所有杠杆计算的基准（1.0×）。</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>5.2 积分／自家模型制（不可直接换算）</h3>
+
+<p>这一档卖的是 GLM、Kimi、Qwen、混元等自研模型，credit→token 比例不公开，只能看「同价位谁给得多」。整体趋势是<strong>国内 Coding Plan 红利的尾声</strong>：</p>
+
+<table>
+  <thead>
+    <tr><th style="width:26%">平台</th><th style="width:30%">价格档</th><th>动态</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>智谱 GLM Coding Plan</td><td class="num">¥118 / 538 / 1078</td><td><span class="tag t-bad">8 月涨价</span>由 ¥49/149/469 上调 130–260%</td></tr>
+    <tr><td>腾讯云 Token Plan</td><td class="num">¥28 / 78 / 238 / 468</td><td>560 / 1,560 / 4,760 / 9,360 积分；Coding Plan 已下线</td></tr>
+    <tr><td>阿里 Qoder CN</td><td class="num">¥59 / 169 / 559</td><td>Credits 制</td></tr>
+    <tr><td>字节 Trae</td><td class="num">¥49 / 99 / 239 / 699</td><td>500–40,000 积分</td></tr>
+    <tr><td>Kimi 会员</td><td class="num">¥49 / 99 / 199 / 699</td><td>Kimi Code 1× / 4× / 20× / 60×</td></tr>
+    <tr><td>阿里云 Token Plan（国际站）</td><td class="num">$6 / 10 / 18 / 68</td><td>模型名单含 DeepSeek V4.1，但比例未公开</td></tr>
+    <tr><td>WorkBuddy 国内</td><td class="num">¥0（体验版）／¥70 / 140 / 700（连续包月）<br><span class="muted">¥56 / 112 / 560（连续包年）</span></td><td>体验版 ≈ ¥0 得 $35；付费档 5.4–8.9×（含签到）</td></tr>
+    <tr><td>WorkBuddy 国际</td><td class="num">$10 / $40 席</td><td>2.00–4.38×</td></tr>
+  </tbody>
+</table>
+
+<h2><span class="num">六</span>结论与建议</h2>
+
+<div class="verdicts">
+  <div class="verdict">
+    <div class="vh"><span>①</span>如果 90% 用量的模型就是 deepseek-v4.1-flash</div>
+    <p>三家已经打成平手：<strong>OpenDesign Go 年付（17.1×，¥50/月）</strong>绝对价格最低，但 5h $10 + 7 日 $30 双窗口很紧，连续大重构容易卡住；<strong>OpenCode Go（8.0×，¥71/月）</strong>额度 $80、窗口最宽松，但只有模型池没有产品；<strong>WorkBuddy 国内标准版连续包月（7.10×，¥70/月）</strong>价格和 Go 只差 ¥1，额度 7,000 积分对你 4,350/月的强度富余 61%，还带完整桌面产品。</p>
+  </div>
+  <div class="verdict">
+    <div class="vh"><span>②</span>如果要 WorkBuddy 的产品体验 —— 先回答一个问题：用不用 CLI</div>
+    <p><strong>CLI 被锁、或不能接受月中断档</strong> → 买标准版，选连续包月，每天签到。三项加起来 7.10×（¥70/月）；愿意年付 ¥672 就到 8.88×（¥56/月）。高级版（¥140）属于多花 ¥70 买余量，旗舰版 53,000 积分严重过配。<strong>国际版不要买</strong>：和国内包年同价（¥57 vs ¥56）却只给一半额度，补包单价 0.33× 是全表最差。</p>
+    <p><strong>CLI 能跑，且能接受两套工具</strong> → 别急着付这 ¥70，看 ⑤：体验版 + OpenCode Go 是 11.5×，同样的钱多拿 64% 额度。</p>
+  </div>
+  <div class="verdict">
+    <div class="vh"><span>③</span>如果要多模型（Claude / GPT）</div>
+    <p>WorkBuddy 全模型可选，是这一项上的优势（体验版在限免期也放开全模型）；DevPass 虽有官方直连但杠杆只有 2.0×，且刚从 3× 降档，属于正在缩水的通道。两者都谈不上便宜，这一档本质是在为「模型可得性」付溢价。</p>
+  </div>
+  <div class="verdict">
+    <div class="vh"><span>④</span>不换平台就能拿的三笔钱</div>
+    <p>按效果排序：<strong>① 选连续包月（7 折，可随时取消）</strong>——零成本，立刻 +40% 杠杆；<strong>② 每天签到</strong>——标准版 +75%，但需手动领、断签丢当周 1,000，建议设个定时提醒；<strong>③ 批量任务错峰</strong>——闲时半价，同一份工作量的积分消耗直接减半（今天 145.1 积分的活放闲时只要 75.7 积分）。三条都不需要换平台，也不用改变用法。</p>
+  </div>
+  <div class="verdict">
+    <div class="vh"><span>⑤</span>如果愿意维护两套工具：体验版 + OpenCode Go 才是数字最优</div>
+    <p>体验版 500 基础 + 签到 3,000 = 3,500 积分（$35）零成本，配 Go 的 $80，<strong>¥71 换 $115 额度 = 11.5×</strong>，比标准版连续包月的 7.10× 高 62%。<strong>唯一的变量是 CLI：</strong>官方权益表标注体验版不支持，但 CodeBuddy 定价页没有这条限制、第三方资料也说「免费版额度同样适用于 CLI」——两者冲突，最稳妥的方式是自己 <code>/login</code> 后跑一条 prompt 验证。不过即便 CLI 可绕，<strong>积分池是同一个</strong>，500 积分撑不了几轮，所以真正会逼你付费的仍然是额度而不是权限。</p>
+  </div>
+</div>
+
+<h2><span class="num">七</span>方法与风险提示</h2>
+
+<h3>7.1 数据来源</h3>
+<ul>
+  <li><strong>实测侧</strong>：<code>~/.workbuddy/projects/**/*.jsonl</code> 中的 <code>providerData.rawUsage</code>（credit / 缓存命中 / 未命中 / 输出 token），按 messageId 去重，927 条无重复计数。</li>
+  <li><strong>定价侧</strong>：codebuddy.cn 官方定价页（四版本对照：体验版 500 积分/Auto 调度/无 CLI；标准 2,000+2,000、高级 4,000+5,000、旗舰 20,000+30,000；连续包月 ¥70/140/700，连续包年 ¥672/1,344/6,720）、套餐页、官方积分获取页（每日签到 100 / 第 7 天 1,000）、codebuddy.ai、opencode.ai/go、open-design.ai、cline、DevPass 官方定价页，以及智谱／腾讯云／阿里／字节／Kimi 官方商城页，价格时点 2026-10。</li>
+  <li><strong>汇率</strong>：$1 = ¥7.1，统一折算。</li>
+</ul>
+
+<h3>7.2 四个必须说明的不确定性</h3>
+
+<div class="box note">
+  <span class="bt">① 积分→token 的折算系数是反推的，不是官方公布的</span>
+  <p>28.17 / 0.5045 / 115.06 这三个系数来自对真实计量记录的线性回归，无法看到平台内部价卡。它的可信度来自两点交叉验证：比例与 DeepSeek 官方高峰价卡高度重合（误差 &lt;2%）、拟合中位相对误差 6%。但若平台更换折算价卡，这套数字会整体平移。</p>
+</div>
+
+<div class="box note">
+  <span class="bt">② 额度数字只能当「上限」读，不能当「保证」读</span>
+  <p>OpenDesign 的 $120/$160 是 model-specific usage equivalent 口径；OpenCode 的 $80 是文档标示值；Cline 完全不公开。这类「用批量折扣补贴开源模型」的套餐，历史上已多次调整：Cline 砍过 4 个模型，DevPass 10-15 从 3× 降到 2×，智谱 8 月涨价 130–260%。<strong>结论只对 2026-10 这个时点成立。</strong></p>
+</div>
+
+<div class="box note">
+  <span class="bt">③ 年付要谨慎，但连续包月没有这个风险</span>
+  <p>OpenDesign 年付 17.1× 是全书最高值，WorkBuddy 连续包年 8.88× 也很高，但两者的前提都是「额度、折扣、模型名单在一年内不变」——这个前提在 2026 年已被反复证伪（DevPass 从 3× 降到 2×、智谱涨价 130–260%、Cline 砍模型）。</p>
+  <p><strong>建议先用「连续包月 + 签到」这个组合</strong>：7.10×，随时可取消，跑一个月确认额度够用再决定要不要转包年。这样既拿到 7 折，又不承担承诺风险。</p>
+</div>
+
+<div class="box note">
+  <span class="bt">④ 促销赠送与签到政策是「限时活动」，不是合同条款</span>
+  <p>标准版的 2,000 赠送积分、每日签到 100/第 7 天 1,000，都属活动性质（早期签到曾只有 5–20 分/天）。若赠送取消，标准版额度从 7,000 回落到<b>基础 2,000 + 签到 3,000 = 5,000</b>，杠杆降到约 5.1×——仍高于官方直充，但会低于 OpenCode Go。本报告的 8.9× 是「当前活动全部命中」的乐观值，<b>5.1× 是它的下限</b>。</p>
+</div>
+
+<footer>
+  <p>本报告基于 2026-10-20 的实测计量数据与各平台公开定价整理。用量基准取自单一工作日（145.1 积分），属于高强度使用样本；低强度场景下「额度是否够用」的结论会整体宽松，但杠杆排序不变。积分按 ¥0.07/个 折算官方 API 成本，月度额度按 30 天计。</p>
+  <p>原始数据：<code>~/.workbuddy/projects/**/*.jsonl</code> · 分析记录：<code>.workbuddy/memory/2026-10-20.md</code></p>
+</footer>
+
+</div>
+</body>
+</html>

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import Database from "better-sqlite3";
-import type { NormalizedEventV2 } from "@agent-metrics/event-schema";
+import { semanticFingerprint, toNormalizedEventV2, type NormalizedEventV2 } from "@agent-metrics/event-schema";
 import { runDomainMigrations, type SqliteDatabaseLike } from "./domain-migrations.js";
 import { projectNormalizedEvents } from "./domain-projection.js";
 
@@ -29,6 +29,40 @@ function event<T extends NormalizedEventV2["type"]>(
 }
 
 describe("canonical V2 projection", () => {
+  it("backfills WorkBuddy timing consistently without double counting, downgrading or changing usage", () => {
+    const db = createDb(); runDomainMigrations(db);
+    const original = toNormalizedEventV2({
+      event_id: "workbuddy:session-1:usage:message-1", session_id: "session-1",
+      timestamp: "2026-10-20T02:37:38.535Z", source_vendor: "workbuddy", source_adapter: "workbuddy-jsonl",
+      workspace_path: ".", type: "token.usage.recorded", message_id: "message-1", model: "deepseek-v4.1-flash",
+      input_tokens: 1000, output_tokens: 50, cache_creation_input_tokens: 0, cache_read_input_tokens: 800,
+      server_tool_use: "{}", usage_source: "workbuddy-usage", provider_id: "unknown",
+      first_token_latency_ms: null, decode_duration_ms: null
+    });
+    const enriched = { ...original, first_token_latency_ms: 500, decode_duration_ms: 1000 } as NormalizedEventV2;
+    projectNormalizedEvents(db, [original]);
+    expect(projectNormalizedEvents(db, [enriched])[0].conflict).toBe(false);
+    projectNormalizedEvents(db, [enriched, original]); // stale event-log replay cannot erase timing
+    expect(db.prepare("SELECT count(*) AS count, sum(output_tokens) AS tokens FROM usage_events").get())
+      .toEqual({ count: 1, tokens: 50 });
+    expect(db.prepare("SELECT first_token_latency_ms, decode_duration_ms, semantic_fingerprint FROM usage_events").get())
+      .toEqual({ first_token_latency_ms: 500, decode_duration_ms: 1000, semantic_fingerprint: semanticFingerprint(enriched) });
+    const stored = db.prepare<{ payload_json: string; semantic_fingerprint: string }>(
+      "SELECT payload_json, semantic_fingerprint FROM normalized_events"
+    ).get();
+    expect(JSON.parse(stored.payload_json)).toEqual(enriched);
+    expect(stored.semantic_fingerprint).toBe(semanticFingerprint(enriched));
+    expect(db.prepare("SELECT semantic_fingerprint FROM event_observations").get())
+      .toEqual({ semantic_fingerprint: semanticFingerprint(enriched) });
+    expect(db.prepare("SELECT count(*) AS count FROM event_diagnostics").get()).toEqual({ count: 0 });
+    for (const change of [{ output_tokens: 51 }, { model: "other" }, { decode_duration_ms: 2000 }]) {
+      expect(projectNormalizedEvents(db, [{ ...enriched, ...change } as NormalizedEventV2])[0].conflict).toBe(true);
+    }
+    expect(db.prepare("SELECT output_tokens, decode_duration_ms FROM usage_events").get())
+      .toEqual({ output_tokens: 50, decode_duration_ms: 1000 });
+    db.close();
+  });
+
   it("projects observations, lifecycle, and usage idempotently", () => {
     const db = createDb();
     runDomainMigrations(db);

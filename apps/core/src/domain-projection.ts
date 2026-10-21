@@ -121,6 +121,14 @@ function projectOne(
     .all(parsed.event_id);
   const conflict = existing.some((row) => row.semantic_fingerprint !== fingerprint);
 
+  if (conflict && parsed.type === "token.usage.recorded" && parsed.source_vendor === "workbuddy") {
+    const reconciled = reconcileWorkbuddyTiming(db, parsed);
+    if (reconciled !== null) {
+      return { eventId: parsed.event_id, semanticFingerprint: reconciled,
+        projected: false, idempotent: true, conflict: false };
+    }
+  }
+
   ensureSourceRegistry(db, parsed, observedAt);
   db.prepare(
     `INSERT OR IGNORE INTO normalized_events (
@@ -191,6 +199,46 @@ function projectOne(
     idempotent: existing.some((row) => row.semantic_fingerprint === fingerprint),
     conflict: false
   };
+}
+
+/** Timing evidence may arrive after the transcript. Enrich only an otherwise
+ * identical WorkBuddy event; never change usage or overwrite known timing. */
+function reconcileWorkbuddyTiming(
+  db: SqliteDatabaseLike,
+  incoming: Extract<NormalizedEventV2, { type: "token.usage.recorded" }>
+): string | null {
+  if (incoming.source_adapter !== "workbuddy-jsonl" || incoming.usage_source !== "workbuddy-usage") return null;
+  const row = db.prepare<{ payload_json: string; semantic_fingerprint: string }>(
+    "SELECT payload_json, semantic_fingerprint FROM normalized_events WHERE event_id = ?"
+  ).get(incoming.event_id);
+  if (row === undefined) return null;
+  const stored = NormalizedEventV2Schema.parse(JSON.parse(row.payload_json));
+  if (stored.type !== "token.usage.recorded") return null;
+  const withoutTiming = (value: typeof incoming) => ({
+    ...value, first_token_latency_ms: null, decode_duration_ms: null
+  });
+  if (semanticFingerprint(withoutTiming(stored)) !== semanticFingerprint(withoutTiming(incoming))) return null;
+  const keys = ["first_token_latency_ms", "decode_duration_ms"] as const;
+  for (const key of keys) {
+    const previous = stored[key] ?? null;
+    const next = incoming[key] ?? null;
+    if (previous !== null && next !== null && previous !== next) return null;
+  }
+  const merged = { ...stored,
+    first_token_latency_ms: stored.first_token_latency_ms ?? incoming.first_token_latency_ms ?? null,
+    decode_duration_ms: stored.decode_duration_ms ?? incoming.decode_duration_ms ?? null
+  };
+  const fingerprint = semanticFingerprint(merged);
+  if (fingerprint !== row.semantic_fingerprint) {
+    db.prepare(`UPDATE normalized_events SET payload_json = ?, semantic_fingerprint = ? WHERE event_id = ?`)
+      .run(JSON.stringify(merged), fingerprint, incoming.event_id);
+    db.prepare(`UPDATE usage_events SET first_token_latency_ms = ?, decode_duration_ms = ?,
+      semantic_fingerprint = ? WHERE event_id = ?`)
+      .run(merged.first_token_latency_ms, merged.decode_duration_ms, fingerprint, incoming.event_id);
+    db.prepare("UPDATE event_observations SET semantic_fingerprint = ? WHERE event_id = ?")
+      .run(fingerprint, incoming.event_id);
+  }
+  return fingerprint;
 }
 
 function ensureSourceRegistry(

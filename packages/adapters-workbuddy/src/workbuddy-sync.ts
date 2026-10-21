@@ -14,6 +14,9 @@ import {
   normalizeWorkbuddyRecord,
   normalizeWorkbuddySessionHeader
 } from "./workbuddy.js";
+import { createWorkbuddyTimingReader, type WorkbuddyTimingIndex } from "./workbuddy-timing.js";
+
+const readTimings = createWorkbuddyTimingReader();
 
 const SESSION_LOG_NAME = /^(.+)\.jsonl$/u;
 
@@ -22,6 +25,7 @@ type FileCursor = {
 };
 
 type WorkbuddyCursorState = {
+  timingSignature?: string;
   sessions: Record<string, true>;
   files: Record<string, FileCursor>;
 };
@@ -57,7 +61,9 @@ export function resolveWorkbuddySourcePaths(input: { homePath?: string } = {}): 
 
 /**
  * WorkBuddy keeps one append-only transcript per agent session at
- * `~/.workbuddy/projects/<workspace-slug>/<session-id>.jsonl`.
+ * `~/.workbuddy/projects/<workspace-slug>/<session-id>.jsonl`. Agent-team
+ * member transcripts live under
+ * `~/.workbuddy/projects/<workspace-slug>/<session-id>/subagents/agent-<uuid>.jsonl`.
  *
  * The files are re-read as a whole whenever they grow and de-duplicated through
  * the event ledger, because records are not guaranteed to carry a monotonic
@@ -80,6 +86,8 @@ export async function syncWorkbuddySessions(input: {
   }
 
   const cursorState = await loadCursorState(input.cursorPath);
+  const timings = await readTimings(paths.homePath);
+  const timingChanged = cursorState.timingSignature !== timings.signature;
   const seenEventIds = await loadEventLedgerWithFallback({
     ledgerPath: input.ledgerPath,
     eventLogPath: input.eventLogPath,
@@ -101,7 +109,7 @@ export async function syncWorkbuddySessions(input: {
       continue;
     }
 
-    if (fileContents.length === previous.size && previous.size > 0) {
+    if (fileContents.length === previous.size && previous.size > 0 && !timingChanged) {
       continue;
     }
 
@@ -110,14 +118,16 @@ export async function syncWorkbuddySessions(input: {
       sessionIdHint: log.sessionIdHint,
       eventLogPath: input.eventLogPath,
       seenEventIds,
-      cursorState
+      cursorState,
+      timings: timings.index
     });
 
     cursorState.files[log.logPath] = { size: fileContents.length };
     cursorChanged = true;
   }
 
-  if (cursorChanged) {
+  if (cursorChanged || timingChanged) {
+    cursorState.timingSignature = timings.signature;
     await writeJsonFileAtomic(input.cursorPath, cursorState);
   }
 
@@ -136,17 +146,42 @@ async function discoverSessionLogs(projectsRoot: string): Promise<DiscoveredSess
     const workspaceDir = join(projectsRoot, workspace.name);
     const children = await readdir(workspaceDir, { withFileTypes: true });
     for (const child of children) {
-      if (!child.isFile()) {
+      if (child.isFile()) {
+        const match = SESSION_LOG_NAME.exec(child.name);
+        if (match === null) {
+          continue;
+        }
+        logs.push({ logPath: join(workspaceDir, child.name), sessionIdHint: match[1] });
         continue;
       }
-      const match = SESSION_LOG_NAME.exec(child.name);
-      if (match === null) {
+      if (!child.isDirectory()) {
         continue;
       }
-      logs.push({ logPath: join(workspaceDir, child.name), sessionIdHint: match[1] });
+      logs.push(...(await listJsonlLogs(join(workspaceDir, child.name, "subagents"))));
     }
   }
   return logs.sort((left, right) => left.logPath.localeCompare(right.logPath));
+}
+
+async function listJsonlLogs(dir: string): Promise<DiscoveredSessionLog[]> {
+  const logs: DiscoveredSessionLog[] = [];
+  let children;
+  try {
+    children = await readdir(dir, { withFileTypes: true });
+  } catch {
+    return logs;
+  }
+  for (const child of children) {
+    if (!child.isFile()) {
+      continue;
+    }
+    const match = SESSION_LOG_NAME.exec(child.name);
+    if (match === null) {
+      continue;
+    }
+    logs.push({ logPath: join(dir, child.name), sessionIdHint: match[1] });
+  }
+  return logs;
 }
 
 async function syncSessionLog(input: {
@@ -155,6 +190,7 @@ async function syncSessionLog(input: {
   eventLogPath: string;
   seenEventIds: Set<string>;
   cursorState: WorkbuddyCursorState;
+  timings: WorkbuddyTimingIndex;
 }): Promise<void> {
   const records = parseRecords(input.text);
   if (records.length === 0) {
@@ -199,7 +235,7 @@ async function syncSessionLog(input: {
     input.cursorState.sessions[sessionId] = true;
   }
 
-  const parseState = createWorkbuddyParseState();
+  const parseState = createWorkbuddyParseState(input.timings);
   for (const record of records) {
     const events = normalizeWorkbuddyRecord(record, sessionId, resolvedWorkspace, parseState);
     for (const event of events) {
@@ -231,14 +267,19 @@ function parseRecords(text: string): Record<string, unknown>[] {
 async function appendIfNew(
   eventLogPath: string,
   seenEventIds: Set<string>,
-  event: { event_id: string; source_record_id?: string | null }
+  event: { event_id: string; source_record_id?: string | null; type?: string; decode_duration_ms?: number | null }
 ): Promise<void> {
   const ledgerKey = event.source_record_id ?? event.event_id;
-  if (seenEventIds.has(ledgerKey)) {
+  // A timing-only replay keeps the same event identity and token accounting.
+  // The canonical projector accepts only a null -> known timing enrichment.
+  const timingKey = event.type === "token.usage.recorded" && (event.decode_duration_ms ?? 0) > 0
+    ? `${ledgerKey}:timing-v1` : null;
+  if (seenEventIds.has(ledgerKey) && (timingKey === null || seenEventIds.has(timingKey))) {
     return;
   }
   await appendJsonLine(eventLogPath, event);
   seenEventIds.add(ledgerKey);
+  if (timingKey !== null) seenEventIds.add(timingKey);
 }
 
 async function loadCursorState(cursorPath: string): Promise<WorkbuddyCursorState> {
@@ -248,6 +289,7 @@ async function loadCursorState(cursorPath: string): Promise<WorkbuddyCursorState
       return { sessions: {}, files: {} };
     }
     return {
+      timingSignature: typeof parsed.timingSignature === "string" ? parsed.timingSignature : undefined,
       sessions: isRecord(parsed.sessions)
         ? Object.fromEntries(
             Object.entries(parsed.sessions).filter((entry): entry is [string, true] => entry[1] === true)

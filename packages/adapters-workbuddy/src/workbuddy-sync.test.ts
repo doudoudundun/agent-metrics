@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -86,18 +86,21 @@ function buildRecords(): string[] {
 
 describe("syncWorkbuddySessions", () => {
   let isolated: IsolatedSources | null = null;
+  const roots: string[] = [];
 
   beforeEach(async () => {
     isolated = await isolateSources();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     isolated?.cleanup();
     isolated = null;
+    await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
   });
 
   it("syncs WorkBuddy transcripts into workbuddy events", async () => {
     const root = await mkdtemp(join(tmpdir(), "agent-metrics-workbuddy-"));
+    roots.push(root);
     const homePath = join(root, "workbuddy-home");
     const projectDir = join(homePath, "projects", "d-projects-dev-demo");
     await mkdir(projectDir, { recursive: true });
@@ -170,6 +173,85 @@ describe("syncWorkbuddySessions", () => {
     expect(appended).toHaveLength(7);
     const lastEvent = JSON.parse(appended[6]) as { type: string };
     expect(lastEvent.type).toBe("tool.called");
+  });
+
+  it("discovers agent-team sub-agent transcripts under <session>/subagents", async () => {
+    const root = await mkdtemp(join(tmpdir(), "agent-metrics-workbuddy-team-"));
+    roots.push(root);
+    const homePath = join(root, "workbuddy-home");
+    const projectDir = join(homePath, "projects", "d-projects-dev-demo");
+    const sessionDir = join(projectDir, SESSION_ID);
+    const subagentsDir = join(sessionDir, "subagents");
+    await mkdir(subagentsDir, { recursive: true });
+    await writeFile(join(projectDir, `${SESSION_ID}.jsonl`), buildRecords().join("\n") + "\n");
+
+    const subSessionId = "01a15c54-b8f0-7965-a912-12b2c52a7baf";
+    const subRecords = buildRecords().map((text) => JSON.parse(text));
+    for (const record of subRecords) {
+      record.sessionId = subSessionId;
+    }
+    subRecords[4].providerData.traceId = "trace-sub";
+    await writeFile(
+      join(subagentsDir, "agent-2ff04857-5c89-487f-9512-5c22cff87ccf.jsonl"),
+      subRecords.map((record) => JSON.stringify(record)).join("\n") + "\n"
+    );
+    await mkdir(join(subagentsDir, "agent-2ff04857-5c89-487f-9512-5c22cff87ccf"), { recursive: true });
+
+    const input = {
+      homePath,
+      eventLogPath: join(root, "events.jsonl"),
+      cursorPath: join(root, "cursor.json"),
+      ledgerPath: join(root, "ledger.json")
+    };
+    await syncWorkbuddySessions(input);
+
+    const events = (await readFile(input.eventLogPath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { type: string; session_id: string; input_tokens?: number });
+    const subUsage = events.filter(
+      (event) => event.type === "token.usage.recorded" && event.session_id === subSessionId
+    );
+    expect(subUsage).toHaveLength(1);
+    expect(subUsage[0]).toEqual(expect.objectContaining({ input_tokens: 1000 }));
+    expect(events.filter((event) => event.type === "session.started").map((event) => event.session_id)).toEqual([
+      SESSION_ID,
+      subSessionId
+    ]);
+
+    // Re-running against unchanged files must not duplicate events.
+    await syncWorkbuddySessions(input);
+    expect((await readFile(input.eventLogPath, "utf8")).trim().split("\n")).toHaveLength(events.length);
+  });
+
+  it("enriches existing usage when model logs arrive after the transcript, exactly once", async () => {
+    const root = await mkdtemp(join(tmpdir(), "agent-metrics-workbuddy-late-")); roots.push(root);
+    const homePath = join(root, "home");
+    const project = join(homePath, "projects", "demo"); await mkdir(project, { recursive: true });
+    const records = buildRecords().map((text) => JSON.parse(text));
+    records[4].providerData.traceId = "trace-1";
+    await writeFile(join(project, `${SESSION_ID}.jsonl`), records.map((r) => JSON.stringify(r)).join("\n") + "\n");
+    const input = { homePath, eventLogPath: join(root, "events.jsonl"),
+      cursorPath: join(root, "cursor.json"), ledgerPath: join(root, "ledger.json") };
+    const events = async () => (await readFile(input.eventLogPath, "utf8")).trim().split("\n").map((l) => JSON.parse(l));
+    await syncWorkbuddySessions(input);
+    const original = (await events()).find((e) => e.type === "token.usage.recorded");
+    expect(original.decode_duration_ms).toBeNull();
+    const dir = join(homePath, "logs", "2026-10-20"); await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, "workspace.log"),
+      '[2026/10/20 10:38:11.326] [Info] [pid=1] [ModelProvider]  [SseMonitor#req] qua.end: ' + JSON.stringify({
+        conversation_id: SESSION_ID, conversation_request_id: "req_1", message_id: "asst_msg_1",
+        trace_id: "trace-1", model: "deepseek-v4.1-flash", request_type: "chat", report_source: "agent-cli",
+        finish_flag: "done", http_begin_status_code: "200", http_end_status_code: "200",
+        model_error: "", model_error_code: "", total_cost_ms: "1500", ttft_ms: "500",
+        prompt_tokens: "1000", completion_tokens: "50", total_tokens: "1050"
+      }) + "\n");
+    await syncWorkbuddySessions(input);
+    const enriched = await events();
+    expect(enriched).toHaveLength(7);
+    expect(enriched[6]).toMatchObject({ event_id: original.event_id, first_token_latency_ms: 500, decode_duration_ms: 1000 });
+    await syncWorkbuddySessions(input);
+    expect(await events()).toHaveLength(7);
   });
 
   it("exposes the default and env-overridden source paths", () => {

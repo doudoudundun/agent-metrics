@@ -1,6 +1,7 @@
 import { normalizeNativeId, normalizeWorkspacePath, toNormalizedEventV2 } from "@agent-metrics/event-schema";
 import type { AnyEvent, NormalizedEventV2, SourceAdapter, SourceVendor } from "@agent-metrics/event-schema";
 import { diffTextStats } from "@agent-metrics/shared-utils";
+import { matchWorkbuddyTiming, type WorkbuddyTimingIndex } from "./workbuddy-timing.js";
 
 const WORKBUDDY_SOURCE_VENDOR: SourceVendor = "workbuddy";
 const WORKBUDDY_SOURCE_ADAPTER: SourceAdapter = "workbuddy-jsonl";
@@ -20,6 +21,7 @@ export type WorkbuddyToolStart = {
 };
 
 export type WorkbuddyParseState = {
+  timings?: WorkbuddyTimingIndex;
   lastModel: string | null;
   toolStarts: Map<string, WorkbuddyToolStart>;
   /**
@@ -31,8 +33,9 @@ export type WorkbuddyParseState = {
   usageMessageIds: Set<string>;
 };
 
-export function createWorkbuddyParseState(): WorkbuddyParseState {
+export function createWorkbuddyParseState(timings?: WorkbuddyTimingIndex): WorkbuddyParseState {
   return {
+    timings,
     lastModel: null,
     toolStarts: new Map(),
     usageMessageIds: new Set()
@@ -296,6 +299,7 @@ function normalizeUsage(
     state.lastModel = model;
   }
   state.usageMessageIds.add(messageId);
+  const timing = matchWorkbuddyTiming(state.timings, sessionId, providerData!, usage);
 
   return [
     {
@@ -317,8 +321,8 @@ function normalizeUsage(
       provider_id: "unknown",
       provider_base_url: null,
       provider_host: null,
-      first_token_latency_ms: null,
-      decode_duration_ms: null
+      first_token_latency_ms: timing?.firstTokenLatencyMs ?? null,
+      decode_duration_ms: timing?.decodeDurationMs ?? null
     }
   ];
 }
