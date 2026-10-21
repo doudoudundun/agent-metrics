@@ -1,0 +1,35 @@
+packages/adapters-workbuddy/src/index.ts
+  s_bd7d0023c3b55d::t_dfb4e4c73dbe11 3
+apps/core/src/domain-projection.ts
+  s_bd7d0023c3b55d::t_29df0b595fd614 124-131,204-241
+packages/adapters-workbuddy/src/workbuddy-sync.test.ts
+  s_bd7d0023c3b55d::t_53072c294fa9a7 1,89,95,98,103,178-254
+packages/adapters-workbuddy/src/workbuddy-timing.test.ts
+  s_bd7d0023c3b55d::t_29df0b595fd614 1-91
+apps/core/src/domain-projection.test.ts
+  s_bd7d0023c3b55d::t_53072c294fa9a7 3,32-65
+packages/adapters-workbuddy/src/workbuddy-sync.ts
+  s_bd7d0023c3b55d::t_dfb4e4c73dbe11 17-19,28,64-66,89-90,112,121-122,129-130,149-154,157,160,166-186,193,238,270,273-277,282,292
+packages/adapters-workbuddy/src/workbuddy-timing.ts
+  s_bd7d0023c3b55d::t_dfb4e4c73dbe11 1,3-48,51-128,135-188
+  s_bd7d0023c3b55d::t_02b09faf84d08a 129-130
+  s_bd7d0023c3b55d::t_30a39ee3aff85f 2,131-134
+packages/adapters-workbuddy/src/workbuddy.ts
+  s_bd7d0023c3b55d::t_dfb4e4c73dbe11 4,24,36,38,302,324-325
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.8",
+  "base_commit_sha": "d0a1bb7b8a41e91c5fdbbeb4427a233e95745604",
+  "prompts": {},
+  "sessions": {
+    "s_bd7d0023c3b55d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a157da-d49e-7a60-8fa7-7ab9cb55389c",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Anonymous <anonymous@users.noreply.github.com>"
+    }
+  }
+}
