@@ -41,8 +41,20 @@ export const ServerToolUseSchema = z
     }
   });
 
+/**
+ * Speed / service tier a request was actually served at. Providers charge a
+ * multiple of their list rate for the accelerated tiers, so the tier is part of
+ * the cost basis, not just a latency attribute:
+ *   - OpenAI: `fast` (formerly `priority`) at 2x, `ultrafast` at 6x, `flex` at ~0.5x
+ *   - Anthropic: fast mode at 2x standard rates
+ * `standard` is the default and is stored as NULL so that rows recorded before
+ * the tier existed keep their original meaning (standard pricing).
+ */
+export const ServiceTierSchema = z.enum(["standard", "flex", "fast", "priority", "ultrafast"]);
+
 export type InputTokenSemantics = z.infer<typeof InputTokenSemanticsSchema>;
 export type UsageMeasurement = z.infer<typeof UsageMeasurementSchema>;
+export type ServiceTier = z.infer<typeof ServiceTierSchema>;
 
 /**
  * Exhaustive usage semantics registry shared by adapters, legacy replay, and

@@ -31,6 +31,7 @@ type SourceBreakdownRow = {
   totalTokens: number;
   toolCalls: number;
   costUsd: number | null;
+  cacheHitRate: number;
 };
 
 type ProviderBreakdownRow = {
@@ -183,6 +184,9 @@ export function selectSourceBreakdown(
   tokenUsageRows?: readonly TokenUsageOverviewRow[]
 ): SourceBreakdownRow[] {
   const breakdown = new Map<SourceVendor, SourceBreakdownRow>();
+  // Cache hit rate needs cacheable input, which the breakdown row itself does
+  // not carry; keep the two counters alongside instead of widening the row.
+  const cacheTotals = new Map<SourceVendor, { cacheableInput: number; cacheReadTokens: number }>();
 
   const ensureRow = (rowSourceVendor: SourceVendor): SourceBreakdownRow => {
     const existing = breakdown.get(rowSourceVendor);
@@ -198,7 +202,8 @@ export function selectSourceBreakdown(
       toolCalls: 0,
       // Null until a priced model row contributes, so sources whose models all
       // lack list prices render "—" instead of a misleading $0.00.
-      costUsd: null
+      costUsd: null,
+      cacheHitRate: 0
     };
     breakdown.set(rowSourceVendor, created);
     return created;
@@ -254,6 +259,15 @@ export function selectSourceBreakdown(
       row.output_tokens +
       row.cache_read_input_tokens +
       row.cache_creation_input_tokens;
+    const cacheableInput =
+      row.input_tokens + row.cache_read_input_tokens + row.cache_creation_input_tokens;
+    const sourceCacheTotals = cacheTotals.get(row.source_vendor) ?? {
+      cacheableInput: 0,
+      cacheReadTokens: 0
+    };
+    sourceCacheTotals.cacheableInput += cacheableInput;
+    sourceCacheTotals.cacheReadTokens += row.cache_read_input_tokens;
+    cacheTotals.set(row.source_vendor, sourceCacheTotals);
     // input_tokens already carries the displayed (gross-adjusted) input, which
     // is what the price table expects since cache reads are priced separately.
     const costUsd = estimateCostUsd({
@@ -261,14 +275,26 @@ export function selectSourceBreakdown(
       inputTokens: row.input_tokens,
       outputTokens: row.output_tokens,
       cacheReadTokens: row.cache_read_input_tokens,
-      cacheCreationTokens: row.cache_creation_input_tokens
+      cacheCreationTokens: row.cache_creation_input_tokens,
+      serviceTier: row.service_tier
     });
     if (costUsd !== null) {
       target.costUsd = (target.costUsd ?? 0) + costUsd;
     }
   }
 
-  return [...breakdown.values()].sort((left, right) => left.sourceVendor.localeCompare(right.sourceVendor));
+  return [...breakdown.values()]
+    .map((row) => {
+      const totals = cacheTotals.get(row.sourceVendor);
+      return {
+        ...row,
+        cacheHitRate:
+          totals !== undefined && totals.cacheableInput > 0
+            ? totals.cacheReadTokens / totals.cacheableInput
+            : 0
+      };
+    })
+    .sort((left, right) => left.sourceVendor.localeCompare(right.sourceVendor));
 }
 
 export function selectProviderBreakdown(

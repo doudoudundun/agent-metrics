@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -82,6 +82,14 @@ function buildRecords(): string[] {
       }
     }
   ].map((record) => JSON.stringify(record));
+}
+
+function cloneRecords(sessionId: string): string[] {
+  return buildRecords().map((text) => {
+    const record = JSON.parse(text) as { sessionId?: string };
+    record.sessionId = sessionId;
+    return JSON.stringify(record);
+  });
 }
 
 describe("syncWorkbuddySessions", () => {
@@ -190,6 +198,11 @@ describe("syncWorkbuddySessions", () => {
     for (const record of subRecords) {
       record.sessionId = subSessionId;
     }
+    // A real sub-agent runs its own model steps, so its provider message ids
+    // differ from the parent session even when the transcript shape matches.
+    subRecords[2].providerData.messageId = "asst_msg_sub_1";
+    subRecords[4].id = "asst_msg_sub_1";
+    subRecords[4].providerData.messageId = "asst_msg_sub_1";
     subRecords[4].providerData.traceId = "trace-sub";
     await writeFile(
       join(subagentsDir, "agent-2ff04857-5c89-487f-9512-5c22cff87ccf.jsonl"),
@@ -252,6 +265,55 @@ describe("syncWorkbuddySessions", () => {
     expect(enriched[6]).toMatchObject({ event_id: original.event_id, first_token_latency_ms: 500, decode_duration_ms: 1000 });
     await syncWorkbuddySessions(input);
     expect(await events()).toHaveLength(7);
+  });
+
+  it("counts usage once when WorkBuddy Switch clones a transcript under a new session id", async () => {
+    const root = await mkdtemp(join(tmpdir(), "agent-metrics-workbuddy-switch-"));
+    roots.push(root);
+    const homePath = join(root, "workbuddy-home");
+    const projectDir = join(homePath, "projects", "d-projects-dev-demo");
+    await mkdir(projectDir, { recursive: true });
+    const clonedSessionId = "ced3c012-ec7b-45e8-a68d-85f7103015a3";
+    const sourceLog = join(projectDir, `${SESSION_ID}.jsonl`);
+    const clonedLog = join(projectDir, `${clonedSessionId}.jsonl`);
+    await writeFile(sourceLog, buildRecords().join("\n") + "\n");
+    await writeFile(clonedLog, cloneRecords(clonedSessionId).join("\n") + "\n");
+
+    const input = {
+      homePath,
+      eventLogPath: join(root, "events.jsonl"),
+      cursorPath: join(root, "cursor.json"),
+      ledgerPath: join(root, "ledger.json")
+    };
+    const readEvents = async () =>
+      (await readFile(input.eventLogPath, "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as { type: string; session_id: string });
+    await syncWorkbuddySessions(input);
+
+    // The cloned copy contributes no second usage row and no second session.
+    expect((await readEvents()).filter((event) => event.type === "token.usage.recorded")).toHaveLength(1);
+    expect(
+      (await readEvents()).filter((event) => event.type === "session.started").map((event) => event.session_id)
+    ).toEqual([SESSION_ID]);
+
+    // Incremental sync writes the same new message into both copies; it must
+    // still be counted once.
+    const extra = JSON.parse(buildRecords()[4]) as Record<string, unknown> & {
+      providerData: Record<string, unknown>;
+    };
+    extra.id = "asst_msg_2";
+    extra.timestamp = 1_792_463_950_000;
+    extra.providerData.messageId = "asst_msg_2";
+    const extraLine = JSON.stringify(extra) + "\n";
+    await appendFile(sourceLog, extraLine);
+    await appendFile(clonedLog, extraLine);
+    await syncWorkbuddySessions(input);
+
+    const usageEvents = (await readEvents()).filter((event) => event.type === "token.usage.recorded");
+    expect(usageEvents).toHaveLength(2);
+    expect(usageEvents.every((event) => event.session_id === SESSION_ID)).toBe(true);
   });
 
   it("exposes the default and env-overridden source paths", () => {

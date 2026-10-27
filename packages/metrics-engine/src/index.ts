@@ -320,5 +320,11 @@ export function buildOverviewMetrics(input: {
   };
 }
 
-export { estimateCostUsd, MODEL_PRICING_USD } from "./pricing.js";
+export {
+  estimateCostUsd,
+  MODEL_PRICING_USD,
+  normalizeServiceTier,
+  SERVICE_TIER_MULTIPLIERS,
+  serviceTierMultiplier
+} from "./pricing.js";
 export type { ModelPricing } from "./pricing.js";

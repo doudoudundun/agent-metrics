@@ -9,6 +9,7 @@ import {
   persistEventLedger
 } from "@agent-metrics/shared-utils";
 import { normalizeWorkspacePath } from "@agent-metrics/event-schema";
+import type { NormalizedEventV2 } from "@agent-metrics/event-schema";
 import {
   createWorkbuddyParseState,
   normalizeWorkbuddyRecord,
@@ -224,6 +225,23 @@ async function syncSessionLog(input: {
   }
 
   const resolvedWorkspace = workspacePath ?? ".";
+  const parseState = createWorkbuddyParseState(input.timings);
+  const pending: NormalizedEventV2[] = [];
+  for (const record of records) {
+    for (const event of normalizeWorkbuddyRecord(record, sessionId, resolvedWorkspace, parseState)) {
+      if (!isIngested(input.seenEventIds, event)) {
+        pending.push(event);
+      }
+    }
+  }
+
+  // A transcript cloned by WorkBuddy Switch contributes no new event once its
+  // records were counted under the original session. Leaving it without a
+  // session header keeps the cloned copy out of the session list.
+  if (pending.length === 0) {
+    return;
+  }
+
   if (input.cursorState.sessions[sessionId] !== true) {
     for (const event of normalizeWorkbuddySessionHeader({
       id: sessionId,
@@ -235,12 +253,8 @@ async function syncSessionLog(input: {
     input.cursorState.sessions[sessionId] = true;
   }
 
-  const parseState = createWorkbuddyParseState(input.timings);
-  for (const record of records) {
-    const events = normalizeWorkbuddyRecord(record, sessionId, resolvedWorkspace, parseState);
-    for (const event of events) {
-      await appendIfNew(input.eventLogPath, input.seenEventIds, event);
-    }
+  for (const event of pending) {
+    await appendIfNew(input.eventLogPath, input.seenEventIds, event);
   }
 }
 
@@ -264,21 +278,32 @@ function parseRecords(text: string): Record<string, unknown>[] {
   return records;
 }
 
-async function appendIfNew(
-  eventLogPath: string,
-  seenEventIds: Set<string>,
-  event: { event_id: string; source_record_id?: string | null; type?: string; decode_duration_ms?: number | null }
-): Promise<void> {
-  const ledgerKey = event.source_record_id ?? event.event_id;
+function ledgerKeys(event: NormalizedEventV2): { key: string; timingKey: string | null } {
+  const key = event.source_record_id ?? event.event_id;
   // A timing-only replay keeps the same event identity and token accounting.
   // The canonical projector accepts only a null -> known timing enrichment.
   const timingKey = event.type === "token.usage.recorded" && (event.decode_duration_ms ?? 0) > 0
-    ? `${ledgerKey}:timing-v1` : null;
-  if (seenEventIds.has(ledgerKey) && (timingKey === null || seenEventIds.has(timingKey))) {
+    ? `${key}:timing-v1`
+    : null;
+  return { key, timingKey };
+}
+
+function isIngested(seenEventIds: Set<string>, event: NormalizedEventV2): boolean {
+  const { key, timingKey } = ledgerKeys(event);
+  return seenEventIds.has(key) && (timingKey === null || seenEventIds.has(timingKey));
+}
+
+async function appendIfNew(
+  eventLogPath: string,
+  seenEventIds: Set<string>,
+  event: NormalizedEventV2
+): Promise<void> {
+  if (isIngested(seenEventIds, event)) {
     return;
   }
+  const { key, timingKey } = ledgerKeys(event);
   await appendJsonLine(eventLogPath, event);
-  seenEventIds.add(ledgerKey);
+  seenEventIds.add(key);
   if (timingKey !== null) seenEventIds.add(timingKey);
 }
 

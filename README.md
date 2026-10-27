@@ -46,6 +46,8 @@ For a cold archive, split it into replayable per-day chunks:
 - `Updated` shows the backend `updatedAt` value formatted as a full local date-time.
 - The token trend chart auto-selects hour, day, week, or month buckets by window span.
 - Model usage rows show estimated cost (from the built-in model pricing table), output speed, and time-to-first-token where the source records timing.
+- Cost estimates include the speed/service tier the provider actually served: Codex `service_tier` `fast`/`priority` bills at 2x and `ultrafast` at 6x (`flex` ~0.5x), Claude Code fast mode (`usage.speed = "fast"`) bills at 2x. Tiers are captured per usage row in `usage_events.service_tier`; NULL means standard pricing. Models that ship an accelerated card as their own id (Kimi `-highspeed`, MiMo `-ultraspeed`, MiniMax `-highspeed`, Cursor `-fast`) already carry the multiplier in their price row and never set a tier.
+- An accelerated tier is reported as its own model row (`model` + `serviceTier` + `serviceTierMultiplier`, e.g. `gpt-6.1-sol` and `gpt-6.1-sol` fast at 2x), so its tokens, cost and timing never blend into the standard-priced line. `standard` folds into the tier-less row; the panel badges it as e.g. `fast 2x`.
 - The official key usage panel shows provider quota percentages and window reset times collected from Codex rollout rate limits.
 
 ## Commands

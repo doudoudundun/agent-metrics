@@ -4,6 +4,7 @@ import { ToolCallIdSchema } from "./tool-lifecycle.js";
 import {
   InputTokenSemanticsSchema,
   ServerToolUseSchema,
+  ServiceTierSchema,
   UsageMeasurementSchema
 } from "./usage.js";
 
@@ -141,6 +142,8 @@ export const TokenUsageRecordedEventSchema = BaseEventSchema.extend({
   cache_read_input_tokens: NonNegativeInt,
   server_tool_use: z.string().default("{}"),
   usage_source: UsageSourceSchema,
+  /** Accelerated speed tier actually served; absent means standard pricing. */
+  service_tier: ServiceTierSchema.nullable().optional(),
   first_token_latency_ms: NonNegativeInt.nullable().optional(),
   decode_duration_ms: NonNegativeInt.nullable().optional()
 }).merge(ProviderMetadataSchema);
@@ -288,6 +291,11 @@ const TokenUsageRecordedEventV2BaseSchema = z
     cache_read_input_tokens: NonNegativeInt,
     server_tool_use: ServerToolUseSchema,
     usage_source: UsageSourceSchema,
+    /**
+     * Accelerated speed tier actually served by the provider (`fast`, `priority`,
+     * `ultrafast`, `flex`). Absent/NULL is standard pricing.
+     */
+    service_tier: ServiceTierSchema.nullable().optional(),
     first_token_latency_ms: NonNegativeInt.nullable().optional(),
     decode_duration_ms: NonNegativeInt.nullable().optional(),
     provider_id: NonEmptyString,

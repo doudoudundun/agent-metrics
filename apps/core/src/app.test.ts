@@ -1298,7 +1298,8 @@ describe("core api", () => {
           turnCount: 0,
           totalTokens: 0,
           toolCalls: 2,
-          costUsd: null
+          costUsd: null,
+          cacheHitRate: 0
         }
       ],
       providerBreakdown: [],

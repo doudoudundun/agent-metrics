@@ -152,6 +152,7 @@ describe("overview / tools / trend / widget", () => {
           costUsd: 0.42,
           avgOutputTokensPerSecond: 38.5,
           avgFirstTokenLatencyMs: 820,
+          cacheHitRate: 0.6,
           ...tokenComponents
         }
       ],
@@ -162,7 +163,8 @@ describe("overview / tools / trend / widget", () => {
           turnCount: 2,
           totalTokens: 100,
           toolCalls: 3,
-          costUsd: 1.5
+          costUsd: 1.5,
+          cacheHitRate: 0.25
         }
       ],
       providerBreakdown: [

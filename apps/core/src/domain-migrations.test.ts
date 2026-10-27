@@ -169,7 +169,8 @@ describe("runDomainMigrations", () => {
       { version: 4, name: "004-optimize-aggregate-queries", applied_at: "2026-07-17T12:00:00.000Z" },
       { version: 5, name: "005-cover-tool-aggregate-queries", applied_at: "2026-07-17T12:00:00.000Z" },
       { version: 6, name: "006-add-usage-timing-columns", applied_at: "2026-07-17T12:00:00.000Z" },
-      { version: 7, name: "007-backfill-session-started-at", applied_at: "2026-07-17T12:00:00.000Z" }
+      { version: 7, name: "007-backfill-session-started-at", applied_at: "2026-07-17T12:00:00.000Z" },
+      { version: 8, name: "008-add-usage-service-tier", applied_at: "2026-07-17T12:00:00.000Z" }
     ]);
 
     db.close();
@@ -284,6 +285,32 @@ describe("runDomainMigrations", () => {
     expect(
       db.prepare("SELECT version, name FROM schema_migrations WHERE name = ?").get("006-add-usage-timing-columns")
     ).toEqual({ version: 6, name: "006-add-usage-timing-columns" });
+
+    db.close();
+  });
+
+  it("adds the usage service tier column when upgrading a pre-008 database", async () => {
+    const db = new Database(":memory:");
+    const runDomainMigrations = await loadRunner();
+
+    runDomainMigrations(db, new Date("2026-07-17T12:00:00.000Z"));
+    // Simulate a database projected before migration 008: usage rows recorded
+    // before the speed tier existed have no column at all.
+    db.exec(`
+      ALTER TABLE usage_events DROP COLUMN service_tier;
+      DELETE FROM schema_migrations WHERE name = '008-add-usage-service-tier';
+    `);
+
+    runDomainMigrations(db, new Date("2026-07-18T12:00:00.000Z"));
+
+    const columns = db
+      .prepare<{ name: string }>("SELECT name FROM pragma_table_info('usage_events')")
+      .all()
+      .map((row) => row.name);
+    expect(columns).toContain("service_tier");
+    expect(
+      db.prepare("SELECT version, name FROM schema_migrations WHERE name = ?").get("008-add-usage-service-tier")
+    ).toEqual({ version: 8, name: "008-add-usage-service-tier" });
 
     db.close();
   });

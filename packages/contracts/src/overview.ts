@@ -12,12 +12,29 @@ import {
  * Spec section 13.1.
  */
 
+/**
+ * One row per (source vendor, model, service tier). Accelerated speed tiers get
+ * their own row instead of being folded into the standard-priced one: the model
+ * is the same, but the provider bills it at a multiple, so token counts and cost
+ * stay separately attributable. `serviceTier` is null/absent for standard
+ * traffic, and `serviceTierMultiplier` is the billing factor applied on top of
+ * the model's list rate (1 for standard).
+ */
 export const TokensByModelRowSchema = TokenComponentsSchema.extend({
   model: z.string().min(1),
   sourceVendor: SourceVendorSchema,
+  serviceTier: z.string().min(1).nullable().optional(),
+  serviceTierMultiplier: z.number().positive().optional(),
   costUsd: z.number().nonnegative().nullable(),
   avgOutputTokensPerSecond: z.number().nonnegative().nullable(),
-  avgFirstTokenLatencyMs: z.number().nonnegative().nullable()
+  avgFirstTokenLatencyMs: z.number().nonnegative().nullable(),
+  /**
+   * Share of cacheable input served from the provider prompt cache:
+   * cacheRead / (input + cacheRead + cacheCreation). 0 when the row has no
+   * cacheable input at all, so the dashboard can tell "no caching" apart from
+   * "no traffic".
+   */
+  cacheHitRate: FiniteRate
 });
 
 export const SourceBreakdownRowSchema = z.object({
@@ -26,7 +43,9 @@ export const SourceBreakdownRowSchema = z.object({
   turnCount: NonNegativeInt,
   totalTokens: NonNegativeInt,
   toolCalls: NonNegativeInt,
-  costUsd: z.number().nonnegative().nullable()
+  costUsd: z.number().nonnegative().nullable(),
+  /** Same definition as TokensByModelRow.cacheHitRate, aggregated per agent. */
+  cacheHitRate: FiniteRate
 });
 
 export const ProviderBreakdownRowSchema = z.object({

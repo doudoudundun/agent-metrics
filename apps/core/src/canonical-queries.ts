@@ -14,6 +14,7 @@ type UsageRow = {
   cacheReadTokens: number;
   cacheCreationTokens: number;
   usageSource: string | null;
+  serviceTier: string | null;
   occurredAt: string;
 };
 
@@ -153,6 +154,7 @@ export function selectWidgetSnapshot(
          cache_read_input_tokens AS cacheReadTokens,
          cache_creation_input_tokens AS cacheCreationTokens,
          usage_source AS usageSource,
+         service_tier AS serviceTier,
          occurred_at AS occurredAt
        FROM usage_events
        WHERE occurred_at >= ? AND occurred_at < ?
@@ -180,7 +182,8 @@ export function selectWidgetSnapshot(
       inputTokens: safeCount(row.displayedInputTokens),
       outputTokens: safeCount(row.outputTokens),
       cacheReadTokens: safeCount(row.cacheReadTokens),
-      cacheCreationTokens: safeCount(row.cacheCreationTokens)
+      cacheCreationTokens: safeCount(row.cacheCreationTokens),
+      serviceTier: row.serviceTier
     });
     if (cost === null) {
       return total;

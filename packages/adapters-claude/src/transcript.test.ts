@@ -82,11 +82,62 @@ describe("extractClaudeTranscriptObservations", () => {
         cacheCreationInputTokens: 0,
         cacheReadInputTokens: 16,
         serverToolUse: "{\"web_search_requests\":0}",
+        serviceTier: null,
         providerId: null,
         providerBaseUrl: null,
         providerHost: null
       }
     ]);
+  });
+
+  it("records the reported speed tier so fast-mode usage is billed at its multiplier", () => {
+    const fast = extractClaudeTranscriptObservations({
+      type: "assistant",
+      sessionId: "ses_fast",
+      cwd: "D:/projects/dev/agent-metrics",
+      timestamp: "2026-10-22T10:00:10.000Z",
+      message: {
+        id: "msg_fast",
+        role: "assistant",
+        model: "claude-opus-5-5",
+        stop_reason: "end_turn",
+        content: [{ type: "text", text: "done" }],
+        usage: {
+          input_tokens: 10,
+          output_tokens: 4,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 0,
+          speed: "fast"
+        }
+      }
+    });
+    const standard = extractClaudeTranscriptObservations({
+      type: "assistant",
+      sessionId: "ses_std",
+      cwd: "D:/projects/dev/agent-metrics",
+      timestamp: "2026-10-22T10:00:10.000Z",
+      message: {
+        id: "msg_std",
+        role: "assistant",
+        model: "claude-opus-5-5",
+        stop_reason: "end_turn",
+        content: [{ type: "text", text: "done" }],
+        usage: {
+          input_tokens: 10,
+          output_tokens: 4,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 0,
+          speed: "standard"
+        }
+      }
+    });
+
+    const fastUsage = fast.find((observation) => observation.kind === "token_usage_recorded");
+    const standardUsage = standard.find((observation) => observation.kind === "token_usage_recorded");
+
+    expect(fastUsage).toMatchObject({ serviceTier: "fast" });
+    // "standard" is the default tier: stored as null so the plain card applies.
+    expect(standardUsage).toMatchObject({ serviceTier: null });
   });
 
   it("does not emit assistant.responded for intermediate tool_use assistant rows", () => {
@@ -124,6 +175,7 @@ describe("extractClaudeTranscriptObservations", () => {
         cacheCreationInputTokens: 0,
         cacheReadInputTokens: 16,
         serverToolUse: "{\"web_search_requests\":0}",
+        serviceTier: null,
         providerId: null,
         providerBaseUrl: null,
         providerHost: null
@@ -431,6 +483,7 @@ describe("extractClaudeTranscriptObservations", () => {
       cacheCreationInputTokens: 0,
       cacheReadInputTokens: 1,
       serverToolUse: "{}",
+      serviceTier: null,
       providerId: null,
       providerBaseUrl: null,
       providerHost: null
@@ -454,6 +507,29 @@ describe("extractClaudeTranscriptObservations", () => {
       first_token_latency_ms: null,
       decode_duration_ms: null
     });
+  });
+
+  it("passes the fast speed tier through to the normalized usage event", () => {
+    const event = normalizeClaudeTranscriptObservation({
+      kind: "token_usage_recorded",
+      sessionId: "ses_fast",
+      workspacePath: "D:/projects/dev/agent-metrics",
+      timestamp: "2026-10-22T10:00:10.000Z",
+      messageId: "msg_fast",
+      model: "claude-opus-5-5",
+      inputTokens: 12,
+      outputTokens: 5,
+      cacheCreationInputTokens: 0,
+      cacheReadInputTokens: 1,
+      serverToolUse: "{}",
+      serviceTier: "fast",
+      providerId: null,
+      providerBaseUrl: null,
+      providerHost: null
+    });
+
+    expect(event).toMatchObject({ type: "token.usage.recorded", service_tier: "fast" });
+    expect(NormalizedEventV2Schema.safeParse(event).success).toBe(true);
   });
 
   it("preserves the transcript tool use identity in normalized tool events", () => {

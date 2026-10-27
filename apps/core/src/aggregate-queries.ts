@@ -1,5 +1,10 @@
 import type { SourceVendor, UsageMeasurement } from "@agent-metrics/event-schema";
-import { estimateCostUsd, isAdditiveUsage } from "@agent-metrics/metrics-engine";
+import {
+  estimateCostUsd,
+  isAdditiveUsage,
+  normalizeServiceTier,
+  serviceTierMultiplier
+} from "@agent-metrics/metrics-engine";
 import type { ToolExecutionCounts } from "@agent-metrics/metrics-engine";
 import type { ResolvedTimeScope } from "./time-scope.js";
 import type { MetricsDatabase, SourceVendorFilter } from "./core-types.js";
@@ -50,6 +55,11 @@ export type TokenUsageOverviewRow = {
   source_vendor: SourceVendor;
   usage_measurement: UsageMeasurement;
   usage_source: string;
+  /**
+   * Accelerated speed tier served for this row (fast/priority/ultrafast/flex),
+   * NULL when standard. Billed as a multiplier on the model's list rate.
+   */
+  service_tier: string | null;
   created_at: string;
   provider_id: string | null;
   provider_host: string | null;
@@ -60,6 +70,13 @@ export type TokenUsageOverviewRow = {
 type TokensByModelRow = {
   model: string;
   sourceVendor: SourceVendor;
+  /**
+   * Served speed tier, null for standard traffic. Accelerated tiers are their
+   * own row even for the same model, so a `fast` request never hides inside the
+   * standard-priced totals.
+   */
+  serviceTier: string | null;
+  serviceTierMultiplier: number;
   totalTokens: number;
   inputTokens: number;
   outputTokens: number;
@@ -68,16 +85,21 @@ type TokensByModelRow = {
   costUsd: number | null;
   avgOutputTokensPerSecond: number | null;
   avgFirstTokenLatencyMs: number | null;
+  cacheHitRate: number;
 };
 
 type ModelUsageAccumulator = {
   model: string;
   sourceVendor: SourceVendor;
+  serviceTier: string | null;
+  serviceTierMultiplier: number;
   inputTokens: number;
   outputTokens: number;
   cacheReadTokens: number;
   cacheCreationTokens: number;
   totalTokens: number;
+  costUsd: number;
+  pricedRows: number;
   decodeMs: number;
   decodedOutputTokens: number;
   ttftSumMs: number;
@@ -182,6 +204,7 @@ export function selectTokenUsageRows(
         source_vendor,
         usage_measurement,
         usage_source,
+        service_tier,
         occurred_at AS created_at,
         provider_id,
         provider_host,
@@ -212,15 +235,23 @@ export function selectTokensByModel(
     }
 
     const model = row.model ?? "unknown";
-    const groupKey = `${row.source_vendor}\0${model}`;
+    const serviceTier = normalizeServiceTier(row.service_tier);
+    // The tier is part of the group key: fast-mode traffic is the same model
+    // billed at 2x, so it gets its own row (its own tokens, cost and timing)
+    // rather than blending into the standard-priced line.
+    const groupKey = `${row.source_vendor}\0${model}\0${serviceTier ?? ""}`;
     const current = grouped.get(groupKey) ?? {
       model,
       sourceVendor: row.source_vendor,
+      serviceTier,
+      serviceTierMultiplier: serviceTierMultiplier(serviceTier),
       inputTokens: 0,
       outputTokens: 0,
       cacheReadTokens: 0,
       cacheCreationTokens: 0,
       totalTokens: 0,
+      costUsd: 0,
+      pricedRows: 0,
       decodeMs: 0,
       decodedOutputTokens: 0,
       ttftSumMs: 0,
@@ -236,6 +267,23 @@ export function selectTokensByModel(
       row.output_tokens +
       row.cache_read_input_tokens +
       row.cache_creation_input_tokens;
+    // Cost is summed per row rather than derived from the group totals: one
+    // model can be served at several speed tiers, and each tier carries its own
+    // multiplier (fast = 2x, ultrafast = 6x, ...). Rows whose model has no list
+    // price contribute nothing but are tracked so an entirely unpriced model
+    // still renders "—" instead of a misleading $0.00.
+    const rowCostUsd = estimateCostUsd({
+      model: row.model,
+      inputTokens: row.input_tokens,
+      outputTokens: row.output_tokens,
+      cacheReadTokens: row.cache_read_input_tokens,
+      cacheCreationTokens: row.cache_creation_input_tokens,
+      serviceTier: row.service_tier
+    });
+    if (rowCostUsd !== null) {
+      current.costUsd += rowCostUsd;
+      current.pricedRows += 1;
+    }
     // Output tokens per second is a duration-weighted aggregate (total output /
     // total decode time), not an average of per-request rates. Rows without a
     // positive decode duration or without TTFT stay out of that statistic.
@@ -251,29 +299,34 @@ export function selectTokensByModel(
   }
 
   return [...grouped.values()]
-    .map((current) => ({
-      model: current.model,
-      sourceVendor: current.sourceVendor,
-      totalTokens: current.totalTokens,
-      inputTokens: current.inputTokens,
-      outputTokens: current.outputTokens,
-      cacheReadTokens: current.cacheReadTokens,
-      cacheCreationTokens: current.cacheCreationTokens,
-      costUsd: estimateCostUsd({
-        model: current.model === "unknown" ? null : current.model,
+    .map((current) => {
+      // Cache hit rate is measured against cacheable input only: output tokens
+      // are never cacheable, so including them would understate every model.
+      const cacheableInput =
+        current.inputTokens + current.cacheReadTokens + current.cacheCreationTokens;
+
+      return {
+        model: current.model,
+        sourceVendor: current.sourceVendor,
+        serviceTier: current.serviceTier,
+        serviceTierMultiplier: current.serviceTierMultiplier,
+        totalTokens: current.totalTokens,
         inputTokens: current.inputTokens,
         outputTokens: current.outputTokens,
         cacheReadTokens: current.cacheReadTokens,
-        cacheCreationTokens: current.cacheCreationTokens
-      }),
-      avgOutputTokensPerSecond:
-        current.decodeMs > 0 ? (current.decodedOutputTokens * 1000) / current.decodeMs : null,
-      avgFirstTokenLatencyMs: current.ttftCount > 0 ? current.ttftSumMs / current.ttftCount : null
-    }))
+        cacheCreationTokens: current.cacheCreationTokens,
+        costUsd: current.pricedRows > 0 ? current.costUsd : null,
+        avgOutputTokensPerSecond:
+          current.decodeMs > 0 ? (current.decodedOutputTokens * 1000) / current.decodeMs : null,
+        avgFirstTokenLatencyMs: current.ttftCount > 0 ? current.ttftSumMs / current.ttftCount : null,
+        cacheHitRate: cacheableInput > 0 ? current.cacheReadTokens / cacheableInput : 0
+      };
+    })
     .sort(
       (left, right) =>
         right.totalTokens - left.totalTokens ||
         left.model.localeCompare(right.model) ||
+        (left.serviceTier ?? "").localeCompare(right.serviceTier ?? "") ||
         left.sourceVendor.localeCompare(right.sourceVendor)
     );
 }

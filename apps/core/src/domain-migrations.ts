@@ -42,7 +42,9 @@ const USAGE_TIMING_VERSION = 6;
 const USAGE_TIMING_NAME = "006-add-usage-timing-columns";
 const SESSION_START_BACKFILL_VERSION = 7;
 const SESSION_START_BACKFILL_NAME = "007-backfill-session-started-at";
-const LATEST_VERSION = SESSION_START_BACKFILL_VERSION;
+const USAGE_SERVICE_TIER_VERSION = 8;
+const USAGE_SERVICE_TIER_NAME = "008-add-usage-service-tier";
+const LATEST_VERSION = USAGE_SERVICE_TIER_VERSION;
 
 const LEGACY_TABLES = [
   "sessions",
@@ -151,6 +153,18 @@ export function runDomainMigrations(db: SqliteDatabaseLike, now: MigrationNow = 
            )`
       ).run();
       insertMigration(db, SESSION_START_BACKFILL_VERSION, SESSION_START_BACKFILL_NAME, appliedAt);
+    })();
+  }
+  if (!hasMigration(db, USAGE_SERVICE_TIER_NAME)) {
+    db.transaction(() => {
+      // Fresh databases already carry the column from createCanonicalSchema; only
+      // upgrade existing tables. Historical rows stay NULL (standard pricing)
+      // because the tier was never captured at ingest time.
+      const columns = columnNames(db, "usage_events");
+      if (!columns.has("service_tier")) {
+        db.exec("ALTER TABLE usage_events ADD COLUMN service_tier TEXT");
+      }
+      insertMigration(db, USAGE_SERVICE_TIER_VERSION, USAGE_SERVICE_TIER_NAME, appliedAt);
     })();
   }
 }

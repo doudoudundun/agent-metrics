@@ -216,6 +216,9 @@ function toV2Candidate(
       cache_read_input_tokens: event.cache_read_input_tokens,
       server_tool_use: event.server_tool_use,
       usage_source: event.usage_source,
+      // Speed tier is part of the cost basis; drop it when the producer did not
+      // observe one (standard pricing) so historical rows stay untouched.
+      ...(event.service_tier ? { service_tier: event.service_tier } : {}),
       first_token_latency_ms: event.first_token_latency_ms ?? null,
       decode_duration_ms: event.decode_duration_ms ?? null,
       provider_id: event.provider_id ?? "unknown",

@@ -866,6 +866,62 @@ describe("extractCodexEventsFromRollout", () => {
     }
   });
 
+  it("tags usage with the persisted service tier and resets it when the tier changes", () => {
+    const sessionId = "019e5dc9-b10c-7371-8edd-066e8db7e50d";
+    const settings = (tier: string, timestamp: string) =>
+      JSON.stringify({
+        timestamp,
+        type: "event_msg",
+        payload: {
+          type: "thread_settings_applied",
+          thread_id: sessionId,
+          thread_settings: { model: "gpt-6.1-sol", service_tier: tier }
+        }
+      });
+    const usage = (totalTokens: number, timestamp: string) =>
+      JSON.stringify({
+        timestamp,
+        type: "event_msg",
+        payload: {
+          type: "token_count",
+          info: {
+            last_token_usage: {
+              input_tokens: 1000,
+              cached_input_tokens: 0,
+              output_tokens: 100,
+              total_tokens: totalTokens
+            }
+          }
+        }
+      });
+
+    const events = extractCodexEventsFromRollout({
+      filePath: `C:/Users/test/.codex/sessions/2026/10/22/rollout-2026-10-22T10-00-00-${sessionId}.jsonl`,
+      sessionModels: { [sessionId]: "gpt-6.1-sol" },
+      contents: [
+        JSON.stringify({
+          timestamp: "2026-10-22T10:00:00.000Z",
+          type: "session_meta",
+          payload: { id: sessionId, timestamp: "2026-10-22T10:00:00.000Z", cwd: "D:/projects/dev" }
+        }),
+        settings("priority", "2026-10-22T10:00:01.000Z"),
+        usage(1100, "2026-10-22T10:00:10.000Z"),
+        settings("default", "2026-10-22T10:01:00.000Z"),
+        usage(2200, "2026-10-22T10:01:10.000Z")
+      ].join("\n")
+    });
+
+    const usageEvents = events.filter((event) => event.type === "token.usage.recorded");
+    expect(usageEvents).toHaveLength(2);
+    // `priority` is OpenAI's legacy name for fast mode (2x list price).
+    expect(usageEvents[0]).toMatchObject({ service_tier: "priority" });
+    // Back on the standard queue: no tier, so the plain card applies again.
+    expect(usageEvents[1]).not.toHaveProperty("service_tier");
+    for (const event of events) {
+      expect(NormalizedEventV2Schema.safeParse(event).success).toBe(true);
+    }
+  });
+
   it("estimates decode duration from the gap between consecutive token_count events", () => {
     const tokenCount = (timestamp: string, totalTokens: number, output: number) =>
       JSON.stringify({

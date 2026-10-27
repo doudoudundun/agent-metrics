@@ -23,6 +23,8 @@ type UsageSeed = {
   inputTokenSemantics?: "delta" | "gross";
   usageMeasurement?: "increment" | "session-context-snapshot";
   usageSource?: string;
+  /** Accelerated speed tier served; NULL/undefined means standard pricing. */
+  serviceTier?: string | null;
   providerId?: string;
   providerHost?: string | null;
   decodeDurationMs?: number | null;
@@ -51,6 +53,7 @@ function usageSeed(input: UsageSeedInput): UsageSeed {
     inputTokenSemantics: input.inputTokenSemantics ?? "gross",
     rawInputTokens: input.rawInputTokens ?? input.displayedInputTokens,
     usageMeasurement: input.usageMeasurement ?? "increment",
+    serviceTier: input.serviceTier ?? null,
     cacheReadTokens: input.cacheReadTokens ?? 0,
     cacheCreationTokens: input.cacheCreationTokens ?? 0,
     providerId: input.providerId ?? "unknown",
@@ -67,8 +70,8 @@ function seedUsage(db: InstanceType<typeof Database>, seeds: UsageSeed[]): void 
       occurred_at, model_id, provider_id, provider_host, input_token_semantics, usage_measurement,
       raw_input_tokens, displayed_input_tokens, output_tokens, cache_creation_input_tokens,
       cache_read_input_tokens, first_token_latency_ms, decode_duration_ms,
-      server_tool_use, usage_source, semantic_fingerprint
-    ) VALUES (?, 2, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '{}', ?, ?)
+      server_tool_use, usage_source, service_tier, semantic_fingerprint
+    ) VALUES (?, 2, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '{}', ?, ?, ?)
   `);
 
   for (const seed of seeds) {
@@ -92,6 +95,7 @@ function seedUsage(db: InstanceType<typeof Database>, seeds: UsageSeed[]): void 
       seed.firstTokenLatencyMs ?? null,
       seed.decodeDurationMs ?? null,
       seed.usageSource ?? "claude-transcript",
+      seed.serviceTier ?? null,
       `fp-${seed.eventId}`
     );
   }
@@ -465,6 +469,67 @@ describe("selectOverviewRows", () => {
       startedOnlyExecutions: 0
     });
     expect(codexRows.codeEdits).toEqual([]);
+
+    db.close();
+  });
+});
+
+describe("selectTokensByModel service tiers", () => {
+  it("keeps an accelerated tier as its own row, priced at its multiplier", () => {
+    const db = createDb();
+    const row = (eventId: string, serviceTier: string | null) =>
+      usageSeed({
+        eventId,
+        occurredAt: "2026-10-09T10:00:00.000Z",
+        model: "gpt-6.1-sol",
+        sourceVendor: "codex",
+        usageSource: "codex-rollout",
+        displayedInputTokens: 1_000_000,
+        outputTokens: 0,
+        serviceTier
+      });
+
+    // "standard" spelled out must fold into the unset rows, not form a third one.
+    seedUsage(db, [row("std", null), row("fast", "fast"), row("std-spelled", "standard")]);
+    const rows = selectTokensByModel(
+      db as unknown as MetricsDatabase,
+      customScope("2026-10-09T00:00:00.000Z", "2026-10-09T12:00:00.000Z")
+    );
+
+    // $2/1M standard input for gpt-6.1-sol: two list-price rows plus one 2x row.
+    expect(rows).toHaveLength(2);
+    const standardRow = rows.find((entry) => entry.serviceTier === null);
+    const fastRow = rows.find((entry) => entry.serviceTier === "fast");
+    expect(standardRow?.totalTokens).toBe(2_000_000);
+    expect(standardRow?.costUsd).toBeCloseTo(4, 9);
+    expect(standardRow?.serviceTierMultiplier).toBe(1);
+    expect(fastRow?.totalTokens).toBe(1_000_000);
+    expect(fastRow?.costUsd).toBeCloseTo(4, 9);
+    expect(fastRow?.serviceTierMultiplier).toBe(2);
+
+    db.close();
+  });
+
+  it("keeps cost null when only unpriced models report an accelerated tier", () => {
+    const db = createDb();
+    seedUsage(db, [
+      usageSeed({
+        eventId: "unpriced-fast",
+        occurredAt: "2026-10-09T10:00:00.000Z",
+        model: "hunyuan-chat",
+        sourceVendor: "workbuddy",
+        usageSource: "workbuddy-usage",
+        displayedInputTokens: 500,
+        outputTokens: 50,
+        serviceTier: "ultrafast"
+      })
+    ]);
+
+    const [row] = selectTokensByModel(
+      db as unknown as MetricsDatabase,
+      customScope("2026-10-09T00:00:00.000Z", "2026-10-09T12:00:00.000Z")
+    );
+    expect(row.costUsd).toBeNull();
 
     db.close();
   });

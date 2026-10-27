@@ -1,6 +1,6 @@
 import { basename } from "node:path";
 import { normalizeNativeId, toNormalizedEventV2 } from "@agent-metrics/event-schema";
-import type { AnyEvent, NormalizedEventV2, SourceAdapter, SourceVendor } from "@agent-metrics/event-schema";
+import type { AnyEvent, NormalizedEventV2, ServiceTier, SourceAdapter, SourceVendor } from "@agent-metrics/event-schema";
 
 const CODEX_SOURCE_VENDOR: SourceVendor = "codex";
 const CODEX_ROLLOUT_ADAPTER: SourceAdapter = "codex-rollout";
@@ -41,6 +41,11 @@ export function extractCodexEventsFromRollout(input: {
   // first-token observation on a token_count report.
   let turnStartedMs: number | null = null;
   let turnFirstTokenReported = false;
+  // Codex persists the session's speed tier in `thread_settings_applied` (written
+  // on /fast, model switches and profile changes). Usage reported after such an
+  // event is billed at that tier until the next settings record, so the tier is
+  // carried forward in file order rather than read from config.
+  let currentServiceTier: ServiceTier | null = null;
   let sourceInstanceId =
     input.sourceInstanceId ??
     (isMulticaRolloutPath(input.filePath) ? "codex:multica" : undefined);
@@ -271,6 +276,14 @@ export function extractCodexEventsFromRollout(input: {
         sessionMeta?.timestamp ??
         new Date(0).toISOString();
       const eventKey = buildEventKey(parsed, payloadType ?? "event_msg", lineIndex);
+
+      if (payloadType === "thread_settings_applied") {
+        const settings = asRecord(payload.thread_settings);
+        currentServiceTier = normalizeCodexServiceTier(
+          settings?.service_tier ?? payload.service_tier
+        );
+        continue;
+      }
 
       if (sessionId !== null && payloadType === "user_message") {
         const promptText = normalizeOptionalString(payload.message) ?? "";
@@ -584,6 +597,7 @@ export function extractCodexEventsFromRollout(input: {
       cache_read_input_tokens: cacheReadTokens,
       server_tool_use: "{}",
       usage_source: "codex-rollout",
+      ...(currentServiceTier ? { service_tier: currentServiceTier } : {}),
       provider_id: providerId,
       provider_base_url: providerConfig?.baseUrl ?? null,
       provider_host: providerConfig?.host ?? null,
@@ -642,6 +656,21 @@ function resolveTurnStartedMs(payload: Record<string, unknown>, lineTimestamp: u
 
   const lineMs = typeof lineTimestamp === "string" ? Date.parse(lineTimestamp) : Number.NaN;
   return Number.isFinite(lineMs) ? lineMs : null;
+}
+
+/**
+ * Map Codex's `service_tier` string onto the normalized speed tier. `fast`
+ * (renamed from `priority`, the old value still works) and `ultrafast` cost 2x
+ * and 6x of list price; `flex` is the discounted batch queue. Every other value
+ * ("default", "auto", "standard", unknown) means the standard queue, which is
+ * stored as null so the cost layer bills the plain rate card.
+ */
+function normalizeCodexServiceTier(value: unknown): ServiceTier | null {
+  const tier = normalizeOptionalString(value)?.toLowerCase();
+  if (tier === "fast" || tier === "priority" || tier === "ultrafast" || tier === "flex") {
+    return tier;
+  }
+  return null;
 }
 
 function buildEventKey(

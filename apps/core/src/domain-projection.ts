@@ -463,9 +463,9 @@ function projectUsage(
       message_id, occurred_at, model_id, provider_id, provider_base_url,
       provider_host, input_token_semantics, usage_measurement, raw_input_tokens,
       displayed_input_tokens, output_tokens, cache_creation_input_tokens,
-      cache_read_input_tokens, server_tool_use, usage_source,
+      cache_read_input_tokens, server_tool_use, usage_source, service_tier,
       first_token_latency_ms, decode_duration_ms, semantic_fingerprint
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     event.event_id,
     event.schema_version,
@@ -487,6 +487,7 @@ function projectUsage(
     event.cache_read_input_tokens,
     event.server_tool_use,
     event.usage_source,
+    event.service_tier ?? null,
     event.first_token_latency_ms ?? null,
     event.decode_duration_ms ?? null,
     semanticFingerprint(event)

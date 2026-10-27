@@ -450,7 +450,27 @@ function buildEventId(suffix: string): string {
 }
 
 function toV2Events(events: AnyEvent[]): NormalizedEventV2[] {
-  return events.map((event) => toNormalizedEventV2(event, { sourceRecordId: event.event_id }));
+  return events.map((event) => toNormalizedEventV2(event, { sourceRecordId: ledgerIdentity(event) }));
+}
+
+/**
+ * WorkBuddy Switch clones a transcript under a brand new session id when it
+ * syncs a conversation to another account, so the same native record can be
+ * present in several session logs. Every event except the session header is
+ * therefore identified by its session-less event id, which lets the ledger
+ * recognize a cloned record no matter which session copy it was read from.
+ */
+function ledgerIdentity(event: AnyEvent): string {
+  if (event.type === "session.started") {
+    return event.event_id;
+  }
+  const prefix = "workbuddy:";
+  if (!event.event_id.startsWith(prefix)) {
+    return event.event_id;
+  }
+  const rest = event.event_id.slice(prefix.length);
+  const separator = rest.indexOf(":");
+  return separator === -1 ? event.event_id : `${prefix}${rest.slice(separator + 1)}`;
 }
 
 function toIsoTimestamp(value: number): string {

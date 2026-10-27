@@ -124,6 +124,10 @@ export function createCanonicalSchema(db: SqliteDatabaseLike): void {
       cache_read_input_tokens INTEGER NOT NULL CHECK (cache_read_input_tokens >= 0),
       server_tool_use TEXT NOT NULL,
       usage_source TEXT NOT NULL,
+      -- Accelerated speed tier that was actually served (fast/priority/ultrafast/
+      -- flex). NULL means standard pricing, which keeps rows recorded before the
+      -- column existed semantically unchanged.
+      service_tier TEXT CHECK (service_tier IN ('standard', 'flex', 'fast', 'priority', 'ultrafast')),
       first_token_latency_ms INTEGER,
       decode_duration_ms INTEGER,
       semantic_fingerprint TEXT NOT NULL

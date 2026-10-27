@@ -10,6 +10,61 @@ const USAGE = {
 };
 
 describe("estimateCostUsd", () => {
+  it.each([
+    ["kimi-code/k3.1-pro", 14.2],
+    ["k3.1-pro", 14.2],
+    ["kimi-code/k3.1-pro-highspeed", 28.2],
+    ["k3.1-pro-highspeed", 28.2]
+  ])("prices Kimi Code model ID %s", (model, expected) => {
+    expect(estimateCostUsd({
+      ...USAGE,
+      model,
+      cacheReadTokens: 1_000_000,
+      cacheCreationTokens: 1_000_000
+    })).toBeCloseTo(expected, 9);
+  });
+
+  it.each([
+    ["kimi-k3.1-pro", 14.2],
+    ["kimi-k3.1-pro-highspeed", 28.2]
+  ])("prices %s with separate cache read and write rates", (model, expected) => {
+    expect(estimateCostUsd({
+      ...USAGE,
+      model: `moonshotai/${model}`,
+      cacheReadTokens: 1_000_000,
+      cacheCreationTokens: 1_000_000
+    })).toBeCloseTo(expected, 9);
+  });
+
+  it.each([
+    ["claude-fable-5-1", 72.75],
+    ["claude-mythos-5-1", 72.75],
+    ["claude-fable-5", 73.5],
+    ["claude-mythos-5", 73.5],
+    ["claude-opus-5", 36.75],
+    ["gemini-4-argon", 12.1],
+    ["gemini-3.8-flash", 4.575],
+    ["gemini-3.6-flash", 4.575],
+    ["mistral-large-4", 5.68],
+    ["zai-glm-5-3-flash", 0.68]
+  ])("prices new model %s including cache tokens", (model, expected) => {
+    expect(estimateCostUsd({
+      ...USAGE,
+      model,
+      cacheReadTokens: 1_000_000,
+      cacheCreationTokens: 1_000_000
+    })).toBeCloseTo(expected, 9);
+  });
+
+  it("prices GPT-6.1 Terra input, output, cache read, and cache write", () => {
+    expect(estimateCostUsd({
+      ...USAGE,
+      model: "openai/gpt-6.1-terra",
+      cacheReadTokens: 1_000_000,
+      cacheCreationTokens: 1_000_000
+    })).toBeCloseTo(7.3, 9);
+  });
+
   it("strips the OpenRouter-style provider prefix before lookup", () => {
     const prefixed = estimateCostUsd({ ...USAGE, model: "传音/deepseek-v4.1-flash" });
     const bare = estimateCostUsd({ ...USAGE, model: "deepseek-v4.1-flash" });
@@ -112,5 +167,53 @@ describe("estimateCostUsd", () => {
     expect(estimateCostUsd({ ...USAGE, model: "default" })).toBeNull();
     expect(estimateCostUsd({ ...USAGE, model: "unknown" })).toBeNull();
     expect(estimateCostUsd({ ...USAGE, model: null })).toBeNull();
+  });
+});
+
+describe("estimateCostUsd service tiers", () => {
+  it("bills the accelerated tiers at their documented multiples of list price", () => {
+    const standard = estimateCostUsd({ ...USAGE, model: "gpt-6.1-sol" })!;
+
+    // OpenAI: fast (ex-"priority") 2x, ultrafast 6x, flex ~0.5x.
+    expect(estimateCostUsd({ ...USAGE, model: "gpt-6.1-sol", serviceTier: "fast" })).toBeCloseTo(
+      standard * 2,
+      9
+    );
+    expect(
+      estimateCostUsd({ ...USAGE, model: "gpt-6.1-sol", serviceTier: "priority" })
+    ).toBeCloseTo(standard * 2, 9);
+    expect(
+      estimateCostUsd({ ...USAGE, model: "gpt-6.1-sol", serviceTier: "ultrafast" })
+    ).toBeCloseTo(standard * 6, 9);
+    expect(estimateCostUsd({ ...USAGE, model: "gpt-6.1-sol", serviceTier: "flex" })).toBeCloseTo(
+      standard * 0.5,
+      9
+    );
+  });
+
+  it("applies Claude fast mode to cache rates as well as input and output", () => {
+    const cached = { ...USAGE, model: "claude-opus-5-5", cacheReadTokens: 1_000_000 };
+    const standard = estimateCostUsd(cached)!;
+    const fast = estimateCostUsd({ ...cached, serviceTier: "fast" })!;
+
+    // Opus 5.5 fast mode is $8/$40 against a $4/$20 standard card.
+    expect(standard).toBeCloseTo(4 + 20 + 0.2, 9);
+    expect(fast).toBeCloseTo(standard * 2, 9);
+  });
+
+  it("leaves standard and unknown tiers at list price", () => {
+    const standard = estimateCostUsd({ ...USAGE, model: "gpt-6.1-sol" });
+
+    expect(estimateCostUsd({ ...USAGE, model: "gpt-6.1-sol", serviceTier: "standard" })).toBe(
+      standard
+    );
+    expect(estimateCostUsd({ ...USAGE, model: "gpt-6.1-sol", serviceTier: null })).toBe(standard);
+    expect(estimateCostUsd({ ...USAGE, model: "gpt-6.1-sol", serviceTier: "turbo-unknown" })).toBe(
+      standard
+    );
+  });
+
+  it("still returns null when the model is unpriced regardless of tier", () => {
+    expect(estimateCostUsd({ ...USAGE, model: "unknown", serviceTier: "fast" })).toBeNull();
   });
 });
