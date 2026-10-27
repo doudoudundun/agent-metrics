@@ -34,7 +34,8 @@ const overviewFixture = {
       cacheCreationTokens: 2000,
       costUsd: 1.23,
       avgOutputTokensPerSecond: 33.2,
-      avgFirstTokenLatencyMs: 1200
+      avgFirstTokenLatencyMs: 1200,
+      cacheHitRate: 0.190476
     }
   ],
   totalToolCalls: 12,
@@ -53,7 +54,8 @@ const overviewFixture = {
       turnCount: 24,
       totalTokens: 45678,
       toolCalls: 12,
-      costUsd: 1.23
+      costUsd: 1.23,
+      cacheHitRate: 0.0923
     }
   ],
   providerBreakdown: [],

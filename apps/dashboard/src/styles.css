@@ -881,6 +881,51 @@ body[data-desktop-surface="desktop-widget"] .app-shell--floating {
   list-style: none;
 }
 
+/* Models fold under the agent that ran them, so the agent-wide cache hit rate
+   sits on the group header and each row only carries its own split. */
+.model-usage-group {
+  display: grid;
+  gap: 6px;
+}
+
+.model-usage-group-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.model-usage-group-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 12px;
+  padding: 0 4px;
+}
+
+.model-usage-group-head strong {
+  color: #c4d3e5;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.model-usage-group-head span {
+  color: #8ea6c0;
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.model-usage-group-head .model-usage-group-hit {
+  color: var(--aqua);
+  font-size: 11px;
+  font-weight: 600;
+}
+
 .model-usage-row {
   display: grid;
   gap: 4px;
@@ -920,6 +965,25 @@ body[data-desktop-surface="desktop-widget"] .app-shell--floating {
 .model-usage-main .model-usage-cost {
   color: var(--aqua);
   font-weight: 600;
+}
+
+/* Cache hit rate: the prompt-cache share of cacheable input. */
+.model-usage-meta .model-usage-hit {
+  color: var(--aqua);
+  font-weight: 600;
+}
+
+/* Accelerated speed tier: own row, badged with its billing multiplier. */
+.model-usage-main .model-usage-tier {
+  padding: 1px 6px;
+  border: 1px solid rgba(126, 231, 216, 0.45);
+  border-radius: 999px;
+  color: var(--aqua);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .model-usage-timing {
@@ -986,6 +1050,68 @@ body[data-desktop-surface="desktop-widget"] .app-shell--floating {
 }
 
 .provider-breakdown-bar {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #d1ff4d, #5cc7ff);
+}
+
+.cache-hit-panel {
+  /* Last panel of the grid and the only one per agent: it takes the full row so
+     the bars stay comparable instead of sharing a half-width column. */
+  grid-column: 1 / -1;
+  min-height: 180px;
+}
+
+.cache-hit-list {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cache-hit-row {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid rgba(226, 236, 247, 0.08);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.cache-hit-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px 12px;
+}
+
+.cache-hit-main strong {
+  font-size: 0.92rem;
+}
+
+.cache-hit-main span {
+  color: #c4d3e5;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.cache-hit-main .cache-hit-value {
+  color: var(--aqua);
+  font-weight: 600;
+}
+
+.cache-hit-track {
+  overflow: hidden;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.cache-hit-bar {
   height: 100%;
   border-radius: inherit;
   background: linear-gradient(90deg, #d1ff4d, #5cc7ff);
@@ -2164,6 +2290,27 @@ tbody tr[data-selected="true"] .session-select {
   background: rgba(16, 32, 48, 0.08);
 }
 
+.dashboard-page .cache-hit-row {
+  border-color: rgba(16, 32, 48, 0.12);
+  background: rgba(16, 32, 48, 0.02);
+}
+
+.dashboard-page .cache-hit-main span {
+  color: var(--ink-soft);
+}
+
+.dashboard-page .cache-hit-main .cache-hit-value {
+  color: var(--ink);
+}
+
+.dashboard-page .cache-hit-track {
+  background: rgba(16, 32, 48, 0.08);
+}
+
+.dashboard-page .cache-hit-bar {
+  background: #4f9cf5;
+}
+
 /* Key usage, Cursor usage and model usage panels still carry dark-surface
    colors; remap them onto the light dashboard palette. */
 .dashboard-page .key-usage-panel__eyebrow,
@@ -2260,6 +2407,18 @@ tbody tr[data-selected="true"] .session-select {
   background: rgba(16, 32, 48, 0.02);
 }
 
+.dashboard-page .model-usage-group-head strong {
+  color: var(--ink);
+}
+
+.dashboard-page .model-usage-group-head span {
+  color: var(--ink-soft);
+}
+
+.dashboard-page .model-usage-group-head .model-usage-group-hit {
+  color: #1d6fd1;
+}
+
 .dashboard-page .model-usage-main span,
 .dashboard-page .model-usage-meta,
 .dashboard-page .model-usage-main .model-usage-source,
@@ -2268,6 +2427,15 @@ tbody tr[data-selected="true"] .session-select {
 }
 
 .dashboard-page .model-usage-main .model-usage-cost {
+  color: #1d6fd1;
+}
+
+.dashboard-page .model-usage-meta .model-usage-hit {
+  color: #26724d;
+}
+
+.dashboard-page .model-usage-main .model-usage-tier {
+  border-color: rgba(29, 111, 209, 0.35);
   color: #1d6fd1;
 }
 

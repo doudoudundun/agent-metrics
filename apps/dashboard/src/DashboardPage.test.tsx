@@ -160,8 +160,8 @@ describe("DashboardPage", () => {
       deletions: 0,
       sourceBreakdown:
         sourceVendor === "codex"
-          ? [{ sourceVendor: "codex", sessionCount: 1, turnCount: 0, totalTokens: 150, toolCalls: 0, costUsd: 0.15 }]
-          : [{ sourceVendor: "claude-code", sessionCount: 3, turnCount: 24, totalTokens: 45678, toolCalls: 12, costUsd: 12.34 }],
+          ? [{ sourceVendor: "codex", sessionCount: 1, turnCount: 0, totalTokens: 150, toolCalls: 0, costUsd: 0.15, cacheHitRate: 0.1 }]
+          : [{ sourceVendor: "claude-code", sessionCount: 3, turnCount: 24, totalTokens: 45678, toolCalls: 12, costUsd: 12.34, cacheHitRate: 0.09 }],
       providerBreakdown: [],
       totalCostUsd: sourceVendor === "codex" ? 0.15 : 12.34
     }));
@@ -200,11 +200,11 @@ describe("DashboardPage", () => {
     vi.mocked(fetchOverview).mockResolvedValue({
       ...buildReadyOverview(),
       sourceBreakdown: [
-        { sourceVendor: "kimicode", sessionCount: 5, turnCount: 40, totalTokens: 900000, toolCalls: 500, costUsd: 9 },
-        { sourceVendor: "mimo", sessionCount: 3, turnCount: 13, totalTokens: 48000, toolCalls: 55, costUsd: 0.48 },
-        { sourceVendor: "codex", sessionCount: 1, turnCount: 0, totalTokens: 9000, toolCalls: 7, costUsd: 0.09 },
-        { sourceVendor: "cursor", sessionCount: 0, turnCount: 1, totalTokens: 0, toolCalls: 4, costUsd: 0 },
-        { sourceVendor: "claude-code", sessionCount: 2, turnCount: 5, totalTokens: 100, toolCalls: 10, costUsd: 0.001 }
+        { sourceVendor: "kimicode", sessionCount: 5, turnCount: 40, totalTokens: 900000, toolCalls: 500, costUsd: 9, cacheHitRate: 0.62 },
+        { sourceVendor: "mimo", sessionCount: 3, turnCount: 13, totalTokens: 48000, toolCalls: 55, costUsd: 0.48, cacheHitRate: 0.31 },
+        { sourceVendor: "codex", sessionCount: 1, turnCount: 0, totalTokens: 9000, toolCalls: 7, costUsd: 0.09, cacheHitRate: 0.18 },
+        { sourceVendor: "cursor", sessionCount: 0, turnCount: 1, totalTokens: 0, toolCalls: 4, costUsd: 0, cacheHitRate: 0 },
+        { sourceVendor: "claude-code", sessionCount: 2, turnCount: 5, totalTokens: 100, toolCalls: 10, costUsd: 0.001, cacheHitRate: 0.4 }
       ]
     });
 
@@ -223,10 +223,10 @@ describe("DashboardPage", () => {
 
   it("keeps source chip order stable when a source is selected", async () => {
     const allBreakdown = [
-      { sourceVendor: "kimicode" as const, sessionCount: 5, turnCount: 40, totalTokens: 900000, toolCalls: 500, costUsd: 9 },
-      { sourceVendor: "mimo" as const, sessionCount: 3, turnCount: 13, totalTokens: 48000, toolCalls: 55, costUsd: 0.48 },
-      { sourceVendor: "codex" as const, sessionCount: 1, turnCount: 0, totalTokens: 9000, toolCalls: 7, costUsd: 0.09 },
-      { sourceVendor: "cursor" as const, sessionCount: 0, turnCount: 1, totalTokens: 0, toolCalls: 4, costUsd: 0 }
+      { sourceVendor: "kimicode" as const, sessionCount: 5, turnCount: 40, totalTokens: 900000, toolCalls: 500, costUsd: 9, cacheHitRate: 0.62 },
+      { sourceVendor: "mimo" as const, sessionCount: 3, turnCount: 13, totalTokens: 48000, toolCalls: 55, costUsd: 0.48, cacheHitRate: 0.31 },
+      { sourceVendor: "codex" as const, sessionCount: 1, turnCount: 0, totalTokens: 9000, toolCalls: 7, costUsd: 0.09, cacheHitRate: 0.18 },
+      { sourceVendor: "cursor" as const, sessionCount: 0, turnCount: 1, totalTokens: 0, toolCalls: 4, costUsd: 0, cacheHitRate: 0 }
     ];
     // A filtered overview only ever contains the selected source, so ranking the
     // chips from it would promote whichever chip is selected to first place.
@@ -697,7 +697,8 @@ function buildReadyOverview() {
         cacheCreationTokens: 2000,
         costUsd: 12.34,
         avgOutputTokensPerSecond: 35.2,
-        avgFirstTokenLatencyMs: 1200
+        avgFirstTokenLatencyMs: 1200,
+        cacheHitRate: 4000 / 21000
       }
     ],
     totalToolCalls: 12,
@@ -716,7 +717,8 @@ function buildReadyOverview() {
         turnCount: 24,
         totalTokens: 45678,
         toolCalls: 12,
-        costUsd: 12.34
+        costUsd: 12.34,
+        cacheHitRate: 0.0923
       }
     ],
     providerBreakdown: [

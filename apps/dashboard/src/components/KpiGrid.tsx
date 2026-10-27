@@ -86,6 +86,10 @@ function formatToolCallMeta(overview: OverviewResponse): ReactNode {
 
 export function KpiGrid({ overview, scopeLabel }: KpiGridProps) {
   const cacheTokens = overview.cacheReadTokens + overview.cacheCreationTokens;
+  // Cacheable input only: output tokens are never cacheable, so counting them
+  // would understate the hit rate.
+  const cacheableInput = overview.inputTokens + cacheTokens;
+  const cacheHitRate = cacheableInput > 0 ? overview.cacheReadTokens / cacheableInput : 0;
   const displayedToolCalls = resolveDisplayedToolCalls(overview);
   const primaryItems: Array<{
     label: string;
@@ -127,6 +131,10 @@ export function KpiGrid({ overview, scopeLabel }: KpiGridProps) {
     {
       label: "Cache Creation",
       value: NUMBER_FORMAT.format(overview.cacheCreationTokens)
+    },
+    {
+      label: "Cache Hit",
+      value: `${(cacheHitRate * 100).toFixed(1)}%`
     },
     {
       label: "Successful Runs",

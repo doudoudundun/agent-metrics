@@ -18,6 +18,7 @@ import {
   type ToolRow
 } from "./api";
 import { CursorQuotaCard } from "./components/CursorQuotaCard";
+import { CacheHitPanel } from "./components/CacheHitPanel";
 import { KeyUsagePanel } from "./components/KeyUsagePanel";
 import { KpiGrid } from "./components/KpiGrid";
 import { ModelUsagePanel } from "./components/ModelUsagePanel";
@@ -462,6 +463,7 @@ export function DashboardPage() {
           emptyMessage={pendingEmptyMessage(toolsQuery, "Loading tool activity...")}
         />
         <ProviderBreakdownPanel rows={overview?.providerBreakdown ?? []} />
+        <CacheHitPanel rows={overview?.sourceBreakdown ?? []} />
       </section>
 
       <KeyUsagePanel
