@@ -1,0 +1,27 @@
+packages/metrics-engine/src/pricing.ts
+  s_96c37807418779::t_d1cf1961166d61 144-146
+  s_96c37807418779::t_1121f931a31607 53-58,71-72,86-92
+  s_96c37807418779::t_e462ac67027470 141-143
+  s_96c37807418779::t_ffbc0345b67054 43-44
+packages/metrics-engine/src/pricing.test.ts
+  s_96c37807418779::t_e5d1cd02ea26d1 14-27
+  s_96c37807418779::t_1121f931a31607 13,40-58
+  s_96c37807418779::t_ffbc0345b67054 59-67
+  s_96c37807418779::t_e462ac67027470 28-39
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.8",
+  "base_commit_sha": "9d420d9cec205f294a56c6f5d82e6b4fe2f78a01",
+  "prompts": {},
+  "sessions": {
+    "s_96c37807418779": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a17b03-cd0e-73a3-9f29-dc0ff99f6b97",
+        "model": "gpt-6.1-terra"
+      },
+      "human_author": "Anonymous <anonymous@users.noreply.github.com>"
+    }
+  }
+}
