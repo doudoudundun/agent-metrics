@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Agent Metrics · 悬浮窗 V2</title>
+  <style>
+    :root {
+      --paper: #f0efe9;
+      --ink: #242a22;
+      --muted: #697063;
+      --line: #d4d7cc;
+      --surface: #181d16;
+      --number: #e1ff9a;
+      --label: #c6cfbe;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      padding: 52px 28px;
+      background: var(--paper);
+      color: var(--ink);
+      font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
+    }
+    main { width: min(880px, 100%); margin: auto; }
+    header { display: flex; justify-content: space-between; gap: 24px; align-items: start; }
+    .eyebrow, .edition, .caption, .footnote {
+      font-family: 'Cascadia Mono', Consolas, monospace;
+      font-size: 11px;
+      letter-spacing: 1px;
+    }
+    .eyebrow { margin: 0 0 17px; color: var(--muted); }
+    h1 { margin: 0; font-size: clamp(25px, 4vw, 34px); font-weight: 600; letter-spacing: -1px; }
+    .intro { margin: 12px 0 0; color: var(--muted); font-size: 14px; line-height: 1.8; }
+    .edition { padding-top: 3px; white-space: nowrap; }
+    .stage {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      margin-top: 36px;
+      border-top: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+    }
+    figure { margin: 0; }
+    .preview { min-height: 384px; display: flex; flex-direction: column; align-items: center; }
+    .preview + .preview { border-left: 1px solid var(--line); }
+    .display { flex: 1; min-height: 320px; display: grid; place-items: center; width: 100%; }
+    .caption { color: var(--muted); margin-bottom: 27px; text-align: center; }
+    .widget {
+      position: relative;
+      width: 88px;
+      height: 88px;
+      flex: 0 0 88px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+      border-radius: 24px;
+      background: var(--surface);
+      box-shadow: inset 0 0 0 1px #e1ff9a26, 0 3px 7px #18201415;
+      font-family: 'Segoe UI', 'Trebuchet MS', sans-serif;
+      text-align: center;
+    }
+    .value {
+      display: block;
+      color: var(--number);
+      font-size: 38px;
+      line-height: 40px;
+      font-weight: 750;
+      letter-spacing: -1.6px;
+      font-variant-numeric: tabular-nums lining-nums;
+      white-space: nowrap;
+    }
+    .label {
+      color: var(--label);
+      font-size: 10px;
+      line-height: 12px;
+      font-weight: 650;
+      letter-spacing: 1.3px;
+      padding-left: 1.3px;
+    }
+    .status {
+      position: absolute;
+      right: 11px;
+      bottom: 10px;
+      width: 3px;
+      height: 3px;
+      border-radius: 50%;
+      background: #a3c66c;
+    }
+    .magnified { width: 264px; height: 264px; }
+    .magnified .widget { transform: scale(3); transform-origin: top left; }
+    .details { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 26px; padding: 26px 0 30px; }
+    .detail h2 { margin: 0 0 9px; font-size: 13px; font-weight: 600; }
+    .detail p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.9; }
+    .range { border-top: 1px solid var(--line); padding-top: 24px; display: flex; gap: 36px; align-items: center; }
+    .range-copy { flex: 1; }
+    .range-copy p { margin: 8px 0 0; color: var(--muted); font-size: 12px; line-height: 1.8; }
+    .range-copy h2 { margin: 0; font-size: 13px; font-weight: 600; }
+    .sample { text-align: center; }
+    .sample figcaption { margin-top: 10px; color: var(--muted); font-size: 10px; }
+    .value.medium { font-size: 30px; letter-spacing: -1.2px; }
+    .value.long { font-size: 26px; letter-spacing: -1px; }
+    footer { margin-top: 34px; display: flex; justify-content: space-between; gap: 16px; color: var(--muted); }
+    .footnote { font-size: 10px; letter-spacing: .5px; }
+    @media (max-width: 620px) {
+      body { padding: 28px 20px; }
+      .stage { grid-template-columns: 1fr; }
+      .preview:first-child { min-height: 200px; }
+      .preview:first-child .display { min-height: 150px; }
+      .preview + .preview { border-left: 0; border-top: 1px solid var(--line); }
+      .details { grid-template-columns: 1fr; gap: 18px; }
+      .range { flex-wrap: wrap; gap: 24px; }
+      .range-copy { flex-basis: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <p class="eyebrow">AGENT METRICS / OBSERVATORY</p>
+        <h1>总量，一眼看清。</h1>
+        <p class="intro">保留 88 × 88 的轻巧体积，让 Tokens 总量成为视觉中心。</p>
+      </div>
+      <span class="edition">V2 / 02</span>
+    </header>
+
+    <section class="stage" aria-label="第二版悬浮窗设计">
+      <figure class="preview">
+        <div class="display">
+          <div class="widget" role="img" aria-label="Tokens 总量 46K，状态正常">
+            <span class="value" aria-hidden="true">46K</span>
+            <span class="label" aria-hidden="true">TOKENS</span>
+            <span class="status" aria-hidden="true"></span>
+          </div>
+        </div>
+        <figcaption class="caption">01 / 原尺寸 · 88 × 88 CSS PX</figcaption>
+      </figure>
+      <figure class="preview">
+        <div class="display">
+          <div class="magnified" aria-hidden="true">
+            <div class="widget">
+              <span class="value">46K</span>
+              <span class="label">TOKENS</span>
+              <span class="status"></span>
+            </div>
+          </div>
+        </div>
+        <figcaption class="caption">02 / 细节预览 · 3×</figcaption>
+      </figure>
+    </section>
+
+    <section class="details" aria-label="设计说明">
+      <div class="detail"><h2>38px 大字，居中呈现</h2><p>数字与单位保持同等清晰，读数占据主体，减少上方拥挤和下方空白。</p></div>
+      <div class="detail"><h2>浅荧光绿 × 深墨绿</h2><p>提高数字亮度，使用厚实字重和干净实色；小尺寸下依然轮廓分明。</p></div>
+      <div class="detail"><h2>信息层级收敛</h2><p>TOKENS 标签紧随总量，状态点退至角落。没有额外指标分散注意力。</p></div>
+    </section>
+
+    <section class="range" aria-label="不同量级的排版示意">
+      <div class="range-copy"><h2>更大的总量，也要完整读出。</h2><p>长读数逐级缩小字号，保留完整单位。以下均为排版示例数据。</p></div>
+      <figure class="sample">
+        <div class="widget" role="img" aria-label="示例：406M Tokens">
+          <span class="value medium" aria-hidden="true">406M</span><span class="label" aria-hidden="true">TOKENS</span><span class="status" aria-hidden="true"></span>
+        </div>
+        <figcaption>30px / 4 字符</figcaption>
+      </figure>
+      <figure class="sample">
+        <div class="widget" role="img" aria-label="示例：12.8B Tokens">
+          <span class="value long" aria-hidden="true">12.8B</span><span class="label" aria-hidden="true">TOKENS</span><span class="status" aria-hidden="true"></span>
+        </div>
+        <figcaption>26px / 5 字符</figcaption>
+      </figure>
+    </section>
+    <footer><span class="footnote">COLLAPSED WIDGET / DESIGN STUDY</span><span class="footnote">2026.10.28</span></footer>
+  </main>
+</body>
+</html>

@@ -1,0 +1,21 @@
+{
+  "name": "@agent-metrics/desktop-card",
+  "productName": "Agent Metrics Card",
+  "version": "0.0.0",
+  "description": "Independent desktop card showing today's local Agent Metrics usage.",
+  "author": "OpenAI Codex",
+  "private": true,
+  "type": "module",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node ./scripts/copy-renderer.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "corepack pnpm build && node --test dist/format.test.js dist/layout.test.js dist/overview-client.test.js",
+    "dev": "corepack pnpm build && electron dist/main.js",
+    "start": "corepack pnpm dev"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.29",
+    "electron": "^33.2.1"
+  }
+}

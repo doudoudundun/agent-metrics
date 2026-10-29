@@ -1,0 +1,18 @@
+{
+  "scope": "Today / calendar day / all sources",
+  "dataSource": "controlled test fixture; live Core currently offline",
+  "requestedUrl": "/api/overview?mode=calendar&range=day&sourceVendor=all",
+  "tokens": "12,345,678",
+  "alwaysOnTop": false,
+  "focusable": false,
+  "bounds": {
+    "x": 1696,
+    "y": 24,
+    "width": 840,
+    "height": 188
+  },
+  "oldPinnedSettingsIgnored": true,
+  "pinButtonRemoved": true,
+  "skipTaskbar": true,
+  "refresh": true
+}

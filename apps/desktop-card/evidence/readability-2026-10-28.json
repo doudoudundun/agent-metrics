@@ -1,0 +1,16 @@
+{
+  "minTextSize": 12,
+  "clipped": [],
+  "outside": [],
+  "tokens": "1,146,926,310",
+  "bounds": {
+    "x": 1456,
+    "y": 24,
+    "width": 1080,
+    "height": 272
+  },
+  "alwaysOnTop": false,
+  "focusable": false,
+  "toolbarOverlap": [],
+  "realApi": true
+}

@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'" />
+    <title>Agent Metrics Card</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="card" data-status="loading" data-pinned="false">
+      <div class="toolbar" role="toolbar" aria-label="卡片操作">
+        <span class="scope" id="scope-label">Today</span>
+        <button type="button" id="refresh-button" title="刷新">
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M13 8A5 5 0 1 1 8 3h1.2" />
+            <path d="M7.2 1.4 9.6 3.4 7.4 5.2" />
+          </svg>
+        </button>
+        <button type="button" id="close-button" title="关闭">
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M4.2 4.2 11.8 11.8" />
+            <path d="M11.8 4.2 4.2 11.8" />
+          </svg>
+        </button>
+      </div>
+
+      <section class="tokens" aria-label="Today's Tokens">
+        <span class="label">Today's Tokens</span>
+        <strong class="value" id="total-tokens">—</strong>
+        <span class="meta" id="token-meta">Connecting to local metrics core…</span>
+      </section>
+
+      <section class="summary" aria-label="Operational summary">
+        <article>
+          <span class="label">Est. Cost</span>
+          <strong class="value" id="cost">—</strong>
+          <span class="meta" id="cost-meta"></span>
+        </article>
+        <article>
+          <span class="label">Tool Calls</span>
+          <strong class="value" id="tool-calls">—</strong>
+          <span class="meta" id="tool-meta"></span>
+        </article>
+        <article>
+          <span class="label">Edit Operations</span>
+          <strong class="value" id="edits">—</strong>
+          <span class="meta" id="edit-meta"></span>
+        </article>
+        <article>
+          <span class="label">Successful Runs</span>
+          <strong class="value" id="successful-runs">—</strong>
+          <span class="meta" id="successful-meta"></span>
+        </article>
+      </section>
+    </main>
+    <script type="module" src="./renderer.js"></script>
+  </body>
+</html>

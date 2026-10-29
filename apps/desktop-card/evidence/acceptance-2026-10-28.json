@@ -1,0 +1,20 @@
+{
+  "realApi": true,
+  "tokens": "24,352,040,511",
+  "pinToggle": true,
+  "refresh": true,
+  "windows": [
+    {
+      "bounds": {
+        "x": 1696,
+        "y": 24,
+        "width": 840,
+        "height": 188
+      },
+      "topmost": true
+    }
+  ],
+  "moveAndReopen": true,
+  "immediateClosePersistence": true,
+  "offline": true
+}

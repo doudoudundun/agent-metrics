@@ -1,0 +1,27 @@
+{
+  "scope": "Today",
+  "realApi": true,
+  "clippedValues": [],
+  "clippedMeta": [],
+  "surfaces": [
+    {
+      "name": "card",
+      "background": "rgba(0, 0, 0, 0)",
+      "border": "rgb(210, 208, 200)"
+    },
+    {
+      "name": "tokens",
+      "background": "rgba(0, 0, 0, 0)",
+      "border": "rgb(210, 208, 200)"
+    },
+    {
+      "name": "summary",
+      "background": "rgba(0, 0, 0, 0)",
+      "border": "rgb(210, 208, 200) rgb(210, 208, 200) rgb(210, 208, 200) rgba(198, 204, 190, 0.16)"
+    }
+  ],
+  "tokens": "1,135,196,275",
+  "alwaysOnTop": false,
+  "focusable": false,
+  "rendererErrors": []
+}

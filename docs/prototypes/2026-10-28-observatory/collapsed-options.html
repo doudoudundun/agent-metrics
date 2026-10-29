@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Agent Metrics — Tokens First</title>
+  <style>
+    :root {
+      --canvas: #eeede7;
+      --ink: #20251f;
+      --muted: #6e7467;
+      --line: #d2d6c8;
+      --cyan: #b0ffec;
+      --lime: #d5f786;
+      --mono: 'Cascadia Mono', Consolas, 'Liberation Mono', monospace;
+      --sans: 'Segoe UI Variable Display', 'Segoe UI', 'Trebuchet MS', sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 44px 28px;
+      background: var(--canvas);
+      color: var(--ink);
+      font-family: var(--sans);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    main { width: min(100%, 1000px); }
+    h1, h2, p { margin: 0; }
+
+    .eyebrow {
+      font: 10px/1.6 var(--mono);
+      letter-spacing: 1.7px;
+      color: var(--muted);
+    }
+
+    header {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 24px;
+      padding-bottom: 26px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    h1 {
+      margin-top: 9px;
+      font-size: 38px;
+      font-weight: 500;
+      letter-spacing: -1.6px;
+      line-height: 1.15;
+    }
+
+    .header-note {
+      max-width: 210px;
+      font-size: 12px;
+      line-height: 1.7;
+      color: var(--muted);
+    }
+
+    .options {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 32px;
+      margin-top: 28px;
+    }
+
+    .option { min-width: 0; }
+
+    .option-heading {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+
+    .index {
+      display: grid;
+      place-items: center;
+      width: 28px;
+      height: 28px;
+      border: 1px solid #b8c0ad;
+      border-radius: 50%;
+      font: 12px var(--mono);
+    }
+
+    h2 { font-size: 19px; font-weight: 600; letter-spacing: -.5px; }
+
+    .stage {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 32px;
+      min-height: 330px;
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: #e6e8de;
+    }
+
+    .option-b .stage { background: #e0e4da; }
+
+    figure {
+      flex-shrink: 0;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 17px;
+    }
+
+    figcaption {
+      font: 9px/1.5 var(--mono);
+      color: #68715f;
+      text-align: center;
+      letter-spacing: .8px;
+    }
+
+    .native { width: 88px; height: 88px; }
+    .magnified { width: 264px; height: 264px; }
+    .magnified .widget { transform: scale(3); transform-origin: top left; }
+
+    .widget {
+      position: relative;
+      width: 88px;
+      height: 88px;
+      overflow: hidden;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .widget-a {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 3px;
+      border-radius: 22px;
+      background: #191f1c;
+      box-shadow: inset 0 0 0 1px #ffffff0b;
+      color: var(--cyan);
+    }
+
+    .widget-a .value {
+      display: block;
+      padding-top: 2px;
+      font-family: var(--mono);
+      font-size: 39px;
+      font-weight: 600;
+      line-height: 43px;
+      letter-spacing: -2px;
+      text-indent: -2px;
+      white-space: nowrap;
+    }
+
+    .widget-a .label {
+      font: 600 10px/12px var(--sans);
+      letter-spacing: 1.4px;
+      text-indent: 1.4px;
+      color: #d1e0d7;
+    }
+
+    .ready {
+      position: absolute;
+      width: 3px;
+      height: 3px;
+      border-radius: 50%;
+      top: 9px;
+      right: 12px;
+    }
+
+    .widget-a .ready { background: var(--cyan); opacity: .65; }
+
+    .widget-b {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      justify-content: center;
+      gap: 3px;
+      padding: 0 9px;
+      border-radius: 18px;
+      color: #202b18;
+      background: var(--lime);
+      box-shadow: inset 0 0 0 1px #202b1810;
+    }
+
+    .widget-b .label {
+      display: block;
+      font: 750 10px/12px var(--sans);
+      letter-spacing: 1.1px;
+      margin-left: 2px;
+      color: #35472a;
+    }
+
+    .widget-b .value {
+      display: block;
+      font-family: var(--sans);
+      font-size: 40px;
+      font-weight: 800;
+      line-height: 44px;
+      letter-spacing: -1.8px;
+      white-space: nowrap;
+    }
+
+    .widget-b .ready { background: #35472a; opacity: .65; top: 12px; right: 11px; }
+
+    .description {
+      margin-top: 17px;
+      max-width: 370px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.75;
+    }
+
+    footer {
+      margin-top: 28px;
+      padding-top: 16px;
+      border-top: 1px solid var(--line);
+      font: 10px/1.7 var(--mono);
+      color: var(--muted);
+    }
+
+    @media (max-width: 940px) {
+      main { max-width: 520px; }
+      .options { grid-template-columns: 1fr; gap: 28px; }
+      .header-note { display: none; }
+    }
+
+    @media (max-width: 460px) {
+      body { padding: 26px 14px; }
+      .stage { flex-direction: column; gap: 28px; padding: 26px 14px; }
+      h1 { font-size: 32px; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <div class="eyebrow">AGENT METRICS / COLLAPSED WIDGET</div>
+        <h1>Tokens. At a glance.</h1>
+      </div>
+      <p class="header-note">Two directions. One clear number.<br>Both designed at a native 88 × 88.</p>
+    </header>
+
+    <div class="options">
+      <section class="option option-a" aria-labelledby="option-a-title">
+        <div class="option-heading"><span class="index">A</span><h2 id="option-a-title">Quiet signal</h2></div>
+        <div class="stage">
+          <figure>
+            <div class="native">
+              <div class="widget widget-a" role="img" aria-label="46 thousand tokens. Ready.">
+                <span class="ready" aria-hidden="true"></span>
+                <span class="value" aria-hidden="true">46K</span>
+                <span class="label" aria-hidden="true">TOKENS</span>
+              </div>
+            </div>
+            <figcaption>88 × 88 / 1×</figcaption>
+          </figure>
+          <figure>
+            <div class="magnified" aria-hidden="true">
+              <div class="widget widget-a">
+                <span class="ready"></span>
+                <span class="value">46K</span>
+                <span class="label">TOKENS</span>
+              </div>
+            </div>
+            <figcaption>DETAIL / 3×</figcaption>
+          </figure>
+        </div>
+        <p class="description">An oversized cyan readout on ink black. Centered, calm, and easy to find without competing with your workspace.</p>
+      </section>
+
+      <section class="option option-b" aria-labelledby="option-b-title">
+        <div class="option-heading"><span class="index">B</span><h2 id="option-b-title">High visibility</h2></div>
+        <div class="stage">
+          <figure>
+            <div class="native">
+              <div class="widget widget-b" role="img" aria-label="46 thousand tokens. Ready.">
+                <span class="ready" aria-hidden="true"></span>
+                <span class="label" aria-hidden="true">TOKENS</span>
+                <span class="value" aria-hidden="true">46K</span>
+              </div>
+            </div>
+            <figcaption>88 × 88 / 1×</figcaption>
+          </figure>
+          <figure>
+            <div class="magnified" aria-hidden="true">
+              <div class="widget widget-b">
+                <span class="ready"></span>
+                <span class="label">TOKENS</span>
+                <span class="value">46K</span>
+              </div>
+            </div>
+            <figcaption>DETAIL / 3×</figcaption>
+          </figure>
+        </div>
+        <p class="description">Bold ink numerals on a phosphor field. A compact label above the number creates a clear, instantly recognizable reading order.</p>
+      </section>
+    </div>
+
+    <footer>Same sample: 46,000 tokens · Status dot: ready · Static design comparison</footer>
+  </main>
+</body>
+</html>

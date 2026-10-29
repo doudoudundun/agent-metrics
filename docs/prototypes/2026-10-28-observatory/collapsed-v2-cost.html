@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Agent Metrics · 悬浮窗 V2 · 总量与花费</title>
+  <style>
+    :root {
+      --paper: #f0efe9;
+      --ink: #242a22;
+      --muted: #697063;
+      --line: #d4d7cc;
+      --surface: #181d16;
+      --number: #e1ff9a;
+      --label: #c6cfbe;
+      --cost: #f6f3e6;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      padding: 52px 28px;
+      background: var(--paper);
+      color: var(--ink);
+      font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
+    }
+    main { width: min(880px, 100%); margin: auto; }
+    header { display: flex; justify-content: space-between; gap: 18px; align-items: start; }
+    .eyebrow, .edition, .caption, .footnote {
+      font-family: 'Cascadia Mono', Consolas, monospace;
+      font-size: 11px;
+      letter-spacing: 1px;
+    }
+    .eyebrow { margin: 0 0 17px; color: var(--muted); }
+    h1 { margin: 0; font-size: clamp(25px, 4vw, 34px); font-weight: 600; letter-spacing: -1px; }
+    .intro { margin: 12px 0 0; color: var(--muted); font-size: 14px; line-height: 1.8; }
+    .edition { padding-top: 3px; white-space: nowrap; }
+    .stage {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      margin-top: 36px;
+      border-block: 1px solid var(--line);
+    }
+    figure { margin: 0; }
+    .preview { min-height: 384px; display: flex; flex-direction: column; align-items: center; }
+    .preview + .preview { border-left: 1px solid var(--line); }
+    .display { flex: 1; min-height: 320px; display: grid; place-items: center; width: 100%; }
+    .caption { color: var(--muted); margin-bottom: 27px; text-align: center; }
+    .widget {
+      width: 88px;
+      height: 88px;
+      padding: 8px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      border-radius: 24px;
+      background: var(--surface);
+      box-shadow: inset 0 0 0 1px #e1ff9a26, 0 3px 7px #18201415;
+      font-family: 'Segoe UI', 'Trebuchet MS', sans-serif;
+      text-align: center;
+      font-variant-numeric: tabular-nums lining-nums;
+    }
+    .value {
+      display: block;
+      color: var(--number);
+      font-size: 30px;
+      line-height: 30px;
+      font-weight: 750;
+      letter-spacing: -1.2px;
+      white-space: nowrap;
+    }
+    .label {
+      color: var(--label);
+      font-size: 8px;
+      line-height: 10px;
+      font-weight: 650;
+      letter-spacing: 1.1px;
+      padding-left: 1.1px;
+    }
+    .cost-row {
+      width: 100%;
+      display: flex;
+      align-items: baseline;
+      justify-content: center;
+      gap: 3px;
+      margin-top: 4px;
+      padding-top: 4px;
+      border-top: 1px solid #e1ff9a29;
+      white-space: nowrap;
+      color: var(--cost);
+    }
+    .cost { font-size: 21px; line-height: 22px; font-weight: 700; letter-spacing: -.7px; }
+    .currency { font-size: 7px; line-height: 10px; font-weight: 600; letter-spacing: .1px; color: var(--label); }
+    .magnified { width: 264px; height: 264px; }
+    .magnified .widget { transform: scale(3); transform-origin: top left; }
+    .details { display: grid; grid-template-columns: repeat(3, 1fr); gap: 26px; padding: 26px 0 30px; }
+    .detail h2, .range-copy h2 { margin: 0 0 9px; font-size: 13px; font-weight: 600; }
+    .detail p, .range-copy p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.9; }
+    .range { border-top: 1px solid var(--line); padding-top: 24px; display: flex; gap: 32px; align-items: center; }
+    .range-copy { flex: 1; }
+    .sample { text-align: center; }
+    .sample figcaption { margin-top: 10px; color: var(--muted); font-size: 10px; }
+    .value.medium { font-size: 26px; letter-spacing: -1px; }
+    .value.long { font-size: 23px; letter-spacing: -.8px; }
+    .cost.medium { font-size: 18px; }
+    .cost.long { font-size: 16px; letter-spacing: -.5px; }
+    footer { margin-top: 34px; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; color: var(--muted); }
+    .footnote { font-size: 10px; letter-spacing: .5px; }
+    @media (max-width: 620px) {
+      body { padding: 28px 20px; }
+      .stage { grid-template-columns: 1fr; }
+      .preview:first-child { min-height: 200px; }
+      .preview:first-child .display { min-height: 150px; }
+      .preview + .preview { border-left: 0; border-top: 1px solid var(--line); }
+      .details { grid-template-columns: 1fr; gap: 18px; }
+      .range { flex-wrap: wrap; gap: 24px; }
+      .range-copy { flex-basis: 100%; }
+    }
+    @media (max-width: 360px) {
+      body { padding-inline: 16px; }
+      header { flex-wrap: wrap; gap: 12px; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <p class="eyebrow">AGENT METRICS / OBSERVATORY</p>
+        <h1>用了多少，花了多少。</h1>
+        <p class="intro">保留 88 × 88 的轻巧体积，Tokens 总量与美元花费同时可见。</p>
+      </div>
+      <span class="edition">V2 / COST</span>
+    </header>
+
+    <section class="stage" aria-label="Tokens 总量与美元花费悬浮窗设计">
+      <figure class="preview">
+        <div class="display">
+          <div class="widget" role="img" aria-label="示例：Tokens 总量 46K，花费 0.28 美元">
+            <span class="value" aria-hidden="true">46K</span>
+            <span class="label" aria-hidden="true">TOKENS</span>
+            <div class="cost-row" aria-hidden="true"><span class="cost">$0.28</span><span class="currency">USD</span></div>
+          </div>
+        </div>
+        <figcaption class="caption">01 / 原尺寸 · 88 × 88 CSS PX</figcaption>
+      </figure>
+      <figure class="preview">
+        <div class="display">
+          <div class="magnified" aria-hidden="true">
+            <div class="widget">
+              <span class="value">46K</span>
+              <span class="label">TOKENS</span>
+              <div class="cost-row"><span class="cost">$0.28</span><span class="currency">USD</span></div>
+            </div>
+          </div>
+        </div>
+        <figcaption class="caption">02 / 细节预览 · 3×</figcaption>
+      </figure>
+    </section>
+
+    <section class="details" aria-label="设计说明">
+      <div class="detail"><h2>上看总量，下看花费</h2><p>荧光绿总量保留视觉重心，暖白金额单独成行。两项读数常驻，无需悬停或切换。</p></div>
+      <div class="detail"><h2>美元金额，直接读出</h2><p>金额带 $ 符号和 USD 标识，保留两位小数；细分隔线区分用量与花费。</p></div>
+      <div class="detail"><h2>依旧只有 88 × 88</h2><p>延续深墨绿底色与圆角轮廓，移除角落状态点，将空间留给两项关键数字。</p></div>
+    </section>
+
+    <section class="range" aria-label="不同读数长度的排版示例">
+      <div class="range-copy"><h2>读数变长，金额依然完整。</h2><p>总量采用 K / M / B 缩写，长金额缩小字号。所有读数均为设计示例，不代表实际账单。</p></div>
+      <figure class="sample">
+        <div class="widget" role="img" aria-label="示例：Tokens 总量 406M，花费 12.84 美元">
+          <span class="value medium" aria-hidden="true">406M</span>
+          <span class="label" aria-hidden="true">TOKENS</span>
+          <div class="cost-row" aria-hidden="true"><span class="cost medium">$12.84</span><span class="currency">USD</span></div>
+        </div>
+        <figcaption>两位整数金额</figcaption>
+      </figure>
+      <figure class="sample">
+        <div class="widget" role="img" aria-label="示例：Tokens 总量 12.8B，花费 128.40 美元">
+          <span class="value long" aria-hidden="true">12.8B</span>
+          <span class="label" aria-hidden="true">TOKENS</span>
+          <div class="cost-row" aria-hidden="true"><span class="cost long">$128.40</span><span class="currency">USD</span></div>
+        </div>
+        <figcaption>三位整数金额</figcaption>
+      </figure>
+    </section>
+    <footer><span class="footnote">COLLAPSED WIDGET / TOKENS + USD</span><span class="footnote">示例数据 · 2026.10.28</span></footer>
+  </main>
+</body>
+</html>

@@ -6,6 +6,7 @@
     "build": "corepack pnpm -r build",
     "dev": "corepack pnpm --parallel --filter @agent-metrics/core --filter @agent-metrics/dashboard dev",
     "dev:desktop": "corepack pnpm --filter @agent-metrics/cli... --filter @agent-metrics/core build && corepack pnpm --parallel --filter @agent-metrics/dashboard --filter @agent-metrics/desktop dev",
+    "dev:desktop-card": "corepack pnpm --filter @agent-metrics/desktop-card dev",
     "typecheck": "corepack pnpm -r exec tsc --noEmit",
     "lint": "corepack pnpm typecheck",
     "test": "corepack pnpm -r test",
