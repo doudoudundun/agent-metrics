@@ -68,6 +68,9 @@ importers:
       '@agent-metrics/adapters-claude':
         specifier: workspace:*
         version: link:../../packages/adapters-claude
+      '@agent-metrics/adapters-codebuddy-log':
+        specifier: workspace:*
+        version: link:../../packages/adapters-codebuddy-log
       '@agent-metrics/adapters-codex':
         specifier: workspace:*
         version: link:../../packages/adapters-codex
@@ -146,6 +149,15 @@ importers:
         specifier: ^0.25.9
         version: 0.25.12
 
+  apps/desktop-card:
+    devDependencies:
+      '@types/node':
+        specifier: ^22.15.29
+        version: 22.19.19
+      electron:
+        specifier: ^33.2.1
+        version: 33.4.11
+
   packages/adapters-claude:
     dependencies:
       '@agent-metrics/event-schema':
@@ -154,6 +166,19 @@ importers:
       '@agent-metrics/shared-utils':
         specifier: workspace:*
         version: link:../shared-utils
+
+  packages/adapters-codebuddy-log:
+    dependencies:
+      '@agent-metrics/event-schema':
+        specifier: workspace:*
+        version: link:../event-schema
+      '@agent-metrics/shared-utils':
+        specifier: workspace:*
+        version: link:../shared-utils
+    devDependencies:
+      '@agent-metrics/test-utils':
+        specifier: workspace:*
+        version: link:../test-utils
 
   packages/adapters-codex:
     dependencies:
@@ -1123,6 +1148,7 @@ packages:
   '@xmldom/xmldom@0.9.10':
     resolution: {integrity: sha512-A9gOqLdi6cV4ibazAjcQufGj0B1y/vDqYrcuP6d/6x8P27gRS8643Dj9o1dEKtB6O7fwxb2FgBmJS2mX7gpvdw==}
     engines: {node: '>=14.6'}
+    deprecated: this version has critical issues, please update to the latest version
 
   abbrev@1.1.1:
     resolution: {integrity: sha512-nne9/IiQ/hzIhY6pdDnbBtz7DjPTKrY00P/zvPSm5pOFkl6xuGrGnXn/VtTNNfNtAfZ9/1RtehkszU9qcTii0Q==}
