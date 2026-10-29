@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { buildApp } from "./app.js";
 import { repairBrokenIngestionCursor } from "./event-log-projector.js";
+import { resolveDetailRetentionConfig, runDetailRetentionIfNeeded } from "./detail-retention.js";
 import {
   compressEventLogArchive,
   resolveEventLogRotationConfig,
@@ -79,6 +80,38 @@ async function main(): Promise<void> {
   }
 
   await app.listen({ host: "127.0.0.1", port });
+
+  // 明细裁剪放在 listen 之后：它是维护工作，不该拖慢就绪探测，也不该在
+  // /api/health 还没答上来时先跑一个长事务。首次启动跑一次，之后按配置的
+  // 间隔复查（默认 24 小时，检查频率最多 6 小时一次）。真正的时间节流靠
+  // 状态文件里的 lastRunAt，所以重启不会导致重复裁剪。
+  if (runtimeConfig.dbPath) {
+    const retentionConfig = resolveDetailRetentionConfig({
+      env: process.env,
+      eventLogPath: runtimeConfig.eventLogPath,
+      dbPath: runtimeConfig.dbPath
+    });
+    if (retentionConfig.enabled) {
+      const trimOnce = () => {
+        void runDetailRetentionIfNeeded({
+          db: app.db as never,
+          config: retentionConfig,
+          logger: app.log
+        }).catch((error: unknown) => {
+          app.log.warn(
+            { error: error instanceof Error ? error.message : String(error) },
+            "detail retention failed"
+          );
+        });
+      };
+      trimOnce();
+      const checkIntervalMs =
+        Math.min(retentionConfig.intervalHours, 6) * 60 * 60 * 1000;
+      const timer = setInterval(trimOnce, checkIntervalMs);
+      // 不阻止进程退出：定时器只是维护，不该让 Ctrl+C 卡住。
+      timer.unref();
+    }
+  }
 
   // Compression runs off the readiness path; a failure just leaves the plain
   // archive in place, which is still a valid backup.

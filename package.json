@@ -13,6 +13,8 @@
     "test:dashboard:e2e": "corepack pnpm --filter @agent-metrics/dashboard test:e2e",
     "test:desktop": "corepack pnpm --filter @agent-metrics/desktop test",
     "events:split": "node scripts/split-event-log-archive.mjs",
+    "retention": "node scripts/retention.mjs",
+    "retention:apply": "node scripts/retention.mjs --apply --vacuum",
     "purge:usage-duplicates": "node scripts/purge-usage-duplicates.mjs",
     "purge:orphans": "node scripts/purge-orphan-rows.mjs",
     "audit:usage": "node scripts/audit-usage.mjs",

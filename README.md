@@ -20,6 +20,7 @@ After startup, open Claude Code in any workspace and trigger a few real tools su
 
 - Claude Code hooks call the local ingress collector in `apps/cli`; other vendors are collected by source adapters (Codex rollouts, Cursor tracking DB, OpenCode/ZCode/MiMo SQLite, Kimi Code wire records, DSH JSONL, WorkBuddy session transcripts under `~/.workbuddy/projects`, plus CodeBuddy CLI transcripts under `~/.codebuddy/projects`, which share the same schema and are reported as WorkBuddy usage).
 - CodeBuddy CLI also writes a per-request text log under `~/.codebuddy/logs/<date>/<workspace>__<hash>.log`, which `packages/adapters-codebuddy-log` parses. It is a separate adapter because a headless CLI run can leave no transcript at all; the transcript adapter covers the rest, and both share a message-id ledger so a request is never counted twice.
+- Any adapter can silently stop seeing usage without raising an error, so `corepack pnpm audit:usage` checks the invariants that a broken source violates (token semantics, cache coverage, stalled sources, duplicate requests, unpriced rows). See `docs/manual/usage-source-playbook.md` before adding a source.
 - Raw hook envelopes append to `data/hooks/raw/claude-code.jsonl`.
 - `agent-metrics hooks parse --follow` converts raw envelopes into normalized events at `data/events/events.jsonl`.
 - `apps/core` ingests normalized events into SQLite on API requests.
@@ -31,13 +32,22 @@ After startup, open Claude Code in any workspace and trigger a few real tools su
 
 - When the file exceeds `AGENT_METRICS_EVENT_LOG_MAX_BYTES` (default 512 MB), Core streams it, keeps records inside `AGENT_METRICS_EVENT_LOG_RETENTION_DAYS` (default 14), moves the original to `data/events/archive/events-<mtime>.jsonl`, gzips that archive in the background, and atomically replaces the live log with the trimmed copy.
 - The ingestion cursor is not rewritten. The next sync sees a smaller file and resets to offset 0; reprojection is idempotent (`INSERT OR IGNORE` on `normalized_events`, event-id keyed replaces elsewhere), so history already in SQLite is never lost or duplicated.
-- Retention only limits the *replay source*. Dashboards read SQLite, which keeps everything that was ever projected.
+- Retention only limits the *replay source*. SQLite keeps everything that was ever projected, and is trimmed separately by the detail-retention job below.
 
 For a cold archive, split it into replayable per-day chunks:
 
 - `node scripts/split-event-log-archive.mjs data/events/archive/events-<stamp>.jsonl --out-dir data/events/archive/by-day`
 - Produces `events-YYYY-MM-DD.jsonl.gz` plus `manifest.json` and verifies the line accounting.
 - Replay one day (Core stopped): `gunzip -c events-2026-09-15.jsonl.gz >> data/events/events.jsonl`.
+
+## SQLite Detail Retention
+
+SQLite is the opposite problem: it keeps every event's full `payload_json` forever, so a rebuild leaves a 3–4 GB file that is ~70% historical detail. `scripts/retention.mjs` archives the detail older than a rolling window into `data/events/archive/retention/*.jsonl.zst` and deletes it, keeping the layers that every aggregate is computed from (`usage_events`, `tool_calls`, `sessions`, and the `prompt.submitted` / `assistant.responded` / `code.edit.applied` / `session.*` events). Totals, trends, model/provider breakdowns and per-session tokens are unchanged; pre-cutoff session timelines lose their detail.
+
+- `corepack pnpm retention` — dry run, prints what would be archived (default `--keep-months 4`)
+- `corepack pnpm retention:apply` — archive + delete + `VACUUM` (quit the desktop app first; VACUUM needs an exclusive lock)
+- Core runs the same trim automatically after `listen` and every ≤6h, without the backup and without `VACUUM`, so the hot file stops growing without anyone remembering to run a script. Throttled by `maintenance/detail-retention.json`; disable with `AGENT_METRICS_DETAIL_RETENTION_ENABLED=0`.
+- See `docs/manual/data-retention.md` for the layer table, the automatic/manual split, the restore path, and the pagination/WAL pitfalls.
 
 ## Dashboard Behavior
 
@@ -56,6 +66,9 @@ For a cold archive, split it into replayable per-day chunks:
 - `corepack pnpm test`
 - `corepack pnpm build`
 - `corepack pnpm lint`
+- `corepack pnpm audit:usage` (add `--strict` for CI, `--days 14` / `--json` as needed)
+- `corepack pnpm retention` / `corepack pnpm retention:apply` (SQLite detail retention, see `docs/manual/data-retention.md`)
+- `corepack pnpm purge:usage-duplicates -- --db <metrics.sqlite> --apply` / `corepack pnpm purge:orphans -- --db <metrics.sqlite> --apply`
 - `node .\apps\cli\dist\index.js hooks print-config --repo-root D:\projects\dev\agent-metrics`
 - `node .\apps\cli\dist\index.js hooks ensure --scope global --repo-root D:\projects\dev\agent-metrics`
 - `node .\apps\cli\dist\index.js hooks install --scope global --repo-root D:\projects\dev\agent-metrics`
