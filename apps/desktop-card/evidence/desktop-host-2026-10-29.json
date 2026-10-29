@@ -1,0 +1,161 @@
+{
+  "attached": {
+    "ownerPid": 33148,
+    "windowHandle": "4722828",
+    "attached": true,
+    "parentClass": "Progman",
+    "visible": true,
+    "bounds": {
+      "x": 1456,
+      "y": 24,
+      "width": 1080,
+      "height": 272
+    },
+    "error": ""
+  },
+  "initial": {
+    "pid": 33148,
+    "handle": "4722828",
+    "electronBounds": {
+      "x": 1456,
+      "y": 24,
+      "width": 1080,
+      "height": 272
+    },
+    "visible": true,
+    "topmost": false,
+    "displays": [
+      {
+        "id": 1430197633,
+        "bounds": {
+          "x": 0,
+          "y": 0,
+          "width": 2560,
+          "height": 1440
+        },
+        "scaleFactor": 1
+      },
+      {
+        "id": 1610003522,
+        "bounds": {
+          "x": -1920,
+          "y": 0,
+          "width": 1920,
+          "height": 1080
+        },
+        "scaleFactor": 1
+      }
+    ],
+    "native": {
+      "ownerPid": 33148,
+      "windowHandle": "4722828",
+      "attached": true,
+      "parentClass": "Progman",
+      "visible": true,
+      "bounds": {
+        "x": 1456,
+        "y": 24,
+        "width": 1080,
+        "height": 272
+      },
+      "error": ""
+    }
+  },
+  "moved": {
+    "pid": 33148,
+    "handle": "4722828",
+    "electronBounds": {
+      "x": -1500,
+      "y": 300,
+      "width": 1080,
+      "height": 272
+    },
+    "visible": true,
+    "topmost": false,
+    "displays": [
+      {
+        "id": 1430197633,
+        "bounds": {
+          "x": 0,
+          "y": 0,
+          "width": 2560,
+          "height": 1440
+        },
+        "scaleFactor": 1
+      },
+      {
+        "id": 1610003522,
+        "bounds": {
+          "x": -1920,
+          "y": 0,
+          "width": 1920,
+          "height": 1080
+        },
+        "scaleFactor": 1
+      }
+    ],
+    "native": {
+      "ownerPid": 33148,
+      "windowHandle": "4722828",
+      "attached": true,
+      "parentClass": "Progman",
+      "visible": true,
+      "bounds": {
+        "x": -1500,
+        "y": 300,
+        "width": 1080,
+        "height": 272
+      },
+      "error": ""
+    }
+  },
+  "afterDisplayChange": {
+    "pid": 33148,
+    "handle": "4722828",
+    "electronBounds": {
+      "x": -1500,
+      "y": 300,
+      "width": 1080,
+      "height": 272
+    },
+    "visible": true,
+    "topmost": false,
+    "displays": [
+      {
+        "id": 1430197633,
+        "bounds": {
+          "x": 0,
+          "y": 0,
+          "width": 2560,
+          "height": 1440
+        },
+        "scaleFactor": 1
+      },
+      {
+        "id": 1610003522,
+        "bounds": {
+          "x": -1920,
+          "y": 0,
+          "width": 1920,
+          "height": 1080
+        },
+        "scaleFactor": 1
+      }
+    ],
+    "native": {
+      "ownerPid": 33148,
+      "windowHandle": "4722828",
+      "attached": true,
+      "parentClass": "Progman",
+      "visible": true,
+      "bounds": {
+        "x": -1500,
+        "y": 300,
+        "width": 1080,
+        "height": 272
+      },
+      "error": ""
+    }
+  },
+  "wrongOwnerRejected": true
+}

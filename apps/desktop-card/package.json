@@ -10,6 +10,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && node ./scripts/copy-renderer.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "verify:desktop-host": "corepack pnpm build && node scripts/verify-desktop-host.cjs",
     "test": "corepack pnpm build && node --test dist/format.test.js dist/layout.test.js dist/overview-client.test.js",
     "dev": "corepack pnpm build && electron dist/main.js",
     "start": "corepack pnpm dev"

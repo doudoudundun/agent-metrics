@@ -17,6 +17,7 @@ import {
   resolveLocalAccessToken
 } from "./overview-client.js";
 import { loadCardSettings, saveCardSettings, type CardSettings } from "./settings.js";
+import { resolveDesktopHostExecutable, startDesktopHost } from "./desktop-host.js";
 
 const require = createRequire(import.meta.url);
 const electron = require("electron") as Record<string, any>;
@@ -43,6 +44,10 @@ let latestView: CardViewModel = emptyCardView("loading", "Connecting to local me
 let quitting = false;
 let allowQuit = false;
 let settingsWrite: Promise<void> = Promise.resolve();
+let desktopHost: ReturnType<typeof startDesktopHost> | null = null;
+let desktopAttached = false;
+let recreateTimer: NodeJS.Timeout | null = null;
+let windowCloseRequested = false;
 
 const coreApiBaseUrl = resolveCoreApiBaseUrl();
 const localAccessToken = resolveLocalAccessToken();
@@ -182,6 +187,7 @@ function createCardWindow(): any {
     return cardWindow;
   }
   const bounds = resolveWindowBounds();
+  windowCloseRequested = false;
   cardWindow = new BrowserWindow({
     ...bounds,
     minWidth: bounds.width,
@@ -219,6 +225,21 @@ function createCardWindow(): any {
     if (cardWindow && !cardWindow.isDestroyed()) {
       cardWindow.setBounds(resolveWindowBounds());
       cardWindow.showInactive();
+      if (process.platform === "win32") {
+        const window = cardWindow;
+        desktopHost?.dispose();
+        desktopHost = startDesktopHost({
+          executable: resolveDesktopHostExecutable(currentDir),
+          handle: window.getNativeWindowHandle(),
+          ownerPid: process.pid,
+          onReport: (report) => {
+            if (window.isDestroyed() || quitting) return;
+            desktopAttached = report.attached;
+            void writeFile(join(app.getPath("userData"), "desktop-host.json"), JSON.stringify(report, null, 2)).catch(() => undefined);
+          },
+          onError: (error) => console.error("[card] Desktop attachment failed:", error.message)
+        });
+      }
       publishState(latestView);
       void captureIfRequested();
     }
@@ -227,10 +248,21 @@ function createCardWindow(): any {
     publishState(latestView);
   });
   cardWindow.on("move", rememberBounds);
-  cardWindow.on("close", rememberBounds);
+  cardWindow.on("close", () => {
+    windowCloseRequested = true;
+    rememberBounds();
+  });
   cardWindow.on("closed", () => {
+    desktopHost?.dispose();
+    desktopHost = null;
+    desktopAttached = false;
     cardWindow = null;
-    if (!quitting) {
+    if (!quitting && !windowCloseRequested && process.platform === "win32") {
+      recreateTimer = setTimeout(() => {
+        recreateTimer = null;
+        if (!quitting) createCardWindow();
+      }, 1000);
+    } else if (!quitting) {
       app.quit();
     }
   });
@@ -254,8 +286,13 @@ function onDisplayChanged(): void {
   if (!cardWindow || cardWindow.isDestroyed()) {
     return;
   }
-  cardWindow.setBounds(resolveWindowBounds());
-  rememberBounds();
+  const bounds = resolveWindowBounds();
+  if (desktopAttached && desktopHost) {
+    desktopHost.setBounds(screen.dipToScreenRect(cardWindow, bounds));
+  } else {
+    cardWindow.setBounds(bounds);
+    rememberBounds();
+  }
 }
 
 async function captureIfRequested(): Promise<void> {
@@ -283,6 +320,13 @@ async function captureIfRequested(): Promise<void> {
 
 function cleanup(): void {
   stopPolling();
+  desktopHost?.dispose();
+  desktopHost = null;
+  desktopAttached = false;
+  if (recreateTimer) {
+    clearTimeout(recreateTimer);
+    recreateTimer = null;
+  }
   if (persistTimer) {
     clearTimeout(persistTimer);
     persistTimer = null;
@@ -342,5 +386,5 @@ app.on("before-quit", (event: { preventDefault(): void }) => {
 });
 
 app.on("window-all-closed", () => {
-  app.quit();
+  if (!recreateTimer) app.quit();
 });

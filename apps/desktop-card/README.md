@@ -40,6 +40,16 @@ Core 不可用时卡片会显示明确状态，而不会填入截图里的示例
 - 独立设置文件：`%APPDATA%/Agent Metrics Card/card-settings.json`
 - 每 30 秒刷新；请求不会重叠，关闭时取消请求和计时器，并等待设置保存。
 
+## Windows 桌面挂载
+
+Windows 下组件挂到 Explorer 的 `Progman` / `WorkerW` 桌面宿主，使用普通桌面层级，其他应用可以覆盖它。组件不创建或修改壁纸、桌面图标，也不改变其他应用窗口。
+
+挂载辅助程序只接受当前组件进程拥有的窗口，随组件退出而结束；构建时用系统 .NET Framework 编译器生成，不需要额外安装依赖。诊断状态在 `%APPDATA%/Agent Metrics Card/desktop-host.json`。
+
+可运行 `corepack pnpm --filter @agent-metrics/desktop-card verify:desktop-host` 验证真实桌面挂载、错误进程 ID 拒绝、移屏坐标和显示器变化后的恢复。当前双屏验证记录见 `evidence/desktop-host-2026-10-29.json`；混合 DPI 缩放尚未验证。
+
+Win32 父子窗口与样式处理遵循 [SetParent 文档](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setparent)。
+
 ## 黑色桌面样式
 
 组件使用透明底、灰白数字和低饱和标签，不显示外框或浅色区块。操作按钮仅在悬停时出现。黑色背景下的真实数据预览见 `evidence/card-black-desktop.png`，渲染验证记录见 `evidence/dark-theme-2026-10-28.json`。
