@@ -1,0 +1,21 @@
+apps/core/src/get-routes-side-effects.test.ts
+  s_dfafba77b49896::t_af792474392385 13,52-54,80,121
+packages/adapters-workbuddy/src/workbuddy-sync.ts
+  s_dfafba77b49896::t_c8bd56e66a69fc 8
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.8",
+  "base_commit_sha": "a7ec1817ac1218c5723c3dd0aa35a7c29d671b45",
+  "prompts": {},
+  "sessions": {
+    "s_dfafba77b49896": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1825a-e2f9-7670-a3e9-b76c5a515cb4",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Anonymous <anonymous@users.noreply.github.com>"
+    }
+  }
+}
