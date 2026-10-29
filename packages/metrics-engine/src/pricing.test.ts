@@ -20,6 +20,10 @@ describe("estimateCostUsd", () => {
     })).toBeCloseTo(0.640796, 9);
   });
 
+  it("prices Cursor's grok-4.6-high effort variant at the standard grok-4.6 rate", () => {
+    expect(estimateCostUsd({ ...USAGE, model: "cursor-grok-4.6-high" })).toBe(8);
+  });
+
   it.each([
     ["kimi-code/k3.1-pro", 14.2],
     ["k3.1-pro", 14.2],

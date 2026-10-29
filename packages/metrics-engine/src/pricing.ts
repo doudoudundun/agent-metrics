@@ -206,6 +206,9 @@ export const MODEL_PRICING_USD: Record<string, ModelPricing> = {
   "grok-4.7-high-fast": { inputPer1M: 4, outputPer1M: 12, cacheReadPer1M: 1, cacheWritePer1M: 0 },
   // 4.5 and 4.6 share the same $2/$6 card (xAI kept pricing flat across both).
   "grok-4.6": { inputPer1M: 2, outputPer1M: 6, cacheReadPer1M: 0.5, cacheWritePer1M: 0 },
+  // Cursor's Grok 4.6 ids carry the effort suffix without the Fast tier; the
+  // suffix never moves Cursor's price, so this is the standard $2/$6 card.
+  "cursor-grok-4.6-high": { inputPer1M: 2, outputPer1M: 6, cacheReadPer1M: 0.5, cacheWritePer1M: 0 },
   // Cursor Grok 4.6 Fast: published additional-usage rate, USD per 1M tokens.
   "cursor-grok-4.6-high-fast": { inputPer1M: 4, outputPer1M: 12, cacheReadPer1M: 1, cacheWritePer1M: 0 },
   "grok-4.5": { inputPer1M: 2, outputPer1M: 6, cacheReadPer1M: 0.5, cacheWritePer1M: 0 },
