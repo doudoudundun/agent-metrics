@@ -10,6 +10,16 @@ const USAGE = {
 };
 
 describe("estimateCostUsd", () => {
+  it("prices the recorded Cursor Grok 4.6 high-fast model at Fast rates", () => {
+    expect(estimateCostUsd({
+      model: "cursor-grok-4.6-high-fast",
+      inputTokens: 83_722,
+      outputTokens: 5_823,
+      cacheReadTokens: 236_032,
+      cacheCreationTokens: 0
+    })).toBeCloseTo(0.640796, 9);
+  });
+
   it.each([
     ["kimi-code/k3.1-pro", 14.2],
     ["k3.1-pro", 14.2],
@@ -85,6 +95,54 @@ describe("estimateCostUsd", () => {
 
   it("prices cursor's grok-4.7-high effort variant at grok-4.7 rates", () => {
     expect(estimateCostUsd({ ...USAGE, model: "grok-4.7-high" })).toBe(8);
+  });
+
+  it("prices cursor's grok-4.7 fast tier at double the standard rate", () => {
+    expect(
+      estimateCostUsd({
+        ...USAGE,
+        model: "grok-4.7-high-fast",
+        cacheReadTokens: 1_000_000,
+        cacheCreationTokens: 1_000_000
+      })
+    ).toBeCloseTo(17, 9);
+  });
+
+  it("prices cursor's composer-2.5 fast tier at its own published card", () => {
+    const fast = estimateCostUsd({
+      ...USAGE,
+      model: "composer-2.5-fast",
+      cacheReadTokens: 1_000_000,
+      cacheCreationTokens: 1_000_000
+    });
+    const standard = estimateCostUsd({
+      ...USAGE,
+      model: "composer-2.5",
+      cacheReadTokens: 1_000_000,
+      cacheCreationTokens: 1_000_000
+    });
+
+    expect(fast).toBeCloseTo(18.5, 9);
+    expect(standard).toBeCloseTo(3.2, 9);
+  });
+
+  it("prices cursor's opus-5 thinking variant at the base Opus 5 card", () => {
+    const thinking = estimateCostUsd({
+      ...USAGE,
+      model: "claude-opus-5-thinking-high",
+      cacheReadTokens: 1_000_000,
+      cacheCreationTokens: 1_000_000
+    });
+
+    expect(thinking).toBeCloseTo(36.75, 9);
+    expect(thinking).toBe(
+      estimateCostUsd({
+        ...USAGE,
+        model: "claude-opus-5",
+        cacheReadTokens: 1_000_000,
+        cacheCreationTokens: 1_000_000
+      })
+    );
   });
 
   it("prices Xiaomi Token Plan prefixed mimo v2.6 models", () => {

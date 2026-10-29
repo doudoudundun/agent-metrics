@@ -24,6 +24,13 @@
  * land on whichever model the router picks, so they have no list price of their
  * own. Same for `hunyuan-chat` (Hunyuan-Turbos) and `hunyuan-2.0-*`, which have
  * no published per-token rate.
+ *
+ * Cursor rows re-verified 2026-10-27 against cursor.com/docs/models/* and
+ * /docs/models-and-pricing: Cursor resells at the provider's published rate with
+ * no markup, but its own speed tiers are separate cards (Composer 2.5 standard vs
+ * Fast, Grok 4.7 standard vs Fast), and effort suffixes never move the price.
+ * Cursor's long-context tiers (Grok 4.7 500k) are absent because the stored
+ * usage rows carry no input-length tier to select them.
  */
 
 export type ModelPricing = {
@@ -56,6 +63,15 @@ export const MODEL_PRICING_USD: Record<string, ModelPricing> = {
   "claude-fable-5": { inputPer1M: 10, outputPer1M: 50, cacheReadPer1M: 1, cacheWritePer1M: 12.5 },
   "claude-mythos-5": { inputPer1M: 10, outputPer1M: 50, cacheReadPer1M: 1, cacheWritePer1M: 12.5 },
   "claude-opus-5": { inputPer1M: 5, outputPer1M: 25, cacheReadPer1M: 0.5, cacheWritePer1M: 6.25 },
+  // Cursor's thinking-effort suffix on Opus 5. Cursor bills every Opus 5 prompt at
+  // the base rate regardless of thinking depth (only the separate
+  // `claude-opus-5-fast` id costs 2x), so this is the same card as claude-opus-5.
+  "claude-opus-5-thinking-high": {
+    inputPer1M: 5,
+    outputPer1M: 25,
+    cacheReadPer1M: 0.5,
+    cacheWritePer1M: 6.25
+  },
   "claude-sonnet-4-6": { inputPer1M: 3, outputPer1M: 15, cacheReadPer1M: 0.3, cacheWritePer1M: 3.75 },
   // Sonnet 5.5 launched at unchanged Sonnet 5 pricing (Anthropic).
   "claude-sonnet-5": { inputPer1M: 2, outputPer1M: 10, cacheReadPer1M: 0.2, cacheWritePer1M: 2.5 },
@@ -174,13 +190,24 @@ export const MODEL_PRICING_USD: Record<string, ModelPricing> = {
   // K2.8 Preview rate is the reference estimate.
   "kimi-for-coding": { inputPer1M: 1, outputPer1M: 4, cacheReadPer1M: 0.25, cacheWritePer1M: 0 },
   "kimi-for-coding-highspeed": { inputPer1M: 1.9, outputPer1M: 8, cacheReadPer1M: 0.38, cacheWritePer1M: 0 },
+  // Cursor's first-party Composer model, sold per token at cursor.com/docs/models
+  // (snapshot 2026-10-27): $0.5/$2.5 standard, $3/$15 for the Fast variant, with
+  // no separate cache-write rate ("-" in Cursor's table).
+  "composer-2.5": { inputPer1M: 0.5, outputPer1M: 2.5, cacheReadPer1M: 0.2, cacheWritePer1M: 0 },
+  // Cursor's `-fast` suffix for Composer 2.5 is its own price tier (2x input
+  // round-tripped to $3/$15), not a speed multiplier on the $0.5/$2.5 row.
+  "composer-2.5-fast": { inputPer1M: 3, outputPer1M: 15, cacheReadPer1M: 0.5, cacheWritePer1M: 0 },
   // xAI list price; Cursor-subscription traffic is shown at this reference rate.
+  // Effort suffixes (high/xhigh/medium/low) never change the per-token rate.
   "grok-4.7": { inputPer1M: 2, outputPer1M: 6, cacheReadPer1M: 0.5, cacheWritePer1M: 0 },
   "grok-4.7-high": { inputPer1M: 2, outputPer1M: 6, cacheReadPer1M: 0.5, cacheWritePer1M: 0 },
-  // Cursor "-fast" routing variant; reference rate pending a separate list price.
-  "grok-4.7-high-fast": { inputPer1M: 2, outputPer1M: 6, cacheReadPer1M: 0.5, cacheWritePer1M: 0 },
+  // Cursor's Fast speed tier is 2x standard ($4/$12/$1 per Cursor's model page),
+  // so `high` + `fast` carries both the effort suffix and the accelerated card.
+  "grok-4.7-high-fast": { inputPer1M: 4, outputPer1M: 12, cacheReadPer1M: 1, cacheWritePer1M: 0 },
   // 4.5 and 4.6 share the same $2/$6 card (xAI kept pricing flat across both).
   "grok-4.6": { inputPer1M: 2, outputPer1M: 6, cacheReadPer1M: 0.5, cacheWritePer1M: 0 },
+  // Cursor Grok 4.6 Fast: published additional-usage rate, USD per 1M tokens.
+  "cursor-grok-4.6-high-fast": { inputPer1M: 4, outputPer1M: 12, cacheReadPer1M: 1, cacheWritePer1M: 0 },
   "grok-4.5": { inputPer1M: 2, outputPer1M: 6, cacheReadPer1M: 0.5, cacheWritePer1M: 0 },
   "minimax-m3": { inputPer1M: 0.3, outputPer1M: 1.2, cacheReadPer1M: 0.06, cacheWritePer1M: 0 },
   // WorkBuddy's metered M3 alias; same <=512K tier as minimax-m3.
