@@ -550,12 +550,7 @@ function buildCursorEvents(input: {
       });
     }
 
-    if (
-      generation.inputTokens !== null &&
-      generation.outputTokens !== null &&
-      generation.cacheReadInputTokens !== null &&
-      generation.cacheCreationInputTokens !== null
-    ) {
+    if (generation.inputTokens !== null && generation.outputTokens !== null) {
       events.push({
         event_id: `cursor:usage:${generation.messageId}`,
         session_id: generation.sessionId,
@@ -568,8 +563,8 @@ function buildCursorEvents(input: {
         model: generation.model,
         input_tokens: generation.inputTokens,
         output_tokens: generation.outputTokens,
-        cache_creation_input_tokens: generation.cacheCreationInputTokens,
-        cache_read_input_tokens: generation.cacheReadInputTokens,
+        cache_creation_input_tokens: generation.cacheCreationInputTokens ?? 0,
+        cache_read_input_tokens: generation.cacheReadInputTokens ?? 0,
         server_tool_use: "{}",
         usage_source: generation.usageSource ?? "cursor-generation",
         provider_id: null,
@@ -773,6 +768,20 @@ function extractGenerations(value: unknown, workspacePath: string): CursorGenera
         return null;
       }
 
+      // Input and output are the only fields every Cursor payload reports; the
+      // cache counters are optional and often absent. Requiring all four here
+      // used to drop the whole record, so a generation with real token counts
+      // but no cache fields produced no usage at all. Missing counters are
+      // treated as zero instead.
+      const inputTokens =
+        normalizeNonNegativeInteger(usage?.inputTokens ?? usage?.input_tokens ?? usage?.promptTokens) ??
+        null;
+      const outputTokens =
+        normalizeNonNegativeInteger(
+          usage?.outputTokens ?? usage?.output_tokens ?? usage?.completionTokens
+        ) ?? null;
+      const hasUsage = inputTokens !== null && outputTokens !== null;
+
       return {
         sessionId,
         workspacePath,
@@ -783,34 +792,17 @@ function extractGenerations(value: unknown, workspacePath: string): CursorGenera
           normalizeOptionalString(record?.modelName) ??
           null,
         responseChars: responseText.length,
-        inputTokens:
-          normalizeNonNegativeInteger(usage?.inputTokens ?? usage?.input_tokens ?? usage?.promptTokens) ??
-          null,
-        outputTokens:
-          normalizeNonNegativeInteger(
-            usage?.outputTokens ?? usage?.output_tokens ?? usage?.completionTokens
-          ) ?? null,
+        inputTokens,
+        outputTokens,
         cacheReadInputTokens:
           normalizeNonNegativeInteger(
             usage?.cacheReadInputTokens ?? usage?.cache_read_input_tokens
-          ) ?? null,
+          ) ?? (hasUsage ? 0 : null),
         cacheCreationInputTokens:
           normalizeNonNegativeInteger(
             usage?.cacheCreationInputTokens ?? usage?.cache_creation_input_tokens
-          ) ?? null,
-        usageSource:
-          normalizeNonNegativeInteger(usage?.inputTokens ?? usage?.input_tokens ?? usage?.promptTokens) !== null &&
-          normalizeNonNegativeInteger(
-            usage?.outputTokens ?? usage?.output_tokens ?? usage?.completionTokens
-          ) !== null &&
-          normalizeNonNegativeInteger(
-            usage?.cacheReadInputTokens ?? usage?.cache_read_input_tokens
-          ) !== null &&
-          normalizeNonNegativeInteger(
-            usage?.cacheCreationInputTokens ?? usage?.cache_creation_input_tokens
-          ) !== null
-            ? "cursor-generation"
-            : null
+          ) ?? (hasUsage ? 0 : null),
+        usageSource: hasUsage ? "cursor-generation" : null
       };
     })
     .filter((entry): entry is CursorGeneration => entry !== null);

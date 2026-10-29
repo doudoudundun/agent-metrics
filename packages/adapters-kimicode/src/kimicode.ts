@@ -371,9 +371,15 @@ function normalizeUsageRecord(
   context: KimicodeWireContext,
   state: KimicodeWireParseState
 ): AnyEvent[] {
-  if (record.usageScope !== "turn") {
+  // Kimi Code bills a full context compaction under usageScope "session": one
+  // summarization request, usually served by the model configured for
+  // compaction rather than the turn model. It is a real, billable request, so
+  // dropping it loses that call (and its model) from every panel.
+  const usageScope = readString(record.usageScope);
+  if (usageScope !== "turn" && usageScope !== "session") {
     return [];
   }
+  const isCompaction = usageScope === "session";
 
   const time = readTimestamp(record.time);
   const usage = asRecord(record.usage);
@@ -390,16 +396,24 @@ function normalizeUsageRecord(
   }
 
   const model = readString(record.model) ?? state.lastModel;
-  if (model !== null) {
+  if (!isCompaction && model !== null) {
     state.lastModel = model;
     state.lastProviderId = splitProvider(model);
   }
-  const messageId = state.lastMessageId ?? `usage:${context.agentId}:${time}`;
-  const timing = state.pendingStepTiming;
-  state.pendingStepTiming = null;
+  const providerId = model === null ? state.lastProviderId : splitProvider(model);
+  const messageId =
+    isCompaction || state.lastMessageId === null
+      ? `usage:${context.agentId}:${time}`
+      : state.lastMessageId;
+  const timing = isCompaction ? null : state.pendingStepTiming;
+  if (!isCompaction) {
+    state.pendingStepTiming = null;
+  }
   return [
     {
-      event_id: buildEventId(`${context.sessionId}:agent:${context.agentId}:usage:${time}`),
+      event_id: buildEventId(
+        `${context.sessionId}:agent:${context.agentId}:usage:${isCompaction ? "compaction:" : ""}${time}`
+      ),
       session_id: context.sessionId,
       timestamp: toIsoTimestamp(time),
       source_vendor: KIMICODE_SOURCE_VENDOR,
@@ -416,7 +430,7 @@ function normalizeUsageRecord(
       usage_source: "kimicode-usage",
       first_token_latency_ms: timing?.firstTokenLatencyMs ?? null,
       decode_duration_ms: timing?.decodeDurationMs ?? null,
-      provider_id: state.lastProviderId,
+      provider_id: providerId,
       provider_base_url: null,
       provider_host: null
     }

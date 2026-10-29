@@ -36,6 +36,14 @@ export function extractCodexEventsFromRollout(input: {
   const lines = input.contents.split(/\r?\n/u).filter((line) => line.length > 0);
   const events: AnyEvent[] = [];
   const pendingToolCalls = new Map<string, PendingCodexToolCall>();
+  // Rollouts also mirror each response's usage into a `token_usage_record`
+  // line. The `event_msg/token_count` stream stays authoritative because the
+  // timing heuristics below are anchored on it, but a rollout that only writes
+  // the mirror (or a future Codex that drops token_count) would otherwise
+  // contribute zero usage. Mirror rows are buffered and only consumed when the
+  // file produced no token_count usage at all, so the two never double count.
+  const mirroredUsageEvents: AnyEvent[] = [];
+  let tokenCountUsageCount = 0;
   let lastTokenEventMs: number | null = null;
   // Turn start anchor (task_started) and whether this turn already spent its
   // first-token observation on a token_count report.
@@ -46,6 +54,12 @@ export function extractCodexEventsFromRollout(input: {
   // event is billed at that tier until the next settings record, so the tier is
   // carried forward in file order rather than read from config.
   let currentServiceTier: ServiceTier | null = null;
+  // Codex writes the model actually serving the turn into `turn_context`. It is
+  // the authoritative source: the session's model can change mid-session, and
+  // the tracing log this adapter used to rely on
+  // (`resolveCodexLogsDbPath` → `conversation.id=... model=...`) is not written
+  // for every invocation, which left usage rows with a NULL model.
+  let currentModel: string | null = null;
   let sourceInstanceId =
     input.sourceInstanceId ??
     (isMulticaRolloutPath(input.filePath) ? "codex:multica" : undefined);
@@ -98,6 +112,35 @@ export function extractCodexEventsFromRollout(input: {
         workspace_path: sessionMeta.workspacePath,
         type: "session.started"
       });
+      continue;
+    }
+
+    if (eventType === "turn_context" && payload !== null) {
+      const model = normalizeOptionalString(payload.model);
+      if (model !== null) {
+        currentModel = model;
+      }
+      continue;
+    }
+
+    if (eventType === "token_usage_record" && payload !== null) {
+      const sessionId = sessionMeta?.sessionId ?? inferSessionIdFromPath(input.filePath);
+      if (sessionId !== null) {
+        const mirrored = buildMirroredUsageEvent({
+          parsed,
+          payload,
+          sessionId,
+          workspacePath: sessionMeta?.workspacePath ?? ".",
+          model: currentModel ?? input.sessionModels?.[sessionId] ?? null,
+          serviceTier: currentServiceTier,
+          providerId: sessionMeta?.providerId ?? null,
+          providerConfig:
+            sessionMeta?.providerId != null ? input.providerConfigs?.[sessionMeta.providerId] : undefined
+        });
+        if (mirrored !== null) {
+          mirroredUsageEvents.push(mirrored);
+        }
+      }
       continue;
     }
 
@@ -316,7 +359,7 @@ export function extractCodexEventsFromRollout(input: {
           workspace_path: sessionMeta?.workspacePath ?? ".",
           type: "assistant.responded",
           message_id: `response_${eventKey}`,
-          model: input.sessionModels?.[sessionId] ?? null,
+          model: currentModel ?? input.sessionModels?.[sessionId] ?? null,
           stop_reason: normalizeOptionalString(payload.phase) ?? null,
           response_chars: responseText.length,
           provider_id: providerId,
@@ -590,7 +633,7 @@ export function extractCodexEventsFromRollout(input: {
       workspace_path: sessionMeta?.workspacePath ?? ".",
       type: "token.usage.recorded",
       message_id: `usage_${totalTokens}`,
-      model: input.sessionModels?.[sessionId] ?? null,
+      model: currentModel ?? input.sessionModels?.[sessionId] ?? null,
       input_tokens: inputTokens,
       output_tokens: outputTokens,
       cache_creation_input_tokens: 0,
@@ -604,6 +647,13 @@ export function extractCodexEventsFromRollout(input: {
       first_token_latency_ms: firstTokenLatencyMs,
       decode_duration_ms: decodeDurationMs
     });
+    tokenCountUsageCount += 1;
+  }
+
+  // Only fall back to the mirrored `token_usage_record` rows when this rollout
+  // produced no usage through the token_count stream at all.
+  if (tokenCountUsageCount === 0 && mirroredUsageEvents.length > 0) {
+    events.push(...mirroredUsageEvents);
   }
 
   // Sort on the legacy AnyEvent shape (readable, stable event_id) before
@@ -623,6 +673,71 @@ export function inferSessionIdFromPath(filePath: string): string | null {
   const name = basename(filePath);
   const match = /^rollout-.*-([0-9a-f]{8,}-[0-9a-f-]+)\.jsonl$/iu.exec(name);
   return match?.[1] ?? null;
+}
+
+/**
+ * Build a usage event from a `token_usage_record` line.
+ *
+ * Codex writes this mirror once per response with the response's own `usage`
+ * block, which is the same shape `token_count` reports as `last_token_usage`.
+ * No timing is attached: the record carries no decode window and the
+ * token_count heuristics that estimate one are keyed on the token_count
+ * stream, which by definition is absent when this fallback is used.
+ */
+function buildMirroredUsageEvent(input: {
+  parsed: Record<string, unknown>;
+  payload: Record<string, unknown>;
+  sessionId: string;
+  workspacePath: string;
+  model: string | null;
+  serviceTier: ServiceTier | null;
+  providerId: string | null;
+  providerConfig?: CodexProviderConfig;
+}): AnyEvent | null {
+  const usage = asRecord(input.payload.usage);
+  if (usage === null) {
+    return null;
+  }
+
+  const inputTokens = normalizeInteger(usage.input_tokens) ?? 0;
+  const cacheReadTokens = normalizeInteger(usage.cached_input_tokens) ?? 0;
+  const outputTokens =
+    (normalizeInteger(usage.output_tokens) ?? 0) + (normalizeInteger(usage.reasoning_output_tokens) ?? 0);
+  if (inputTokens === 0 && cacheReadTokens === 0 && outputTokens === 0) {
+    return null;
+  }
+
+  const responseId = normalizeOptionalString(input.payload.response_id);
+  const ordinal = normalizeInteger(input.payload.ordinal);
+  const key = responseId ?? (ordinal !== null ? `ordinal-${ordinal}` : null);
+  if (key === null) {
+    return null;
+  }
+
+  const timestamp = normalizeOptionalString(input.parsed.timestamp) ?? new Date(0).toISOString();
+  return {
+    event_id: `codex:session:${input.sessionId}:usage:record:${key}`,
+    session_id: input.sessionId,
+    timestamp,
+    source_vendor: CODEX_SOURCE_VENDOR,
+    source_adapter: CODEX_ROLLOUT_ADAPTER,
+    workspace_path: input.workspacePath,
+    type: "token.usage.recorded",
+    message_id: responseId !== null ? `usage_${responseId}` : `usage_record_${ordinal}`,
+    model: input.model,
+    input_tokens: inputTokens,
+    output_tokens: outputTokens,
+    cache_creation_input_tokens: normalizeInteger(usage.cache_write_input_tokens) ?? 0,
+    cache_read_input_tokens: cacheReadTokens,
+    server_tool_use: "{}",
+    usage_source: "codex-rollout",
+    ...(input.serviceTier ? { service_tier: input.serviceTier } : {}),
+    provider_id: input.providerId,
+    provider_base_url: input.providerConfig?.baseUrl ?? null,
+    provider_host: input.providerConfig?.host ?? null,
+    first_token_latency_ms: null,
+    decode_duration_ms: null
+  };
 }
 
 function isMulticaRolloutPath(filePath: string): boolean {

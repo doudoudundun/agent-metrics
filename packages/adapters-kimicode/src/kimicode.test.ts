@@ -177,6 +177,127 @@ describe("normalizeKimicodeWireRecord", () => {
     );
   });
 
+  it("counts a session-scoped compaction request against the compaction model", () => {
+    const state = createKimicodeWireParseState();
+    const context = {
+      sessionId: "session_1",
+      workspacePath: "D:/projects/dev/demo",
+      agentId: "main"
+    };
+    const time = 1_793_170_373_638;
+
+    normalizeKimicodeWireRecord(
+      {
+        type: "full_compaction.begin",
+        time: time - 378_000
+      },
+      context,
+      state
+    );
+    normalizeKimicodeWireRecord(
+      {
+        type: "context.append_loop_event",
+        event: {
+          type: "llm.request",
+          provider: "openai",
+          model: "mimo-v2.6-flash",
+          modelAlias: "Xiaomi Token Plan/mimo-v2.6-flash"
+        },
+        time: time - 377_783
+      },
+      context,
+      state
+    );
+    const usage = normalizeKimicodeWireRecord(
+      {
+        type: "usage.record",
+        model: "Xiaomi Token Plan/mimo-v2.6-flash",
+        usage: { inputOther: 590_103, output: 2718, inputCacheRead: 1024, inputCacheCreation: 0 },
+        usageScope: "session",
+        time
+      },
+      context,
+      state
+    );
+
+    expect(usage).toHaveLength(1);
+    expect(usage[0]).toEqual(
+      expect.objectContaining({
+        type: "token.usage.recorded",
+        usage_source: "kimicode-usage",
+        model: "Xiaomi Token Plan/mimo-v2.6-flash",
+        provider_id: "Xiaomi Token Plan",
+        input_tokens: 590_103,
+        output_tokens: 2718,
+        cache_read_input_tokens: 1024
+      })
+    );
+  });
+
+  it("keeps compaction usage off the previous turn's message and timing", () => {
+    const state = createKimicodeWireParseState();
+    const context = {
+      sessionId: "session_1",
+      workspacePath: "D:/projects/dev/demo",
+      agentId: "main"
+    };
+
+    normalizeKimicodeWireRecord(
+      {
+        type: "context.append_loop_event",
+        event: {
+          type: "step.end",
+          messageId: "msg_1",
+          llmFirstTokenLatencyMs: 1200,
+          llmStreamDurationMs: 3400
+        },
+        time: 1_786_587_704_400
+      },
+      context,
+      state
+    );
+    const compaction = normalizeKimicodeWireRecord(
+      {
+        type: "usage.record",
+        model: "Xiaomi Token Plan/mimo-v2.6-flash",
+        usage: { inputOther: 900, output: 40, inputCacheRead: 0, inputCacheCreation: 0 },
+        usageScope: "session",
+        time: 1_786_587_704_500
+      },
+      context,
+      state
+    );
+    const turnUsage = normalizeKimicodeWireRecord(
+      {
+        type: "usage.record",
+        model: "kimi-code/k3-256k",
+        usage: { inputOther: 100, output: 50, inputCacheRead: 0, inputCacheCreation: 0 },
+        usageScope: "turn",
+        time: 1_786_587_704_600
+      },
+      context,
+      state
+    );
+
+    expect(compaction[0]).toEqual(
+      expect.objectContaining({
+        message_id: "usage:main:1786587704500",
+        model: "Xiaomi Token Plan/mimo-v2.6-flash",
+        first_token_latency_ms: null,
+        decode_duration_ms: null
+      })
+    );
+    // The compaction request must not consume the turn's pending step timing.
+    expect(turnUsage[0]).toEqual(
+      expect.objectContaining({
+        message_id: "msg_1",
+        model: "kimi-code/k3-256k",
+        first_token_latency_ms: 1200,
+        decode_duration_ms: 3400
+      })
+    );
+  });
+
   it("emits code.edit.applied with diff stats for a successful Edit", () => {
     const state = createKimicodeWireParseState();
     const context = {

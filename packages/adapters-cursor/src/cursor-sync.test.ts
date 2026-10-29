@@ -210,6 +210,128 @@ describe("syncCursorArtifacts", () => {
     );
   });
 
+  it("keeps usage when Cursor omits the cache counters", async () => {
+    const root = await mkdtemp(join(tmpdir(), "agent-metrics-cursor-nocache-"));
+    const trackingDbPath = join(root, "ai-code-tracking.db");
+    const workspaceStorageRoot = join(root, "workspaceStorage");
+    const workspaceId = "ws_nocache";
+    const workspaceStorageDbPath = join(workspaceStorageRoot, workspaceId, "state.vscdb");
+    const storageJsonPath = join(root, "storage.json");
+    const eventLogPath = join(root, "events.jsonl");
+    const cursorPath = join(root, "cursor-ide-state.json");
+    const ledgerPath = join(root, "cursor-ide-ledger.json");
+    const workspacePath = "/Users/test/dev/agent-metrics";
+    const createdAt = 1777482580633;
+    const responseAt = 1777482582633;
+
+    const trackingDb = new Database(trackingDbPath);
+    trackingDb.exec(`
+      CREATE TABLE conversation_summaries (
+        conversationId TEXT PRIMARY KEY,
+        title TEXT,
+        tldr TEXT,
+        overview TEXT,
+        summaryBullets TEXT,
+        model TEXT,
+        mode TEXT,
+        updatedAt INTEGER NOT NULL
+      );
+    `);
+    trackingDb
+      .prepare(
+        `INSERT INTO conversation_summaries (
+          conversationId, title, tldr, overview, summaryBullets, model, mode, updatedAt
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run("cmp_1", "Refactor parser", null, null, null, "cursor-fast", "agent", responseAt);
+    trackingDb.close();
+
+    await mkdir(join(workspaceStorageRoot, workspaceId), { recursive: true });
+    const workspaceDb = new Database(workspaceStorageDbPath);
+    workspaceDb.exec(`
+      CREATE TABLE ItemTable (
+        key TEXT PRIMARY KEY,
+        value TEXT
+      );
+    `);
+    workspaceDb
+      .prepare("INSERT INTO ItemTable (key, value) VALUES (?, ?)")
+      .run(
+        "composer.composerData",
+        JSON.stringify({
+          allComposers: [
+            {
+              composerId: "cmp_1",
+              createdAt,
+              totalLinesAdded: 0,
+              totalLinesRemoved: 0,
+              filesChangedCount: 0,
+              unifiedMode: "agent",
+              isArchived: false
+            }
+          ]
+        })
+      );
+    workspaceDb
+      .prepare("INSERT INTO ItemTable (key, value) VALUES (?, ?)")
+      .run(
+        "aiService.generations",
+        JSON.stringify([
+          {
+            messageId: "msg_1",
+            composerId: "cmp_1",
+            createdAt: responseAt,
+            text: "Done.",
+            model: "cursor-fast",
+            // Cursor payloads often report only input/output; the cache counters
+            // are absent rather than zero.
+            usage: { inputTokens: 20, outputTokens: 5 }
+          }
+        ])
+      );
+    workspaceDb.close();
+
+    await writeFile(
+      storageJsonPath,
+      JSON.stringify({
+        backupWorkspaces: {
+          folders: [{ folderUri: `file://${workspacePath}`, backupFolder: workspaceId }],
+          workspaces: [],
+          emptyWindows: []
+        }
+      }),
+      "utf8"
+    );
+
+    await syncCursorArtifacts({
+      trackingDbPath,
+      workspaceStorageRoot,
+      storageJsonPath,
+      eventLogPath,
+      cursorPath,
+      ledgerPath
+    });
+
+    const events = (await readFile(eventLogPath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source_record_id: "cursor:usage:msg_1",
+          type: "token.usage.recorded",
+          input_tokens: 20,
+          output_tokens: 5,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+          usage_source: "cursor-generation"
+        })
+      ])
+    );
+  });
+
   it("normalizes Windows file URIs from Cursor workspace storage", async () => {
     const root = await mkdtemp(join(tmpdir(), "agent-metrics-cursor-win-"));
     const workspaceStorageRoot = join(root, "workspaceStorage");

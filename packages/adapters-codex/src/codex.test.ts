@@ -866,6 +866,113 @@ describe("extractCodexEventsFromRollout", () => {
     }
   });
 
+  it("falls back to the mirrored token_usage_record when a rollout has no token_count", () => {
+    const sessionId = "019e5dc9-b10c-7371-8edd-066e8db7e50d";
+    const events = extractCodexEventsFromRollout({
+      filePath: `C:/Users/test/.codex/sessions/2026/10/28/rollout-2026-10-28T10-00-00-${sessionId}.jsonl`,
+      sessionModels: { [sessionId]: "gpt-6.1-sol" },
+      contents: [
+        JSON.stringify({
+          timestamp: "2026-10-28T10:00:00.000Z",
+          type: "session_meta",
+          payload: {
+            id: sessionId,
+            timestamp: "2026-10-28T10:00:00.000Z",
+            cwd: "D:/projects/dev",
+            model_provider: "openai"
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-10-28T10:00:05.000Z",
+          type: "token_usage_record",
+          payload: {
+            thread_id: sessionId,
+            turn_id: "turn-1",
+            session_id: sessionId,
+            response_id: "resp_abc",
+            usage: {
+              input_tokens: 1200,
+              cached_input_tokens: 400,
+              cache_write_input_tokens: 0,
+              output_tokens: 60,
+              reasoning_output_tokens: 20,
+              total_tokens: 1280
+            }
+          }
+        })
+      ].join("\n")
+    });
+
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source_record_id: `codex:session:${sessionId}:usage:record:resp_abc`,
+          type: "token.usage.recorded",
+          message_id: "usage_resp_abc",
+          model: "gpt-6.1-sol",
+          input_tokens: 1200,
+          output_tokens: 80,
+          cache_read_input_tokens: 400,
+          cache_creation_input_tokens: 0,
+          usage_source: "codex-rollout",
+          first_token_latency_ms: null,
+          decode_duration_ms: null
+        })
+      ])
+    );
+    for (const event of events) {
+      expect(NormalizedEventV2Schema.safeParse(event).success).toBe(true);
+    }
+  });
+
+  it("does not double count when token_count and token_usage_record both report a response", () => {
+    const sessionId = "019e5dc9-b10c-7371-8edd-066e8db7e50d";
+    const usage = {
+      input_tokens: 1200,
+      cached_input_tokens: 400,
+      cache_write_input_tokens: 0,
+      output_tokens: 60,
+      reasoning_output_tokens: 20,
+      total_tokens: 1280
+    };
+    const events = extractCodexEventsFromRollout({
+      filePath: `C:/Users/test/.codex/sessions/2026/10/28/rollout-2026-10-28T10-00-00-${sessionId}.jsonl`,
+      contents: [
+        JSON.stringify({
+          timestamp: "2026-10-28T10:00:00.000Z",
+          type: "session_meta",
+          payload: {
+            id: sessionId,
+            timestamp: "2026-10-28T10:00:00.000Z",
+            cwd: "D:/projects/dev",
+            model_provider: "openai"
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-10-28T10:00:05.000Z",
+          type: "token_usage_record",
+          payload: { thread_id: sessionId, response_id: "resp_abc", usage }
+        }),
+        JSON.stringify({
+          timestamp: "2026-10-28T10:00:06.000Z",
+          type: "event_msg",
+          payload: {
+            type: "token_count",
+            info: { last_token_usage: usage, total_token_usage: usage }
+          }
+        })
+      ].join("\n")
+    });
+
+    const usageEvents = events.filter((event) => event.type === "token.usage.recorded");
+    expect(usageEvents).toHaveLength(1);
+    expect(usageEvents[0]).toEqual(
+      expect.objectContaining({
+        source_record_id: `codex:session:${sessionId}:usage:1280`
+      })
+    );
+  });
+
   it("tags usage with the persisted service tier and resets it when the tier changes", () => {
     const sessionId = "019e5dc9-b10c-7371-8edd-066e8db7e50d";
     const settings = (tier: string, timestamp: string) =>
@@ -917,6 +1024,58 @@ describe("extractCodexEventsFromRollout", () => {
     expect(usageEvents[0]).toMatchObject({ service_tier: "priority" });
     // Back on the standard queue: no tier, so the plain card applies again.
     expect(usageEvents[1]).not.toHaveProperty("service_tier");
+    for (const event of events) {
+      expect(NormalizedEventV2Schema.safeParse(event).success).toBe(true);
+    }
+  });
+
+  it("takes the model from turn_context when the tracing log has no entry for the session", () => {
+    const sessionId = "019e5dc9-b10c-7371-8edd-066e8db7e50d";
+    const turnContext = (model: string, timestamp: string) =>
+      JSON.stringify({
+        timestamp,
+        type: "turn_context",
+        payload: { turn_id: "turn-1", model }
+      });
+    const usage = (totalTokens: number, timestamp: string) =>
+      JSON.stringify({
+        timestamp,
+        type: "event_msg",
+        payload: {
+          type: "token_count",
+          info: {
+            last_token_usage: {
+              input_tokens: 1000,
+              cached_input_tokens: 800,
+              output_tokens: 100,
+              total_tokens: totalTokens
+            }
+          }
+        }
+      });
+
+    // No `sessionModels`: the tracing log is not written for every Codex
+    // invocation, which used to leave these rows unpriced.
+    const events = extractCodexEventsFromRollout({
+      filePath: `C:/Users/test/.codex/sessions/2026/10/27/rollout-2026-10-27T21-13-18-${sessionId}.jsonl`,
+      contents: [
+        JSON.stringify({
+          timestamp: "2026-10-27T13:13:18.000Z",
+          type: "session_meta",
+          payload: { id: sessionId, timestamp: "2026-10-27T13:13:18.000Z", cwd: "D:/projects/dev" }
+        }),
+        turnContext("gpt-6.1-sol", "2026-10-27T13:13:21.000Z"),
+        usage(1100, "2026-10-27T13:13:29.000Z"),
+        // A mid-session model switch must apply to the following usage only.
+        turnContext("gpt-6.1-mini", "2026-10-27T13:14:00.000Z"),
+        usage(2200, "2026-10-27T13:14:10.000Z")
+      ].join("\n")
+    });
+
+    const usageEvents = events.filter((event) => event.type === "token.usage.recorded");
+    expect(usageEvents).toHaveLength(2);
+    expect(usageEvents[0]).toMatchObject({ model: "gpt-6.1-sol" });
+    expect(usageEvents[1]).toMatchObject({ model: "gpt-6.1-mini" });
     for (const event of events) {
       expect(NormalizedEventV2Schema.safeParse(event).success).toBe(true);
     }
