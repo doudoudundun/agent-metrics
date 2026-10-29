@@ -26,6 +26,7 @@ import { ProviderBreakdownPanel } from "./components/ProviderBreakdownPanel";
 import { TimeScopeToolbar } from "./components/TimeScopeToolbar";
 import { TokenTrendPanel } from "./components/TokenTrendPanel";
 import { TrendChart } from "./components/TrendChart";
+import { UiIcon } from "./components/UiIcon";
 import {
   deriveDashboardStatus,
   formatDashboardStatusLabel,
@@ -316,185 +317,229 @@ export function DashboardPage() {
 
   return (
     <main className="dashboard-page">
-      <div className="dashboard-overview-band">
-        <header className="dashboard-topbar">
-          <div>
-            <span className="dashboard-topbar__eyebrow">Agent Metrics / Local Ops</span>
-            <h1>Operational workspace</h1>
-          </div>
-          <div className="dashboard-topbar__actions">
-            <span
-              className={`health-chip health-chip--${status}`}
-              role="status"
-              aria-label={`Dashboard status: ${statusLabel}`}
-            >
-              {statusLabel}
-            </span>
-            <button type="button" onClick={() => void handleSync()} disabled={syncing}>
-              {syncing ? "Syncing..." : "Sync sources"}
-            </button>
-            {desktopBridge ? (
-              <button type="button" onClick={() => void desktopBridge.showMainWindow()}>
-                Focus window
+      <aside className="dashboard-rail" aria-label="Agent Metrics workspace">
+        <a className="dashboard-rail__brand" href="#dashboard-overview" aria-label="Agent Metrics overview">
+          <UiIcon name="brand" size={25} />
+        </a>
+        <nav className="dashboard-rail__nav" aria-label="Workspace sections">
+          <a href="#dashboard-overview" aria-label="Overview" title="Overview">
+            <UiIcon name="grid" />
+          </a>
+          <a href="#dashboard-analytics" aria-label="Analytics" title="Analytics">
+            <UiIcon name="trend" />
+          </a>
+          <a href="#dashboard-quotas" aria-label="Official key usage" title="Official key usage">
+            <UiIcon name="layers" />
+          </a>
+        </nav>
+        <span className="dashboard-rail__local"><i />Local</span>
+      </aside>
+
+      <div className="dashboard-workspace">
+        <div className="dashboard-overview-band" id="dashboard-overview">
+          <header className="dashboard-topbar">
+            <div className="dashboard-topbar__brand">
+              <strong>Agent Metrics</strong>
+              <span>/ Local observatory</span>
+            </div>
+            <div className="dashboard-topbar__actions">
+              <span className="dashboard-privacy"><i />On device · private</span>
+              {desktopBridge ? (
+                <button className="dashboard-focus-button" type="button" onClick={() => void desktopBridge.showMainWindow()}>
+                  <UiIcon name="focus" size={15} />
+                  Focus window
+                </button>
+              ) : null}
+              <button
+                className="dashboard-sync-button"
+                data-syncing={syncing}
+                type="button"
+                onClick={() => void handleSync()}
+                disabled={syncing}
+              >
+                <UiIcon name="sync" size={16} />
+                {syncing ? "Syncing..." : "Sync sources"}
               </button>
-            ) : null}
-          </div>
-        </header>
-        {syncError ? <p className="dashboard-sync-error" role="alert">{syncError}</p> : null}
+            </div>
+          </header>
 
-        <section className="dashboard-controls" aria-label="Dashboard filters">
-          <div>
-            <span className="dashboard-controls__label">Time range</span>
-            <TimeScopeToolbar selection={scope} onChange={setScope} />
-          </div>
-          <div>
-            <span className="dashboard-controls__label">Source</span>
-            <div className="dashboard-source-tabs" role="toolbar" aria-label="Dashboard source filter">
-              {primarySourceOptions.map((option) => {
-                const costLabel = formatSourceCost(sourceUsageBreakdown, option.value);
+          <section className="dashboard-hero" aria-labelledby="dashboard-title">
+            <div>
+              <span className="dashboard-topbar__eyebrow">Workspace / 01</span>
+              <h1 id="dashboard-title">Your agents, <em>in focus.</em></h1>
+              <p>A clear signal from every session. All on your machine.</p>
+            </div>
+            <div className="dashboard-hero__meta">
+              <span
+                className={`health-chip health-chip--${status}`}
+                role="status"
+                aria-label={`Dashboard status: ${statusLabel}`}
+              >
+                <i />{statusLabel}
+              </span>
+              <span>{overview ? `Updated ${new Date(overview.updatedAt).toLocaleTimeString()}` : "Waiting for the local metrics core"}</span>
+            </div>
+          </section>
+          {syncError ? <p className="dashboard-sync-error" role="alert">{syncError}</p> : null}
 
-                return (
+          <section className="dashboard-controls" aria-label="Dashboard filters">
+            <div className="dashboard-control-row">
+              <span className="dashboard-controls__label">Period</span>
+              <TimeScopeToolbar selection={scope} onChange={setScope} />
+            </div>
+            <div className="dashboard-control-row">
+              <span className="dashboard-controls__label">Source</span>
+              <div className="dashboard-source-tabs" role="toolbar" aria-label="Dashboard source filter">
+                {primarySourceOptions.map((option) => {
+                  const costLabel = formatSourceCost(sourceUsageBreakdown, option.value);
+
+                  return (
+                    <button
+                      type="button"
+                      aria-pressed={sourceVendor === option.value}
+                      data-selected={sourceVendor === option.value}
+                      key={option.value}
+                      onClick={() => setSourceVendor(option.value)}
+                    >
+                      {option.label}
+                      {costLabel === null ? null : (
+                        <span className="dashboard-source-tabs__cost">{costLabel}</span>
+                      )}
+                    </button>
+                  );
+                })}
+                {otherSourceOptions.length > 0 ? (
+                <div
+                  className="dashboard-source-others"
+                  data-open={othersOpen}
+                  onMouseEnter={() => setOthersOpen(true)}
+                  onMouseLeave={() => setOthersOpen(false)}
+                  onFocusCapture={() => setOthersOpen(true)}
+                  onBlurCapture={(event) => {
+                    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                      setOthersOpen(false);
+                    }
+                  }}
+                >
                   <button
                     type="button"
-                    aria-pressed={sourceVendor === option.value}
-                    data-selected={sourceVendor === option.value}
-                    key={option.value}
-                    onClick={() => setSourceVendor(option.value)}
+                    aria-haspopup="true"
+                    aria-expanded={othersOpen}
+                    aria-controls="dashboard-source-others-menu"
+                    aria-pressed={othersSelected}
+                    data-selected={othersSelected}
                   >
-                    {option.label}
-                    {costLabel === null ? null : (
-                      <span className="dashboard-source-tabs__cost">{costLabel}</span>
-                    )}
+                    Others
                   </button>
-                );
-              })}
-              {otherSourceOptions.length > 0 ? (
-              <div
-                className="dashboard-source-others"
-                data-open={othersOpen}
-                onMouseEnter={() => setOthersOpen(true)}
-                onMouseLeave={() => setOthersOpen(false)}
-                onFocusCapture={() => setOthersOpen(true)}
-                onBlurCapture={(event) => {
-                  if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-                    setOthersOpen(false);
-                  }
-                }}
-              >
-                <button
-                  type="button"
-                  aria-haspopup="true"
-                  aria-expanded={othersOpen}
-                  aria-controls="dashboard-source-others-menu"
-                  aria-pressed={othersSelected}
-                  data-selected={othersSelected}
-                >
-                  Others
-                </button>
-                <div
-                  className="dashboard-source-others__menu"
-                  id="dashboard-source-others-menu"
-                  role="group"
-                  aria-label="Other sources"
-                >
-                  {otherSourceOptions.map((option) => {
-                    const costLabel = formatSourceCost(sourceUsageBreakdown, option.value);
+                  <div
+                    className="dashboard-source-others__menu"
+                    id="dashboard-source-others-menu"
+                    role="group"
+                    aria-label="Other sources"
+                  >
+                    {otherSourceOptions.map((option) => {
+                      const costLabel = formatSourceCost(sourceUsageBreakdown, option.value);
 
-                    return (
-                      <button
-                        type="button"
-                        aria-pressed={sourceVendor === option.value}
-                        data-selected={sourceVendor === option.value}
-                        key={option.value}
-                        onClick={() => setSourceVendor(option.value)}
-                      >
-                        {option.label}
-                        {costLabel === null ? null : (
-                          <span className="dashboard-source-tabs__cost">{costLabel}</span>
-                        )}
-                      </button>
-                    );
-                  })}
+                      return (
+                        <button
+                          type="button"
+                          aria-pressed={sourceVendor === option.value}
+                          data-selected={sourceVendor === option.value}
+                          key={option.value}
+                          onClick={() => setSourceVendor(option.value)}
+                        >
+                          {option.label}
+                          {costLabel === null ? null : (
+                            <span className="dashboard-source-tabs__cost">{costLabel}</span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
+                ) : null}
               </div>
-              ) : null}
             </div>
-          </div>
+          </section>
+
+          {overview ? (
+            <>
+              <KpiGrid overview={overview} scopeLabel={scopeLabel} />
+              <section className="overview-strip" aria-label="Operational status summary">
+                <span>{overview.sessionCount} sessions</span>
+                <span>{overview.turnCount} turns</span>
+                <span>{overview.totalToolCalls} tool calls</span>
+                <span>{Math.round(overview.successRate * 100)}% success</span>
+                <span>Est. cost {formatCost(overview.totalCostUsd)}</span>
+                <span>Updated {new Date(overview.updatedAt).toLocaleTimeString()}</span>
+              </section>
+            </>
+          ) : (
+            <section className="dashboard-state" aria-live="polite">
+              <strong>{statusLabel}</strong>
+              <span>{overviewQuery.error?.message ?? "Waiting for the local metrics core."}</span>
+            </section>
+          )}
+        </div>
+
+        <section className="dashboard-grid" id="dashboard-analytics">
+          <TokenTrendPanel
+            rows={tokenTrend}
+            scope={scope}
+            scopeLabel={scopeLabel}
+            override={tokenTrendOverride}
+            onOverrideChange={setTokenTrendOverride}
+            statusMessage={tokenTrendQuery.error?.message ?? null}
+            emptyMessage={pendingEmptyMessage(tokenTrendQuery, "Loading token trend...")}
+          />
+          <ModelUsagePanel rows={overview?.tokensByModel ?? []} />
+          <TrendChart
+            rows={tools}
+            scope={scope}
+            scopeLabel={scopeLabel}
+            override={rankingOverride}
+            onOverrideChange={setRankingOverride}
+            statusMessage={toolsQuery.error?.message ?? null}
+            emptyMessage={pendingEmptyMessage(toolsQuery, "Loading tool activity...")}
+          />
+          <ProviderBreakdownPanel rows={overview?.providerBreakdown ?? []} />
+          <CacheHitPanel rows={overview?.sourceBreakdown ?? []} />
         </section>
 
-        {overview ? (
-          <>
-            <KpiGrid overview={overview} scopeLabel={scopeLabel} />
-            <section className="overview-strip" aria-label="Operational status summary">
-              <span>{overview.sessionCount} sessions</span>
-              <span>{overview.turnCount} turns</span>
-              <span>{overview.totalToolCalls} tool calls</span>
-              <span>{Math.round(overview.successRate * 100)}% success</span>
-              <span>Est. cost {formatCost(overview.totalCostUsd)}</span>
-              <span>Updated {new Date(overview.updatedAt).toLocaleTimeString()}</span>
-            </section>
-          </>
-        ) : (
-          <section className="dashboard-state" aria-live="polite">
-            <strong>{statusLabel}</strong>
-            <span>{overviewQuery.error?.message ?? "Waiting for the local metrics core."}</span>
-          </section>
-        )}
-      </div>
-
-      <section className="dashboard-grid">
-        <TokenTrendPanel
-          rows={tokenTrend}
-          scope={scope}
-          scopeLabel={scopeLabel}
-          override={tokenTrendOverride}
-          onOverrideChange={setTokenTrendOverride}
-          statusMessage={tokenTrendQuery.error?.message ?? null}
-          emptyMessage={pendingEmptyMessage(tokenTrendQuery, "Loading token trend...")}
-        />
-        <ModelUsagePanel rows={overview?.tokensByModel ?? []} />
-        <TrendChart
-          rows={tools}
-          scope={scope}
-          scopeLabel={scopeLabel}
-          override={rankingOverride}
-          onOverrideChange={setRankingOverride}
-          statusMessage={toolsQuery.error?.message ?? null}
-          emptyMessage={pendingEmptyMessage(toolsQuery, "Loading tool activity...")}
-        />
-        <ProviderBreakdownPanel rows={overview?.providerBreakdown ?? []} />
-        <CacheHitPanel rows={overview?.sourceBreakdown ?? []} />
-      </section>
-
-      <KeyUsagePanel
-        data={keyUsageQuery.data ?? null}
-        loading={keyUsageQuery.status === "loading"}
-        errorMessage={
-          keyUsageQuery.status === "error"
-            ? keyUsageQuery.error?.message ?? "Unable to load official key usage."
-            : null
-        }
-        leadCards={
-          showCursorOfficialUsage ? (
-            <CursorQuotaCard
-              usage={cursorUsageQuery.data ?? null}
-              loading={cursorUsageQuery.status === "loading"}
-              errorMessage={
-                cursorUsageQuery.status === "error"
-                  ? cursorUsageQuery.error?.message ?? "Unable to load Cursor official usage."
-                  : null
+        <div className="dashboard-quotas" id="dashboard-quotas">
+          <KeyUsagePanel
+            data={keyUsageQuery.data ?? null}
+            loading={keyUsageQuery.status === "loading"}
+            errorMessage={
+              keyUsageQuery.status === "error"
+                ? keyUsageQuery.error?.message ?? "Unable to load official key usage."
+                : null
             }
-            />
-          ) : null
-        }
-      />
+            leadCards={
+              showCursorOfficialUsage ? (
+                <CursorQuotaCard
+                  usage={cursorUsageQuery.data ?? null}
+                  loading={cursorUsageQuery.status === "loading"}
+                  errorMessage={
+                    cursorUsageQuery.status === "error"
+                      ? cursorUsageQuery.error?.message ?? "Unable to load Cursor official usage."
+                      : null
+                }
+                />
+              ) : null
+            }
+          />
+        </div>
 
-      <footer className="dashboard-footer">
-        <span>Local data stays on this device.</span>
-        <span>Scope: {scopeLabel}</span>
-        <a href={buildExportUrl("csv", scope, sourceVendor)}>Export CSV</a>
-        <a href={buildExportUrl("json", scope, sourceVendor)}>Export JSON</a>
-      </footer>
+        <footer className="dashboard-footer">
+          <span><i />Local data stays on this device.</span>
+          <span>Scope: {scopeLabel}</span>
+          <span className="dashboard-footer__exports">
+            <a href={buildExportUrl("csv", scope, sourceVendor)}>Export CSV<UiIcon name="open" size={12} /></a>
+            <a href={buildExportUrl("json", scope, sourceVendor)}>Export JSON<UiIcon name="open" size={12} /></a>
+          </span>
+        </footer>
+      </div>
     </main>
   );
 }

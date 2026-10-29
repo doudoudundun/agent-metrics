@@ -74,7 +74,7 @@ describe("App surface router", () => {
   it("renders DashboardPage as the default browser surface", async () => {
     const view = render(<App />);
 
-    expect(screen.getByRole("heading", { name: "Operational workspace" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Your agents, in focus." })).toBeInTheDocument();
     expect(await screen.findByRole("region", { name: "Overview metrics for Today" })).toBeInTheDocument();
     expect(screen.queryByText("Modified files at a glance")).not.toBeInTheDocument();
 
@@ -86,7 +86,7 @@ describe("App surface router", () => {
 
     const view = render(<App />);
 
-    expect(screen.getByRole("heading", { name: "Operational workspace" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Your agents, in focus." })).toBeInTheDocument();
     expect(await screen.findByRole("region", { name: "Overview metrics for Today" })).toBeInTheDocument();
 
     view.unmount();
@@ -98,7 +98,7 @@ describe("App surface router", () => {
     const view = render(<App />);
 
     expect(await screen.findByText("Tools")).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Operational workspace" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Your agents, in focus." })).not.toBeInTheDocument();
 
     view.unmount();
   });
@@ -111,7 +111,7 @@ describe("App surface router", () => {
     expect(await screen.findByRole("heading", { name: "Agent Metrics" })).toBeInTheDocument();
     expect(screen.getByText("Modified files at a glance")).toBeInTheDocument();
     expect(screen.queryByText("Export CSV")).not.toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Operational workspace" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Your agents, in focus." })).not.toBeInTheDocument();
 
     view.unmount();
   });

@@ -61,7 +61,7 @@ describe("DashboardPage visual and accessibility guard", () => {
   it("does not render the legacy hero panel", async () => {
     render(<DashboardPage />);
 
-    expect(await screen.findByRole("heading", { name: "Operational workspace" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Your agents, in focus." })).toBeInTheDocument();
     expect(document.querySelector(".hero-panel")).not.toBeInTheDocument();
     expect(screen.queryByText("Local Ops Console")).not.toBeInTheDocument();
   });

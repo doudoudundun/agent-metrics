@@ -5,9 +5,8 @@ export type WidgetDockEdge = "left" | "right";
 
 export const WIDGET_SIZES: Record<WidgetMode, Pick<WindowBounds, "width" | "height">> = {
   collapsed: { width: 88, height: 88 },
-  // Tall enough for header + primary + 2x2 metrics + footer actions without overlap.
-  expanded: { width: 384, height: 312 },
-  pinned: { width: 384, height: 312 }
+  expanded: { width: 384, height: 340 },
+  pinned: { width: 384, height: 340 }
 };
 
 export function normalizeWidgetAnchor(bounds: WindowBounds, workArea: DisplayWorkArea): number {

@@ -208,6 +208,23 @@ test.describe("dashboard viewport matrix", () => {
     await installDashboardApiMocks(page);
   });
 
+  test("Others menu stays above the overview cards and remains clickable", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto("/");
+    await page.getByRole("button", { name: /^Others/ }).click();
+
+    const menu = page.getByRole("group", { name: "Other sources" });
+    await expect(menu).toBeVisible();
+    const option = menu.getByRole("button").last();
+    const optionIsOnTop = await option.evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      return element.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2));
+    });
+    expect(optionIsOnTop).toBe(true);
+    await option.click();
+    await expect(option).toHaveAttribute("aria-pressed", "true");
+  });
+
   for (const viewport of VIEWPORTS) {
     test(`renders operational workspace at ${viewport.width}x${viewport.height}`, async ({ page }) => {
       await page.setViewportSize(viewport);
@@ -216,7 +233,7 @@ test.describe("dashboard viewport matrix", () => {
       await page.waitForSelector(".overview-strip");
 
       await expect(page.locator(".hero-panel")).toHaveCount(0);
-      await expect(page.getByRole("heading", { name: "Operational workspace" })).toBeVisible();
+      await expect(page.getByRole("heading", { name: "Your agents, in focus." })).toBeVisible();
       await expect(page.getByRole("region", { name: "Operational status summary" })).toBeVisible();
 
       if (viewport.width === 1280 && viewport.height === 720) {

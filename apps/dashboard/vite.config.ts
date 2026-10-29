@@ -8,14 +8,14 @@ export default defineConfig({
   plugins: [react()],
   server: {
     host: "127.0.0.1",
-    port: 4173,
+    port: Number(process.env.AGENT_METRICS_DASHBOARD_PORT ?? 4173),
     proxy: {
       "/api": `http://127.0.0.1:${corePort}`
     }
   },
   preview: {
     host: "127.0.0.1",
-    port: 4173
+    port: Number(process.env.AGENT_METRICS_DASHBOARD_PORT ?? 4173)
   },
   test: {
     environment: "jsdom"

@@ -1,0 +1,19 @@
+{
+  "platform": "win32",
+  "arch": "x64",
+  "hostPlatform": "win32",
+  "hostArch": "x64",
+  "timestamp": "2026-10-28T12:10:28.820Z",
+  "artifact": "D:\\projects\\dev\\agent-metrics\\apps\\desktop\\release\\win-unpacked",
+  "checks": {
+    "verifyPackage": "passed",
+    "coreHealth": "passed",
+    "dashboardLoad": "passed",
+    "nativeMainWidget": "passed"
+  },
+  "node": {
+    "host": "v22.22.3",
+    "bundled": "22.22.3",
+    "bundledCommand": "D:\\projects\\dev\\agent-metrics\\apps\\desktop\\release\\win-unpacked\\resources\\runtime\\.runtime\\node-v22.22.3-win-x64\\node.exe"
+  }
+}

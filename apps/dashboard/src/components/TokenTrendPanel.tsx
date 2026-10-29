@@ -103,17 +103,17 @@ export function TokenTrendPanel({
           <div className="chart-frame chart-frame--tall">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={rows} margin={{ top: 8, right: 8, bottom: 4, left: 0 }}>
-                <CartesianGrid stroke="rgba(16, 32, 48, 0.08)" vertical={false} />
+                <CartesianGrid stroke="rgba(32, 37, 31, 0.1)" strokeDasharray="2 5" vertical={false} />
                 <XAxis
                   dataKey="label"
-                  stroke="#5f7087"
+                  stroke="#6b7063"
                   tickLine={false}
                   axisLine={false}
                   interval={resolveTickInterval(bucket, rows.length)}
                 />
                 <YAxis
                   yAxisId="tokens"
-                  stroke="#5f7087"
+                  stroke="#6b7063"
                   tickLine={false}
                   axisLine={false}
                   tickFormatter={formatCompactTokens}
@@ -122,17 +122,17 @@ export function TokenTrendPanel({
                   yAxisId="rate"
                   orientation="right"
                   domain={[0, 1]}
-                  stroke="#5f7087"
+                  stroke="#6b7063"
                   tickLine={false}
                   axisLine={false}
                   tickFormatter={formatPercent}
                 />
                 <Tooltip
                   contentStyle={{
-                    background: "#0f1f2f",
-                    border: "1px solid rgba(209, 255, 77, 0.25)",
-                    borderRadius: 14,
-                    color: "#edf4ff"
+                    background: "#20251f",
+                    border: "1px solid #536143",
+                    borderRadius: 10,
+                    color: "#f8f7f2"
                   }}
                   formatter={(value: number, name: string) => {
                     if (name === "Cache Hit") {
@@ -148,51 +148,56 @@ export function TokenTrendPanel({
                   type="monotone"
                   dataKey="inputTokens"
                   name="Input"
-                  stroke="#d1ff4d"
+                  stroke="#c1e562"
                   strokeWidth={2.5}
                   dot={false}
                   activeDot={{ r: 4 }}
+                  isAnimationActive={false}
                 />
                 <Line
                   yAxisId="tokens"
                   type="monotone"
                   dataKey="outputTokens"
                   name="Output"
-                  stroke="#5cc7ff"
+                  stroke="#849471"
                   strokeWidth={2.5}
                   dot={false}
                   activeDot={{ r: 4 }}
+                  isAnimationActive={false}
                 />
                 <Line
                   yAxisId="tokens"
                   type="monotone"
                   dataKey="cacheReadTokens"
                   name="Cache Read"
-                  stroke="#7bf7d4"
+                  stroke="#b7c49b"
                   strokeWidth={2}
                   dot={false}
                   activeDot={{ r: 4 }}
+                  isAnimationActive={false}
                 />
                 <Line
                   yAxisId="tokens"
                   type="monotone"
                   dataKey="cacheCreationTokens"
                   name="Cache Write"
-                  stroke="#ffbd7a"
+                  stroke="#eb7749"
                   strokeWidth={2}
                   dot={false}
                   activeDot={{ r: 4 }}
+                  isAnimationActive={false}
                 />
                 <Line
                   yAxisId="rate"
                   type="monotone"
                   dataKey="cacheHitRate"
                   name="Cache Hit"
-                  stroke="#c084fc"
+                  stroke="#eb7749"
                   strokeDasharray="5 4"
                   strokeWidth={2}
                   dot={false}
                   activeDot={{ r: 4 }}
+                  isAnimationActive={false}
                 />
               </LineChart>
             </ResponsiveContainer>

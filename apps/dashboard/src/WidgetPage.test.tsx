@@ -71,12 +71,30 @@ describe("WidgetPage", () => {
     render(<WidgetPage />);
 
     expect(await screen.findByLabelText("Agent Metrics widget collapsed")).toBeInTheDocument();
-    expect(screen.getByText("AM")).toBeInTheDocument();
-    expect(screen.getByText("1.2K")).toBeInTheDocument();
+    expect(screen.getByText("1.23K")).toBeInTheDocument();
+    expect(screen.getByText("Tokens")).toBeInTheDocument();
+    expect(screen.getByText("$0.42")).toBeInTheDocument();
+    expect(screen.queryByText("USD")).not.toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(screen.queryByRole("img", { name: "Cache hit 50%" })).not.toBeInTheDocument();
+    expect(screen.queryByText("AM")).not.toBeInTheDocument();
+    expect(screen.queryByText("Cache hit")).not.toBeInTheDocument();
     expect(screen.queryByText("Today")).not.toBeInTheDocument();
   });
 
-  it("releases keyboard focus after a footer button click so the widget can auto-collapse", async () => {
+  it("keeps three significant digits when the collapsed total reaches billions", async () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 88 });
+    vi.mocked(fetchWidgetSnapshot).mockResolvedValue({
+      ...snapshot,
+      metrics: { ...snapshot.metrics, totalTokens: 1_153_888_840 }
+    });
+    render(<WidgetPage />);
+
+    expect(await screen.findByLabelText("Agent Metrics widget collapsed")).toBeInTheDocument();
+    expect(screen.getByText("1.15B")).toBeInTheDocument();
+  });
+
+  it("releases keyboard focus after a widget button click so the widget can auto-collapse", async () => {
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 384 });
     render(<WidgetPage />);
     await screen.findByText("1,234");

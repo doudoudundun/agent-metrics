@@ -75,7 +75,7 @@ describe("DashboardPage", () => {
   it("renders the operational workspace with overview metrics and export links", async () => {
     const view = render(<DashboardPage />);
 
-    expect(screen.getByRole("heading", { name: "Operational workspace" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Your agents, in focus." })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: /agent metrics/i })).not.toBeInTheDocument();
 
     const overviewRegion = await screen.findByRole("region", {
@@ -433,8 +433,6 @@ describe("DashboardPage", () => {
     const tabStops = collectTabStops(chrome);
     expect(tabStops.map((element) => element.textContent?.trim())).toEqual([
       "Sync sources",
-      "",
-      "",
       "Today",
       "This Week",
       "This Month",
@@ -442,6 +440,7 @@ describe("DashboardPage", () => {
       "Last 7 Days",
       "Last 30 Days",
       "All Time",
+      "Custom range",
       "All sources",
       "Claude Code$12.34",
       "MiMo",
@@ -501,6 +500,7 @@ describe("DashboardPage", () => {
     const view = render(<DashboardPage />);
     await screen.findByRole("region", { name: "Overview metrics for Today" });
 
+    fireEvent.click(screen.getByText("Custom range", { selector: "summary" }));
     const start = screen.getByLabelText("Custom range start") as HTMLInputElement;
     const end = screen.getByLabelText("Custom range end") as HTMLInputElement;
     expect(start).toBeInTheDocument();
@@ -797,7 +797,7 @@ function readChipLabel(button: Element): string {
 function collectTabStops(container: HTMLElement): HTMLElement[] {
   return Array.from(
     container.querySelectorAll<HTMLElement>(
-      'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      'button:not([disabled]), a[href], details[open] input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])'
     )
   );
 }

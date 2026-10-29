@@ -62,24 +62,24 @@ export function TrendChart({
         <div className="chart-frame">
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={data} barCategoryGap={22}>
-              <CartesianGrid stroke="rgba(16, 32, 48, 0.08)" vertical={false} />
-              <XAxis dataKey="label" stroke="#5f7087" tickLine={false} axisLine={false} />
-              <YAxis stroke="#5f7087" tickLine={false} axisLine={false} allowDecimals={false} />
+              <CartesianGrid stroke="rgba(32, 37, 31, 0.1)" strokeDasharray="2 5" vertical={false} />
+              <XAxis dataKey="label" stroke="#6b7063" tickLine={false} axisLine={false} />
+              <YAxis stroke="#6b7063" tickLine={false} axisLine={false} allowDecimals={false} />
               <Tooltip
                 contentStyle={{
-                  background: "#0f1f2f",
-                  border: "1px solid rgba(209, 255, 77, 0.25)",
-                  borderRadius: 14,
-                  color: "#edf4ff"
+                  background: "#20251f",
+                  border: "1px solid #536143",
+                  borderRadius: 10,
+                  color: "#f8f7f2"
                 }}
                 formatter={(value: number) => [`${value} calls`, "Calls"]}
-                cursor={{ fill: "rgba(209, 255, 77, 0.08)" }}
+                cursor={{ fill: "rgba(32, 37, 31, 0.05)" }}
               />
-              <Bar dataKey="value" fill="url(#activityBars)" radius={[12, 12, 0, 0]} />
+              <Bar dataKey="value" fill="url(#activityBars)" radius={[5, 5, 0, 0]} isAnimationActive={false} />
               <defs>
                 <linearGradient id="activityBars" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#d1ff4d" />
-                  <stop offset="100%" stopColor="#5cc7ff" />
+                  <stop offset="0%" stopColor="#d0f66b" />
+                  <stop offset="100%" stopColor="#849471" />
                 </linearGradient>
               </defs>
             </BarChart>

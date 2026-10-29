@@ -149,16 +149,28 @@ export function KpiGrid({ overview, scopeLabel }: KpiGridProps) {
   return (
     <section className="kpi-band" aria-label={`Overview metrics for ${scopeLabel}`}>
       <div className="kpi-grid">
-        {primaryItems.map((item) => (
-          <article className="kpi-card" data-tone={item.tone} key={item.label}>
-            <span className="kpi-label">{item.label}</span>
-            <strong className="kpi-value">{item.value}</strong>
-            <span className="kpi-meta">{item.meta}</span>
+        <article className="kpi-card" data-tone={primaryItems[0].tone}>
+          <span className="kpi-label">{primaryItems[0].label}</span>
+          <strong className="kpi-value">{primaryItems[0].value}</strong>
+          <span className="kpi-meta">{primaryItems[0].meta}</span>
+        </article>
+        <div className="kpi-summary">
+          {primaryItems.slice(1).map((item) => (
+            <article className="kpi-card" data-tone={item.tone} key={item.label}>
+              <span className="kpi-label">{item.label}</span>
+              <strong className="kpi-value">{item.value}</strong>
+              <span className="kpi-meta">{item.meta}</span>
+            </article>
+          ))}
+          <article className="kpi-card" data-tone="calm">
+            <span className="kpi-label">Successful Runs</span>
+            <strong className="kpi-value">{NUMBER_FORMAT.format(overview.successfulExecutions)}</strong>
+            <span className="kpi-meta">Completed without failures</span>
           </article>
-        ))}
+        </div>
       </div>
       <div className="kpi-secondary-row">
-        {secondaryItems.map((item) => (
+        {secondaryItems.filter((item) => item.label !== "Successful Runs").map((item) => (
           <article className="kpi-chip" key={item.label}>
             <span className="kpi-chip-label">{item.label}</span>
             <strong className="kpi-chip-value">{item.value}</strong>

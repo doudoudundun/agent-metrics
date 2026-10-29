@@ -11,6 +11,7 @@ import { getAgentMetricsWidgetBridge, type AgentMetricsWidgetBridge } from "./de
 import { QueryClient, type QueryState } from "./query-client";
 import { useQuery } from "./query-hooks";
 import { waitForSyncRuns } from "./sync-runs";
+import { UiIcon } from "./components/UiIcon";
 
 type WidgetStatus = "loading" | "ready" | "syncing" | "stale" | "offline" | "error";
 
@@ -132,10 +133,13 @@ export function WidgetPage() {
   };
 
   if (compact) {
+    const tokens = snapshot ? formatCompactCount(snapshot.metrics.totalTokens) : "—";
+    const cost = snapshot ? formatCost(snapshot.metrics.totalCostUsd) : "—";
     return (
       <main
         className="widget-page widget-page--compact"
         aria-label="Agent Metrics widget collapsed"
+        title={snapshot ? `${formatCount(snapshot.metrics.totalTokens)} tokens · ${formatCost(snapshot.metrics.totalCostUsd)} · ${formatRate(snapshot.metrics.cacheHitRate)} cache hit` : "Loading local metrics…"}
         onPointerEnter={() => callBridge((bridge) => bridge.pointerEnter(), "pointerEnter")}
         onPointerLeave={() => callBridge((bridge) => bridge.pointerLeave(), "pointerLeave")}
         onPointerDown={onPointerDown}
@@ -157,20 +161,17 @@ export function WidgetPage() {
           }
         }}
       >
-        <span className="widget-page__eyebrow">AM</span>
-        <strong className="widget-page__primary-value">
-          {snapshot ? formatCompactCount(snapshot.metrics.totalTokens) : "—"}
+        <strong className="widget-page__primary-value" data-long={tokens.length > 4 || undefined}>
+          {tokens}
+          <small>Tokens</small>
         </strong>
-        <span className="widget-page__cost-value">
-          {snapshot ? formatCost(snapshot.metrics.totalCostUsd) : ""}
-        </span>
-        <span
-          className={`widget-page__status widget-page__status--${status}`}
-          role="status"
-          aria-label={status}
-        >
-          {status}
-        </span>
+        <div className="widget-page__cost-row">
+          <strong
+            className={`widget-page__cost-value${cost.length >= 7 ? " widget-page__cost-value--long" : cost.length >= 6 ? " widget-page__cost-value--medium" : ""}`}
+          >
+            {cost}
+          </strong>
+        </div>
       </main>
     );
   }
@@ -179,17 +180,17 @@ export function WidgetPage() {
     <main
       className="widget-page"
       aria-label="Agent Metrics widget"
+      data-syncing={syncing}
       onPointerEnter={() => callBridge((bridge) => bridge.pointerEnter(), "pointerEnter")}
       onPointerLeave={() => callBridge((bridge) => bridge.pointerLeave(), "pointerLeave")}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
-      // Footer buttons (Refresh/Sync/Pin/Main) retain keyboard focus after a
-      // click, which keeps `keyboardFocusInside` true on the main process and
-      // blocks the auto-collapse rule (spec §16.4). Blur the active element
-      // after any click resolves so the widget retracts when the pointer leaves.
-      onClickCapture={() => {
+      // Widget buttons retain keyboard focus after a click, which keeps
+      // `keyboardFocusInside` true on the main process and blocks the
+      // auto-collapse rule (spec §16.4). Blur only after the button handler.
+      onClick={() => {
         const active = document.activeElement;
         if (active instanceof HTMLElement && active.tagName === "BUTTON") {
           active.blur();
@@ -209,28 +210,66 @@ export function WidgetPage() {
       }}
     >
       <header className="widget-page__header">
-        <div>
+        <div className="widget-page__brand">
+          <i className={`widget-page__brand-status widget-page__status--${status}`} />
           <span className="widget-page__eyebrow">Agent Metrics</span>
-          <h1>{describeScope(snapshot?.scope)}</h1>
         </div>
+        <div className="widget-page__header-actions">
+          <button type="button" aria-label="Refresh" title="Refresh" onClick={() => void refresh()} disabled={syncing}>
+            <UiIcon name="refresh" size={13} />
+          </button>
+          {nativeBridge ? (
+            <>
+              <button
+                type="button"
+                aria-label={pinned ? "Unpin widget" : "Pin widget"}
+                aria-pressed={pinned}
+                title={pinned ? "Unpin widget" : "Pin widget"}
+                onClick={() => {
+                  const nextPinned = !pinned;
+                  setPinned(nextPinned);
+                  callBridge(
+                    (bridge) => bridge.setWidgetMode(nextPinned ? "pinned" : "expanded"),
+                    "setWidgetMode"
+                  );
+                }}
+              >
+                <UiIcon name="pin" size={13} />
+              </button>
+              <button
+                type="button"
+                aria-label="Collapse widget"
+                title="Collapse widget"
+                onClick={() => callBridge((bridge) => bridge.setWidgetMode("collapsed"), "setWidgetMode(collapsed)")}
+              >
+                <UiIcon name="close" size={13} />
+              </button>
+            </>
+          ) : null}
+        </div>
+      </header>
+      <div className="widget-page__scope">
+        <h1>{describeScope(snapshot?.scope)} <span>/ All sources</span></h1>
         <span className={`widget-page__status widget-page__status--${status}`} role="status">
           {status}
         </span>
-      </header>
+      </div>
       {snapshot ? (
         <>
-          <div className="widget-page__primary">
-            <span>Total tokens</span>
-            <strong>{formatCount(snapshot.metrics.totalTokens)}</strong>
-          </div>
-          <div className="widget-page__cost">
-            <span>Est. cost</span>
-            <strong>{formatCost(snapshot.metrics.totalCostUsd)}</strong>
+          <div className="widget-page__hero">
+            <div className="widget-page__primary">
+              <span>Total tokens</span>
+              <strong>{formatCount(snapshot.metrics.totalTokens)}</strong>
+            </div>
+            <div className="widget-page__cache">
+              <CacheRing rate={snapshot.metrics.cacheHitRate} />
+              <span><strong>{formatRate(snapshot.metrics.cacheHitRate)}</strong><small>Cache hit</small></span>
+            </div>
           </div>
           <div className="widget-page__metrics">
+            <Metric label="Est. cost" value={formatCost(snapshot.metrics.totalCostUsd)} />
             <Metric label="Tools" value={formatCount(snapshot.metrics.logicalToolCalls)} />
             <Metric label="Sessions" value={formatCount(snapshot.metrics.sessionCount)} />
-            <Metric label="Cache hit" value={formatRate(snapshot.metrics.cacheHitRate)} />
             <Metric label="Tool success" value={formatRate(snapshot.metrics.toolSuccessRate)} />
           </div>
         </>
@@ -243,35 +282,18 @@ export function WidgetPage() {
           {syncStatus ? `${syncStatus.adapters.length} sources` : "Checking…"}
         </span>
         <div className="widget-page__footer-actions">
-          <button type="button" onClick={() => void refresh()} disabled={syncing}>
-            Refresh
-          </button>
           <button type="button" onClick={() => void handleSync()} disabled={syncing}>
+            <UiIcon className="widget-page__sync-icon" name="sync" size={12} />
             {syncing ? "Syncing…" : "Sync"}
           </button>
           {nativeBridge ? (
-            <>
-              <button
-                type="button"
-                aria-label={pinned ? "Unpin widget" : "Pin widget"}
-                onClick={() => {
-                  const nextPinned = !pinned;
-                  setPinned(nextPinned);
-                  callBridge(
-                    (bridge) => bridge.setWidgetMode(nextPinned ? "pinned" : "expanded"),
-                    "setWidgetMode"
-                  );
-                }}
-              >
-                {pinned ? "Unpin" : "Pin"}
-              </button>
-              <button
-                type="button"
-                onClick={() => callBridge((bridge) => bridge.showMainWindow(), "showMainWindow")}
-              >
-                Main
-              </button>
-            </>
+            <button
+              className="widget-page__main-button"
+              type="button"
+              onClick={() => callBridge((bridge) => bridge.showMainWindow(), "showMainWindow")}
+            >
+              Main<UiIcon name="open" size={12} />
+            </button>
           ) : null}
         </div>
       </footer>
@@ -285,6 +307,23 @@ function Metric({ label, value }: { label: string; value: string }) {
       <span>{label}</span>
       <strong>{value}</strong>
     </div>
+  );
+}
+
+function CacheRing({ rate }: { rate: number }) {
+  const normalized = Number.isFinite(rate) ? Math.max(0, Math.min(1, rate)) : 0;
+  return (
+    <svg className="widget-cache-ring" viewBox="0 0 88 88" role="img" aria-label={`Cache hit ${formatRate(normalized)}`}>
+      <circle className="widget-cache-ring__track" cx="44" cy="44" r="37" pathLength="1" />
+      <circle
+        className="widget-cache-ring__value"
+        cx="44"
+        cy="44"
+        r="37"
+        pathLength="1"
+        strokeDasharray={`${normalized} 1`}
+      />
+    </svg>
   );
 }
 
@@ -349,7 +388,7 @@ function formatCount(value: number): string {
 function formatCompactCount(value: number): string {
   return new Intl.NumberFormat("en-US", {
     notation: "compact",
-    maximumFractionDigits: 1
+    maximumSignificantDigits: 3
   }).format(value);
 }
 

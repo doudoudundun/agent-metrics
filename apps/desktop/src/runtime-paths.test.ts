@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   buildDashboardUrl,
   resolveDesktopDataRoot,
@@ -27,6 +27,20 @@ describe("resolveDesktopRuntimePaths", () => {
       coreEntrypoint: "/repo/apps/core/dist/server.js",
       coreWorkingDirectory: "/repo/apps/core"
     });
+  });
+
+  it("honors the dashboard port override for development", () => {
+    vi.stubEnv("AGENT_METRICS_DASHBOARD_PORT", "4190");
+    try {
+      const paths = resolveDesktopRuntimePaths({
+        currentDir: "/repo/apps/desktop/dist",
+        isPackaged: false,
+        userDataPath: "/Users/test/Library/Application Support/Agent Metrics"
+      });
+      expect(paths.dashboardEntryUrl).toBe("http://127.0.0.1:4190/?surface=desktop-main");
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("builds orb and peek-card dashboard surfaces with the same apiBase behavior", () => {

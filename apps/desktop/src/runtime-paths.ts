@@ -1,7 +1,10 @@
 import { posix, win32 } from "node:path";
 import { pathToFileURL } from "node:url";
 
-const DASHBOARD_DEV_SERVER_URL = "http://127.0.0.1:4173";
+function resolveDashboardDevServerUrl(): string {
+  const port = process.env.AGENT_METRICS_DASHBOARD_PORT?.trim() || "4173";
+  return `http://127.0.0.1:${port}`;
+}
 const DEFAULT_CORE_API_BASE_URL = "http://127.0.0.1:45183";
 
 export type DesktopDashboardSurface =
@@ -51,7 +54,7 @@ export function resolveDesktopRuntimePaths(input: {
       dataRoot,
       desktopDistDir: input.currentDir,
       coreApiBaseUrl: DEFAULT_CORE_API_BASE_URL,
-      dashboardEntryUrl: buildDashboardUrl(DASHBOARD_DEV_SERVER_URL, "desktop-main"),
+      dashboardEntryUrl: buildDashboardUrl(resolveDashboardDevServerUrl(), "desktop-main"),
       packagedDashboardEntryUrl: null,
       dashboardDevEntrypoint: pathModule.join(appRoot, "node_modules", "vite", "bin", "vite.js"),
       dashboardWorkingDirectory: pathModule.join(appRoot, "apps", "dashboard"),

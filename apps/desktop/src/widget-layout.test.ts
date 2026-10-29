@@ -24,9 +24,9 @@ describe("widget layout", () => {
     const anchor = normalizeWidgetAnchor(collapsed, workArea);
     expect(resolveWidgetBounds({ mode: "expanded", dockEdge: "right", anchorRatio: anchor, workArea })).toEqual({
       x: 916,
-      y: 172,
+      y: 165,
       width: 384,
-      height: 312
+      height: 340
     });
   });
 

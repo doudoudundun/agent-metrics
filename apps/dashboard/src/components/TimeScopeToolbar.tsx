@@ -35,39 +35,6 @@ export function TimeScopeToolbar({ selection, onChange }: TimeScopeToolbarProps)
 
   return (
     <div className="time-scope-toolbar" aria-label="Dashboard time scope" role="toolbar">
-      <div className="time-scope-custom" data-active={customSelected}>
-        <span className="time-scope-custom__legend">Custom range</span>
-        <label className="time-scope-custom__field">
-          <span>From</span>
-          <input
-            aria-label="Custom range start"
-            max={customDates.endDate || undefined}
-            onChange={(event) => {
-              if (!event.target.value) {
-                return;
-              }
-              applyDates(event.target.value, customDates.endDate || event.target.value);
-            }}
-            type="date"
-            value={customDates.startDate}
-          />
-        </label>
-        <label className="time-scope-custom__field">
-          <span>To</span>
-          <input
-            aria-label="Custom range end"
-            min={customDates.startDate || undefined}
-            onChange={(event) => {
-              if (!event.target.value) {
-                return;
-              }
-              applyDates(customDates.startDate || event.target.value, event.target.value);
-            }}
-            type="date"
-            value={customDates.endDate}
-          />
-        </label>
-      </div>
       <div className="time-scope-presets">
         {SCOPE_OPTIONS.map((option) => {
           const selected = isSameScope(option, selection);
@@ -89,6 +56,44 @@ export function TimeScopeToolbar({ selection, onChange }: TimeScopeToolbarProps)
             </button>
           );
         })}
+        <details className="time-scope-details" open={customSelected}>
+          <summary className="time-scope-button" data-selected={customSelected}>
+            Custom range
+          </summary>
+          <div className="time-scope-custom" data-active={customSelected}>
+            <span className="time-scope-custom__legend">Custom range</span>
+            <label className="time-scope-custom__field">
+              <span>From</span>
+              <input
+                aria-label="Custom range start"
+                max={customDates.endDate || undefined}
+                onChange={(event) => {
+                  if (!event.target.value) {
+                    return;
+                  }
+                  applyDates(event.target.value, customDates.endDate || event.target.value);
+                }}
+                type="date"
+                value={customDates.startDate}
+              />
+            </label>
+            <label className="time-scope-custom__field">
+              <span>To</span>
+              <input
+                aria-label="Custom range end"
+                min={customDates.startDate || undefined}
+                onChange={(event) => {
+                  if (!event.target.value) {
+                    return;
+                  }
+                  applyDates(customDates.startDate || event.target.value, event.target.value);
+                }}
+                type="date"
+                value={customDates.endDate}
+              />
+            </label>
+          </div>
+        </details>
       </div>
     </div>
   );

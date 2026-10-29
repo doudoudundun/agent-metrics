@@ -2,7 +2,7 @@ import { defineConfig } from "@playwright/test";
 
 // Pinned with root devDependency @playwright/test ^1.52.0
 const host = "127.0.0.1";
-const port = 4173;
+const port = 4191;
 const baseURL = `http://${host}:${port}`;
 
 export default defineConfig({
