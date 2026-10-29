@@ -1,0 +1,223 @@
+{
+  "startedAt": "2026-10-28T09:02:27.725Z",
+  "backupPath": "D:\\backups\\agent-metrics\\metrics-before-history-merge-2026-10-28T09-02-27-723Z.sqlite",
+  "tables": [
+    {
+      "table": "source_instances",
+      "inserted": 3,
+      "sourceRows": 10,
+      "ms": 0
+    },
+    {
+      "table": "adapter_instances",
+      "inserted": 5,
+      "sourceRows": 12,
+      "ms": 0
+    },
+    {
+      "table": "normalized_events",
+      "inserted": 889931,
+      "sourceRows": 890255,
+      "ms": 65049
+    },
+    {
+      "table": "event_observations",
+      "inserted": 952473,
+      "sourceRows": 952797,
+      "ms": 49920
+    },
+    {
+      "table": "event_diagnostics",
+      "inserted": 28046,
+      "sourceRows": 28046,
+      "ms": 222
+    },
+    {
+      "table": "domain_sessions",
+      "inserted": 2980,
+      "sourceRows": 3039,
+      "ms": 17
+    },
+    {
+      "table": "tool_calls",
+      "inserted": 370224,
+      "sourceRows": 370327,
+      "ms": 4669
+    },
+    {
+      "table": "tool_call_aliases",
+      "inserted": 33,
+      "sourceRows": 33,
+      "ms": 1
+    },
+    {
+      "table": "usage_events",
+      "inserted": 192500,
+      "sourceRows": 192613,
+      "ms": 3372
+    },
+    {
+      "table": "pending_usage_migrations",
+      "inserted": 0,
+      "sourceRows": 0,
+      "ms": 0
+    },
+    {
+      "table": "sessions",
+      "inserted": 2907,
+      "sourceRows": 2973,
+      "ms": 16
+    },
+    {
+      "table": "tool_events",
+      "inserted": 521940,
+      "sourceRows": 522146,
+      "ms": 6857
+    },
+    {
+      "table": "prompt_events",
+      "inserted": 18418,
+      "sourceRows": 18418,
+      "ms": 180
+    },
+    {
+      "table": "assistant_responses",
+      "inserted": 111334,
+      "sourceRows": 111334,
+      "ms": 1458
+    },
+    {
+      "table": "token_usage_events",
+      "inserted": 179320,
+      "sourceRows": 179433,
+      "ms": 2213
+    },
+    {
+      "table": "code_edits",
+      "inserted": 20241,
+      "sourceRows": 20245,
+      "ms": 207
+    },
+    {
+      "table": "session_contexts",
+      "inserted": 264,
+      "sourceRows": 271,
+      "ms": 2
+    }
+  ],
+  "skipped": [
+    {
+      "table": "usage_events",
+      "reason": "source lacks column(s): service_tier, credit"
+    }
+  ],
+  "before": {
+    "usage": 12460,
+    "normalized": 41554,
+    "since1023": 12182,
+    "months": [
+      {
+        "month": "2026-08",
+        "c": 34
+      },
+      {
+        "month": "2026-09",
+        "c": 205
+      },
+      {
+        "month": "2026-10",
+        "c": 12221
+      }
+    ],
+    "runtime": {
+      "schema_migrations": 9,
+      "ingestion_offset": [
+        {
+          "stream_name": "events.jsonl",
+          "offset_bytes": 173117353,
+          "size_bytes": 173117353,
+          "mtime_ms": 1793175008067.4968,
+          "file_identity": "7a7600606a99296ebf9d4ddac917b880343d641f20df64494536e906c2f2691d",
+          "committed_prefix_hash": "dd9e9e36c7f89637eaf0fb413e7ab72554d8c1fd6f6772beae805f67a38eaab3"
+        }
+      ],
+      "watermarks": [
+        {
+          "projection_name": "global-event-count",
+          "source_instance_id": null,
+          "last_event_id": null,
+          "last_timestamp": null,
+          "updated_at": "2026-10-23T01:36:48.488Z",
+          "event_count": 41554
+        }
+      ],
+      "sync_runs": 306
+    }
+  },
+  "integrity": "ok",
+  "after": {
+    "usage": 204960,
+    "normalized": 931485,
+    "since1023": 12182,
+    "months": [
+      {
+        "month": "2026-03",
+        "c": 82
+      },
+      {
+        "month": "2026-04",
+        "c": 864
+      },
+      {
+        "month": "2026-05",
+        "c": 19141
+      },
+      {
+        "month": "2026-06",
+        "c": 18347
+      },
+      {
+        "month": "2026-07",
+        "c": 26982
+      },
+      {
+        "month": "2026-08",
+        "c": 38803
+      },
+      {
+        "month": "2026-09",
+        "c": 53805
+      },
+      {
+        "month": "2026-10",
+        "c": 46936
+      }
+    ],
+    "runtime": {
+      "schema_migrations": 9,
+      "ingestion_offset": [
+        {
+          "stream_name": "events.jsonl",
+          "offset_bytes": 173117353,
+          "size_bytes": 173117353,
+          "mtime_ms": 1793175008067.4968,
+          "file_identity": "7a7600606a99296ebf9d4ddac917b880343d641f20df64494536e906c2f2691d",
+          "committed_prefix_hash": "dd9e9e36c7f89637eaf0fb413e7ab72554d8c1fd6f6772beae805f67a38eaab3"
+        }
+      ],
+      "watermarks": [
+        {
+          "projection_name": "global-event-count",
+          "source_instance_id": null,
+          "last_event_id": null,
+          "last_timestamp": null,
+          "updated_at": "2026-10-23T01:36:48.488Z",
+          "event_count": 931485
+        }
+      ],
+      "sync_runs": 306
+    }
+  },
+  "ok": true,
+  "finishedAt": "2026-10-28T09:07:37.202Z"
+}
