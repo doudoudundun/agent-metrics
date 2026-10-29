@@ -1,0 +1,39 @@
+apps/desktop-card/README.md
+  s_dfafba77b49896::t_167e3a02f4a9ca 43-52
+apps/desktop-card/scripts/copy-renderer.mjs
+  s_dfafba77b49896::t_69e39ae0051e28 1,5,17-23,25-29,31
+  s_dfafba77b49896::t_9df84e1548ba39 4,14-16,24,30,32
+apps/desktop-card/src/desktop-host.ts
+  s_dfafba77b49896::t_9df84e1548ba39 1,4-5,8-13,20-26,28-30,32-54,56-60,67-74
+  s_dfafba77b49896::t_69e39ae0051e28 2-3,6-7,14-19,27,31,55,61-66
+apps/desktop-card/evidence/desktop-host-2026-10-29.json
+  s_dfafba77b49896::t_88b5838913fb08 1-2,5-8,11-16,19,22-24,26-49,55,58-64,67,70-72,74-97,102-103,154-158,161
+  s_dfafba77b49896::t_c576d7b1994ef5 25,52-54,73,100-101
+  s_dfafba77b49896::t_7d6d45c1043ef1 68,104
+  s_dfafba77b49896::t_118fc9ff141fc9 69,105-112,115-145,148-153,159-160
+  s_dfafba77b49896::t_b0d27ea730a818 3-4,9-10,17-18,20-21,50-51,56-57,65-66,98-99,113-114,146-147
+apps/desktop-card/scripts/verify-desktop-host.cjs
+  s_dfafba77b49896::t_c7a9bd39791cab 52-59
+  s_dfafba77b49896::t_167e3a02f4a9ca 1-51,60
+apps/desktop-card/src/main.ts
+  s_dfafba77b49896::t_69e39ae0051e28 20,47-48,232,237,258,289-295,325
+  s_dfafba77b49896::t_9df84e1548ba39 49-50,190,228-231,233-236,238-242,251-254,256-257,260-265,323-324,326-329,389
+apps/desktop-card/package.json
+  s_dfafba77b49896::t_167e3a02f4a9ca 13
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.8",
+  "base_commit_sha": "cdfe07368e82240bdd59eb7c6b591d99e48ccebd",
+  "prompts": {},
+  "sessions": {
+    "s_dfafba77b49896": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1825a-e2f9-7670-a3e9-b76c5a515cb4",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "doudoudundun <1103992580@qq.com>"
+    }
+  }
+}
