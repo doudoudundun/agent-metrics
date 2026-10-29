@@ -80,5 +80,10 @@ export const USAGE_SOURCE_SEMANTICS: Record<
   "cursor-official": { inputTokenSemantics: "delta", usageMeasurement: "increment" },
   "codex-rollout": { inputTokenSemantics: "gross", usageMeasurement: "increment" },
   "codex-logs": { inputTokenSemantics: "gross", usageMeasurement: "increment" },
-  "workbuddy-usage": { inputTokenSemantics: "gross", usageMeasurement: "increment" }
+  "workbuddy-usage": { inputTokenSemantics: "gross", usageMeasurement: "increment" },
+  /**
+   * CodeBuddy CLI's own request log reports the full prompt size per request
+   * (`prompt_tokens`) with no split for cache hits, so it is gross input.
+   */
+  "codebuddy-log": { inputTokenSemantics: "gross", usageMeasurement: "increment" }
 };

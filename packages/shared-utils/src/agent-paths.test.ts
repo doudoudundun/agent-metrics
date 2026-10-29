@@ -22,6 +22,10 @@ describe("getAgentMetricsPaths", () => {
       dshLedgerPath: "D:/projects/dev/agent-metrics/data/sources/state/dsh-ledger.json",
       workbuddyCursorPath: "D:/projects/dev/agent-metrics/data/sources/state/workbuddy-cursor.json",
       workbuddyLedgerPath: "D:/projects/dev/agent-metrics/data/sources/state/workbuddy-ledger.json",
+      codebuddyCliLogCursorPath:
+        "D:/projects/dev/agent-metrics/data/sources/state/codebuddy-cli-log-cursor.json",
+      codebuddyCliLogLedgerPath:
+        "D:/projects/dev/agent-metrics/data/sources/state/codebuddy-cli-log-ledger.json",
       cursorIdeStatePath: "D:/projects/dev/agent-metrics/data/sources/state/cursor-ide-state.json",
       cursorIdeLedgerPath: "D:/projects/dev/agent-metrics/data/sources/state/cursor-ide-ledger.json",
       codexCursorPath: "D:/projects/dev/agent-metrics/data/sources/state/codex-cursor.json",
@@ -64,6 +68,10 @@ describe("getAgentMetricsPaths", () => {
         "D:\\projects\\dev\\agent-metrics\\data\\sources\\state\\workbuddy-cursor.json",
       workbuddyLedgerPath:
         "D:\\projects\\dev\\agent-metrics\\data\\sources\\state\\workbuddy-ledger.json",
+      codebuddyCliLogCursorPath:
+        "D:\\projects\\dev\\agent-metrics\\data\\sources\\state\\codebuddy-cli-log-cursor.json",
+      codebuddyCliLogLedgerPath:
+        "D:\\projects\\dev\\agent-metrics\\data\\sources\\state\\codebuddy-cli-log-ledger.json",
       cursorIdeStatePath:
         "D:\\projects\\dev\\agent-metrics\\data\\sources\\state\\cursor-ide-state.json",
       cursorIdeLedgerPath:
@@ -112,6 +120,10 @@ describe("getAgentMetricsPaths", () => {
         "\\\\server\\share\\repo\\data\\sources\\state\\workbuddy-cursor.json",
       workbuddyLedgerPath:
         "\\\\server\\share\\repo\\data\\sources\\state\\workbuddy-ledger.json",
+      codebuddyCliLogCursorPath:
+        "\\\\server\\share\\repo\\data\\sources\\state\\codebuddy-cli-log-cursor.json",
+      codebuddyCliLogLedgerPath:
+        "\\\\server\\share\\repo\\data\\sources\\state\\codebuddy-cli-log-ledger.json",
       cursorIdeStatePath:
         "\\\\server\\share\\repo\\data\\sources\\state\\cursor-ide-state.json",
       cursorIdeLedgerPath:

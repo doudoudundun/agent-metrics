@@ -216,6 +216,9 @@ function toV2Candidate(
       cache_read_input_tokens: event.cache_read_input_tokens,
       server_tool_use: event.server_tool_use,
       usage_source: event.usage_source,
+      // Credit units are optional: only vendors that bill in credits report
+      // them, so absence must stay absent instead of becoming zero.
+      ...(event.credit !== undefined && event.credit !== null ? { credit: event.credit } : {}),
       // Speed tier is part of the cost basis; drop it when the producer did not
       // observe one (standard pricing) so historical rows stay untouched.
       ...(event.service_tier ? { service_tier: event.service_tier } : {}),
@@ -261,6 +264,11 @@ function defaultSourceInstanceId(sourceVendor: SourceVendor, sourceAdapter: Sour
   if (sourceAdapter === "workbuddy-jsonl") {
     return "workbuddy:default";
   }
+  // CodeBuddy CLI bills against the same WorkBuddy account, so its request log
+  // reports into the WorkBuddy source instance and only the adapter id differs.
+  if (sourceAdapter === "codebuddy-cli-log") {
+    return "workbuddy:default";
+  }
 
   return `${sourceVendor === "claude-code" ? "claude" : sourceVendor}:default`;
 }
@@ -280,6 +288,7 @@ function defaultRecordNamespace(sourceAdapter: SourceAdapter, eventType: AnyEven
   if (sourceAdapter === "kimicode-wire") return "wire";
   if (sourceAdapter === "dsh-jsonl") return "session";
   if (sourceAdapter === "workbuddy-jsonl") return "session";
+  if (sourceAdapter === "codebuddy-cli-log") return "cli-request";
   if (sourceAdapter === "codex-rollout") return "rollout";
   if (sourceAdapter === "codex-logs") return "logs";
   if (sourceAdapter === "cursor-ide") return "cursor";

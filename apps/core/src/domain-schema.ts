@@ -130,6 +130,10 @@ export function createCanonicalSchema(db: SqliteDatabaseLike): void {
       service_tier TEXT CHECK (service_tier IN ('standard', 'flex', 'fast', 'priority', 'ultrafast')),
       first_token_latency_ms INTEGER,
       decode_duration_ms INTEGER,
+      -- Vendor-billed credit units for sources that charge in credits rather
+      -- than a priced token table (WorkBuddy, CodeBuddy). NULL when the source
+      -- could not attribute a credit to the request.
+      credit REAL,
       semantic_fingerprint TEXT NOT NULL
     );
 

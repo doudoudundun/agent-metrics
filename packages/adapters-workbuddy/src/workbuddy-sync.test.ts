@@ -316,6 +316,96 @@ describe("syncWorkbuddySessions", () => {
     expect(usageEvents.every((event) => event.session_id === SESSION_ID)).toBe(true);
   });
 
+  it("collects CodeBuddy CLI transcripts as WorkBuddy usage", async () => {
+    const root = await mkdtemp(join(tmpdir(), "agent-metrics-codebuddy-"));
+    roots.push(root);
+    const workbuddyHome = join(root, "workbuddy-home");
+    await mkdir(join(workbuddyHome, "projects"), { recursive: true });
+    const codebuddyHome = join(root, "codebuddy-home");
+    const projectDir = join(codebuddyHome, "projects", "d-projects-dev-demo");
+    await mkdir(projectDir, { recursive: true });
+    const codebuddySessionId = "01a17b62-f81f-7f6f-a667-c6e8c25f0296";
+    const records = buildRecords().map((text) => JSON.parse(text) as Record<string, unknown>);
+    for (const record of records) {
+      record.sessionId = codebuddySessionId;
+    }
+    await writeFile(
+      join(projectDir, `${codebuddySessionId}.jsonl`),
+      records.map((record) => JSON.stringify(record)).join("\n") + "\n"
+    );
+
+    const input = {
+      homePath: workbuddyHome,
+      codebuddyHomePath: codebuddyHome,
+      eventLogPath: join(root, "events.jsonl"),
+      cursorPath: join(root, "cursor.json"),
+      ledgerPath: join(root, "ledger.json")
+    };
+    await syncWorkbuddySessions(input);
+
+    const events = (await readFile(input.eventLogPath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { type: string; source_vendor: string; session_id: string; input_tokens?: number });
+    expect(events.every((event) => event.source_vendor === "workbuddy")).toBe(true);
+    expect(events.filter((event) => event.type === "session.started").map((event) => event.session_id)).toEqual([
+      codebuddySessionId
+    ]);
+    expect(events.filter((event) => event.type === "token.usage.recorded")).toEqual([
+      expect.objectContaining({ session_id: codebuddySessionId, input_tokens: 1000 })
+    ]);
+
+    // Re-running against unchanged transcripts must not duplicate events.
+    await syncWorkbuddySessions(input);
+    expect((await readFile(input.eventLogPath, "utf8")).trim().split("\n")).toHaveLength(events.length);
+  });
+
+  it("skips requests the CodeBuddy CLI log already counted", async () => {
+    const root = await mkdtemp(join(tmpdir(), "agent-metrics-workbuddy-clilog-"));
+    roots.push(root);
+    const homePath = join(root, "workbuddy-home");
+    const projectDir = join(homePath, "projects", "d-projects-dev-demo");
+    await mkdir(projectDir, { recursive: true });
+    await writeFile(join(projectDir, `${SESSION_ID}.jsonl`), buildRecords().join("\n") + "\n");
+
+    // The log adapter writes the request line before the transcript line for
+    // the same message, so its ledger already holds the id when the transcript
+    // is read. The token row must not appear twice.
+    const cliLogLedgerPath = join(root, "codebuddy-cli-log-ledger.json");
+    await writeFile(
+      cliLogLedgerPath,
+      JSON.stringify({
+        eventIds: [
+          "codebuddy-cli:usage:asst_msg_1",
+          "codebuddy-cli:usage:asst_msg_1:cache",
+          "codebuddy-cli:usage:asst_msg_1:credit"
+        ]
+      })
+    );
+
+    const eventLogPath = join(root, "events.jsonl");
+    await syncWorkbuddySessions({
+      homePath,
+      eventLogPath,
+      cursorPath: join(root, "cursor.json"),
+      ledgerPath: join(root, "ledger.json"),
+      cliLogLedgerPath
+    });
+
+    const events = (await readFile(eventLogPath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { type: string; session_id: string });
+    expect(events.map((event) => event.type)).toEqual([
+      "session.started",
+      "prompt.submitted",
+      "tool.called",
+      "tool.succeeded",
+      "assistant.responded"
+    ]);
+    expect(events[0].session_id).toBe(SESSION_ID);
+  });
+
   it("exposes the default and env-overridden source paths", () => {
     const root = join(tmpdir(), "agent-metrics-workbuddy-paths");
     process.env.AGENT_METRICS_WORKBUDDY_HOME = root;

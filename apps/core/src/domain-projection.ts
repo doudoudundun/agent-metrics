@@ -122,7 +122,10 @@ function projectOne(
   const conflict = existing.some((row) => row.semantic_fingerprint !== fingerprint);
 
   if (conflict && parsed.type === "token.usage.recorded" && parsed.source_vendor === "workbuddy") {
-    const reconciled = reconcileWorkbuddyTiming(db, parsed);
+    const reconciled =
+      reconcileWorkbuddyTiming(db, parsed) ??
+      reconcileUsageCredit(db, parsed) ??
+      reconcileUsageCache(db, parsed);
     if (reconciled !== null) {
       return { eventId: parsed.event_id, semanticFingerprint: reconciled,
         projected: false, idempotent: true, conflict: false };
@@ -239,6 +242,112 @@ function reconcileWorkbuddyTiming(
       .run(fingerprint, incoming.event_id);
   }
   return fingerprint;
+}
+
+/**
+ * A billing line can reach the source log after the request it belongs to, so
+ * the first projection may have stored the row without a credit. Patch the
+ * credit onto an otherwise identical row instead of recording a conflict.
+ */
+function reconcileUsageCredit(
+  db: SqliteDatabaseLike,
+  incoming: Extract<NormalizedEventV2, { type: "token.usage.recorded" }>
+): string | null {
+  if (incoming.credit === undefined || incoming.credit === null) return null;
+  const row = db.prepare<{ payload_json: string; semantic_fingerprint: string }>(
+    "SELECT payload_json, semantic_fingerprint FROM normalized_events WHERE event_id = ?"
+  ).get(incoming.event_id);
+  if (row === undefined) return null;
+  const stored = NormalizedEventV2Schema.parse(JSON.parse(row.payload_json));
+  if (stored.type !== "token.usage.recorded") return null;
+  if (stored.credit !== undefined && stored.credit !== null) return null;
+  if (semanticFingerprint(withoutCredit(stored)) !== semanticFingerprint(withoutCredit(incoming))) {
+    return null;
+  }
+  const merged = { ...stored, credit: incoming.credit };
+  const fingerprint = semanticFingerprint(merged);
+  if (fingerprint !== row.semantic_fingerprint) {
+    db.prepare(`UPDATE normalized_events SET payload_json = ?, semantic_fingerprint = ? WHERE event_id = ?`)
+      .run(JSON.stringify(merged), fingerprint, incoming.event_id);
+    db.prepare(`UPDATE usage_events SET credit = ?, semantic_fingerprint = ? WHERE event_id = ?`)
+      .run(merged.credit, fingerprint, incoming.event_id);
+    db.prepare("UPDATE event_observations SET semantic_fingerprint = ? WHERE event_id = ?")
+      .run(fingerprint, incoming.event_id);
+  }
+  return fingerprint;
+}
+
+function withoutCredit<T extends { credit?: number | null }>(value: T): Omit<T, "credit"> {
+  const { credit: _credit, ...rest } = value;
+  return rest;
+}
+
+/**
+ * The cache split is logged by the provider layer one line after the usage
+ * record, so a request first lands with `cache_read_input_tokens` at 0. For a
+ * gross-input source that makes the whole prompt look uncached, inflating the
+ * uncached figure by an order of magnitude, so the record is patched as soon as
+ * the real split arrives.
+ */
+function reconcileUsageCache(
+  db: SqliteDatabaseLike,
+  incoming: Extract<NormalizedEventV2, { type: "token.usage.recorded" }>
+): string | null {
+  if (incoming.cache_read_input_tokens <= 0) return null;
+  const row = db.prepare<{ payload_json: string; semantic_fingerprint: string }>(
+    "SELECT payload_json, semantic_fingerprint FROM normalized_events WHERE event_id = ?"
+  ).get(incoming.event_id);
+  if (row === undefined) return null;
+  const stored = NormalizedEventV2Schema.parse(JSON.parse(row.payload_json));
+  if (stored.type !== "token.usage.recorded") return null;
+  if (stored.cache_read_input_tokens > 0) return null;
+  if (semanticFingerprint(withoutCache(stored)) !== semanticFingerprint(withoutCache(incoming))) {
+    return null;
+  }
+  const merged = {
+    ...stored,
+    cache_read_input_tokens: incoming.cache_read_input_tokens,
+    cache_creation_input_tokens: incoming.cache_creation_input_tokens
+  };
+  const fingerprint = semanticFingerprint(merged);
+  if (fingerprint === row.semantic_fingerprint) {
+    return fingerprint;
+  }
+  let displayed: number;
+  try {
+    displayed = displayedInputTokens({
+      inputTokenSemantics: merged.input_token_semantics,
+      inputTokens: merged.input_tokens,
+      outputTokens: merged.output_tokens,
+      cacheCreationInputTokens: merged.cache_creation_input_tokens,
+      cacheReadInputTokens: merged.cache_read_input_tokens,
+      usageMeasurement: merged.usage_measurement
+    });
+  } catch {
+    return null;
+  }
+  db.prepare(`UPDATE normalized_events SET payload_json = ?, semantic_fingerprint = ? WHERE event_id = ?`)
+    .run(JSON.stringify(merged), fingerprint, incoming.event_id);
+  db.prepare(
+    `UPDATE usage_events SET cache_read_input_tokens = ?, cache_creation_input_tokens = ?,
+     displayed_input_tokens = ?, semantic_fingerprint = ? WHERE event_id = ?`
+  ).run(
+    merged.cache_read_input_tokens,
+    merged.cache_creation_input_tokens,
+    displayed,
+    fingerprint,
+    incoming.event_id
+  );
+  db.prepare("UPDATE event_observations SET semantic_fingerprint = ? WHERE event_id = ?")
+    .run(fingerprint, incoming.event_id);
+  return fingerprint;
+}
+
+function withoutCache<
+  T extends { cache_read_input_tokens: number; cache_creation_input_tokens: number }
+>(value: T): Omit<T, "cache_read_input_tokens" | "cache_creation_input_tokens"> {
+  const { cache_read_input_tokens: _read, cache_creation_input_tokens: _write, ...rest } = value;
+  return rest;
 }
 
 function ensureSourceRegistry(
@@ -464,8 +573,8 @@ function projectUsage(
       provider_host, input_token_semantics, usage_measurement, raw_input_tokens,
       displayed_input_tokens, output_tokens, cache_creation_input_tokens,
       cache_read_input_tokens, server_tool_use, usage_source, service_tier,
-      first_token_latency_ms, decode_duration_ms, semantic_fingerprint
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      first_token_latency_ms, decode_duration_ms, credit, semantic_fingerprint
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     event.event_id,
     event.schema_version,
@@ -490,6 +599,7 @@ function projectUsage(
     event.service_tier ?? null,
     event.first_token_latency_ms ?? null,
     event.decode_duration_ms ?? null,
+    event.credit ?? null,
     semanticFingerprint(event)
   );
 }

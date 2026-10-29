@@ -18,7 +18,8 @@ After startup, open Claude Code in any workspace and trigger a few real tools su
 
 ## How Collection Works
 
-- Claude Code hooks call the local ingress collector in `apps/cli`; other vendors are collected by source adapters (Codex rollouts, Cursor tracking DB, OpenCode/ZCode/MiMo SQLite, Kimi Code wire records, DSH JSONL, WorkBuddy session transcripts under `~/.workbuddy/projects`).
+- Claude Code hooks call the local ingress collector in `apps/cli`; other vendors are collected by source adapters (Codex rollouts, Cursor tracking DB, OpenCode/ZCode/MiMo SQLite, Kimi Code wire records, DSH JSONL, WorkBuddy session transcripts under `~/.workbuddy/projects`, plus CodeBuddy CLI transcripts under `~/.codebuddy/projects`, which share the same schema and are reported as WorkBuddy usage).
+- CodeBuddy CLI also writes a per-request text log under `~/.codebuddy/logs/<date>/<workspace>__<hash>.log`, which `packages/adapters-codebuddy-log` parses. It is a separate adapter because a headless CLI run can leave no transcript at all; the transcript adapter covers the rest, and both share a message-id ledger so a request is never counted twice.
 - Raw hook envelopes append to `data/hooks/raw/claude-code.jsonl`.
 - `agent-metrics hooks parse --follow` converts raw envelopes into normalized events at `data/events/events.jsonl`.
 - `apps/core` ingests normalized events into SQLite on API requests.

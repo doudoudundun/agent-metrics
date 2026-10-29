@@ -14,6 +14,7 @@
   "dependencies": {
     "@agent-metrics/adapters-claude": "workspace:*",
     "@agent-metrics/adapters-codex": "workspace:*",
+    "@agent-metrics/adapters-codebuddy-log": "workspace:*",
     "@agent-metrics/adapters-cursor": "workspace:*",
     "@agent-metrics/adapters-dsh": "workspace:*",
     "@agent-metrics/adapters-kimicode": "workspace:*",

@@ -19,6 +19,8 @@ export type AgentMetricsPaths = {
   dshLedgerPath: string;
   workbuddyCursorPath: string;
   workbuddyLedgerPath: string;
+  codebuddyCliLogCursorPath: string;
+  codebuddyCliLogLedgerPath: string;
   cursorIdeStatePath: string;
   cursorIdeLedgerPath: string;
   codexCursorPath: string;
@@ -124,6 +126,20 @@ export function getAgentMetricsPaths(repoRoot: string): AgentMetricsPaths {
       "sources",
       "state",
       "workbuddy-ledger.json"
+    ),
+    codebuddyCliLogCursorPath: buildAgentMetricsPath(
+      repoRoot,
+      "data",
+      "sources",
+      "state",
+      "codebuddy-cli-log-cursor.json"
+    ),
+    codebuddyCliLogLedgerPath: buildAgentMetricsPath(
+      repoRoot,
+      "data",
+      "sources",
+      "state",
+      "codebuddy-cli-log-ledger.json"
     ),
     cursorIdeStatePath: buildAgentMetricsPath(
       repoRoot,

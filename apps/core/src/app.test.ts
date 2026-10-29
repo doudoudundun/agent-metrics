@@ -519,7 +519,9 @@ describe("ingestEventLog", () => {
     await waitForCondition(() => {
       const states = app.syncCoordinator.getStatus().adapters;
       return states.every((state) => state.lastStartedAt !== null);
-    });
+      // The CodeBuddy CLI log adapter re-reads large debug logs from the real
+      // home directory, so the whole fleet can take a few seconds to start.
+    }, 15000);
 
     const states = app.syncCoordinator.getStatus().adapters;
     const cursorState = states.find((state) => state.sourceVendor === "cursor");

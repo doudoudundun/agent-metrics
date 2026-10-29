@@ -1,0 +1,19 @@
+{
+  "name": "@agent-metrics/adapters-codebuddy-log",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node ../../scripts/run-tests.mjs run src"
+  },
+  "dependencies": {
+    "@agent-metrics/event-schema": "workspace:*",
+    "@agent-metrics/shared-utils": "workspace:*"
+  },
+  "devDependencies": {
+    "@agent-metrics/test-utils": "workspace:*"
+  }
+}

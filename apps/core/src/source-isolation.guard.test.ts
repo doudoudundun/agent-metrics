@@ -13,7 +13,12 @@ import { resolveOpenCodeSourcePaths, resolveZCodeSourcePaths } from "@agent-metr
 import { resolveKimicodeSourcePaths } from "@agent-metrics/adapters-kimicode";
 import { resolveMiMoSourcePaths } from "@agent-metrics/adapters-mimo";
 import { resolveDshSourcePaths } from "@agent-metrics/adapters-dsh";
-import { resolveWorkbuddySourcePaths } from "@agent-metrics/adapters-workbuddy";
+import {
+  resolveCodebuddyHome,
+  resolveWorkbuddySourcePaths,
+  resolveWorkbuddySyncRoots
+} from "@agent-metrics/adapters-workbuddy";
+import { resolveCodebuddyLogRoot } from "@agent-metrics/adapters-codebuddy-log";
 import {
   AGENT_METRICS_SOURCE_ENV_VARS,
   isolateSources,
@@ -50,8 +55,8 @@ function expectOutsideFixtureRoot(path: string): void {
 }
 
 describe("source isolation guard", () => {
-  it("resolves all 18 production source paths under the fixture root", () => {
-    expect(AGENT_METRICS_SOURCE_ENV_VARS).toHaveLength(18);
+  it("resolves all 20 production source paths under the fixture root", () => {
+    expect(AGENT_METRICS_SOURCE_ENV_VARS).toHaveLength(20);
 
     const claudeRoots = resolveDefaultClaudeDiscoveryRoots("unused-by-resolver");
     const opencode = resolveOpenCodeSourcePaths();
@@ -104,6 +109,29 @@ describe("source isolation guard", () => {
     });
     expectInsideFixtureRoot(workbuddy.homePath);
     expectInsideFixtureRoot(workbuddy.projectsRoot);
+
+    // CodeBuddy CLI transcripts are collected by the WorkBuddy adapter.
+    const syncRoots = resolveWorkbuddySyncRoots();
+    expect(syncRoots).toEqual([
+      {
+        homePath: expectedPath("AGENT_METRICS_WORKBUDDY_HOME"),
+        projectsRoot: join(expectedPath("AGENT_METRICS_WORKBUDDY_HOME"), "projects"),
+        primary: true
+      },
+      {
+        homePath: expectedPath("AGENT_METRICS_CODEBUDDY_HOME"),
+        projectsRoot: join(expectedPath("AGENT_METRICS_CODEBUDDY_HOME"), "projects"),
+        primary: false
+      }
+    ]);
+    for (const root of syncRoots) {
+      expectInsideFixtureRoot(root.homePath);
+      expectInsideFixtureRoot(root.projectsRoot);
+    }
+
+    // CodeBuddy CLI request logs are the only record of headless CLI runs.
+    expect(resolveCodebuddyLogRoot()).toBe(expectedPath("AGENT_METRICS_CODEBUDDY_LOG_ROOT"));
+    expectInsideFixtureRoot(resolveCodebuddyLogRoot());
 
     expect(codex).toEqual({
       sessionsRoot: expectedPath("AGENT_METRICS_CODEX_SESSIONS_ROOT"),
@@ -205,6 +233,13 @@ describe("source isolation guard", () => {
       expectOutsideFixtureRoot(resolve());
       process.env[name] = redirected;
     }
+  });
+
+  it("falls back outside the fixture root when the CodeBuddy override is removed", () => {
+    const redirected = expectedPath("AGENT_METRICS_CODEBUDDY_HOME");
+    delete process.env.AGENT_METRICS_CODEBUDDY_HOME;
+    expectOutsideFixtureRoot(resolveCodebuddyHome());
+    process.env.AGENT_METRICS_CODEBUDDY_HOME = redirected;
   });
 
   it("falls back outside the fixture root when a directly-resolved Cursor override is removed", () => {

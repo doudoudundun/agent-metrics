@@ -44,7 +44,9 @@ const SESSION_START_BACKFILL_VERSION = 7;
 const SESSION_START_BACKFILL_NAME = "007-backfill-session-started-at";
 const USAGE_SERVICE_TIER_VERSION = 8;
 const USAGE_SERVICE_TIER_NAME = "008-add-usage-service-tier";
-const LATEST_VERSION = USAGE_SERVICE_TIER_VERSION;
+const USAGE_CREDIT_VERSION = 9;
+const USAGE_CREDIT_NAME = "009-add-usage-credit";
+const LATEST_VERSION = USAGE_CREDIT_VERSION;
 
 const LEGACY_TABLES = [
   "sessions",
@@ -165,6 +167,18 @@ export function runDomainMigrations(db: SqliteDatabaseLike, now: MigrationNow = 
         db.exec("ALTER TABLE usage_events ADD COLUMN service_tier TEXT");
       }
       insertMigration(db, USAGE_SERVICE_TIER_VERSION, USAGE_SERVICE_TIER_NAME, appliedAt);
+    })();
+  }
+  if (!hasMigration(db, USAGE_CREDIT_NAME)) {
+    db.transaction(() => {
+      // Fresh databases carry the column from createCanonicalSchema; only
+      // upgrade existing tables. Rows ingested before 009 stay NULL because the
+      // credit was never captured for them.
+      const columns = columnNames(db, "usage_events");
+      if (!columns.has("credit")) {
+        db.exec("ALTER TABLE usage_events ADD COLUMN credit REAL");
+      }
+      insertMigration(db, USAGE_CREDIT_VERSION, USAGE_CREDIT_NAME, appliedAt);
     })();
   }
 }

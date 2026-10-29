@@ -77,7 +77,8 @@ export const USAGE_REGISTRY: Record<
   },
   "codex-rollout": { semantics: "gross", measurement: "increment", adapters: ["codex-rollout"] },
   "codex-logs": { semantics: "gross", measurement: "increment", adapters: ["codex-logs"] },
-  "workbuddy-usage": { semantics: "gross", measurement: "increment", adapters: ["workbuddy-jsonl"] }
+  "workbuddy-usage": { semantics: "gross", measurement: "increment", adapters: ["workbuddy-jsonl"] },
+  "codebuddy-log": { semantics: "gross", measurement: "increment", adapters: ["codebuddy-cli-log"] }
 };
 
 export function registerSource(db: SqliteDatabaseLike, sourceInstanceId: string, sourceVendor: string, at: string): void {

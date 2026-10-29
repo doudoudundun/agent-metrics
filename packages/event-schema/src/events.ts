@@ -142,6 +142,8 @@ export const TokenUsageRecordedEventSchema = BaseEventSchema.extend({
   cache_read_input_tokens: NonNegativeInt,
   server_tool_use: z.string().default("{}"),
   usage_source: UsageSourceSchema,
+  /** Provider-billed credit units (WorkBuddy/CodeBuddy), absent when unknown. */
+  credit: z.number().nonnegative().nullable().optional(),
   /** Accelerated speed tier actually served; absent means standard pricing. */
   service_tier: ServiceTierSchema.nullable().optional(),
   first_token_latency_ms: NonNegativeInt.nullable().optional(),
@@ -291,6 +293,13 @@ const TokenUsageRecordedEventV2BaseSchema = z
     cache_read_input_tokens: NonNegativeInt,
     server_tool_use: ServerToolUseSchema,
     usage_source: UsageSourceSchema,
+    /**
+     * Provider-billed credit units. WorkBuddy and CodeBuddy charge credits per
+     * request; the value comes straight from the vendor's own accounting, so it
+     * is stored alongside tokens instead of being derived from a price table.
+     * NULL means the source could not attribute a credit to this request.
+     */
+    credit: z.number().nonnegative().nullable().optional(),
     /**
      * Accelerated speed tier actually served by the provider (`fast`, `priority`,
      * `ultrafast`, `flex`). Absent/NULL is standard pricing.

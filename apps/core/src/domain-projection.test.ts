@@ -63,6 +63,41 @@ describe("canonical V2 projection", () => {
     db.close();
   });
 
+  it("patches a credit onto a WorkBuddy row that was projected before its billing line", () => {
+    const db = createDb(); runDomainMigrations(db);
+    const withoutCredit = toNormalizedEventV2({
+      event_id: "codebuddy-cli:session-1:usage:message-1", session_id: "session-1",
+      timestamp: "2026-10-27T02:57:36.264Z", source_vendor: "workbuddy", source_adapter: "codebuddy-cli-log",
+      workspace_path: ".", type: "token.usage.recorded", message_id: "message-1", model: "hy4-preview",
+      input_tokens: 1000, output_tokens: 50, cache_creation_input_tokens: 0, cache_read_input_tokens: 0,
+      server_tool_use: "{}", usage_source: "codebuddy-log", provider_id: "unknown",
+      first_token_latency_ms: 100, decode_duration_ms: 200
+    });
+    const withCredit = toNormalizedEventV2({
+      event_id: "codebuddy-cli:session-1:usage:message-1", session_id: "session-1",
+      timestamp: "2026-10-27T02:57:36.264Z", source_vendor: "workbuddy", source_adapter: "codebuddy-cli-log",
+      workspace_path: ".", type: "token.usage.recorded", message_id: "message-1", model: "hy4-preview",
+      input_tokens: 1000, output_tokens: 50, cache_creation_input_tokens: 0, cache_read_input_tokens: 0,
+      server_tool_use: "{}", usage_source: "codebuddy-log", credit: 0.42, provider_id: "unknown",
+      first_token_latency_ms: 100, decode_duration_ms: 200
+    });
+
+    projectNormalizedEvents(db, [withoutCredit]);
+    expect(db.prepare("SELECT credit FROM usage_events").get()).toEqual({ credit: null });
+
+    expect(projectNormalizedEvents(db, [withCredit])[0].conflict).toBe(false);
+    expect(db.prepare("SELECT credit, output_tokens FROM usage_events").get())
+      .toEqual({ credit: 0.42, output_tokens: 50 });
+    expect(db.prepare("SELECT count(*) AS count FROM usage_events").get()).toEqual({ count: 1 });
+    expect(db.prepare("SELECT count(*) AS count FROM event_diagnostics").get()).toEqual({ count: 0 });
+
+    // A different credit for the same request stays a real conflict.
+    const conflicting = { ...withCredit, credit: 0.99 } as NormalizedEventV2;
+    expect(projectNormalizedEvents(db, [conflicting])[0].conflict).toBe(true);
+    expect(db.prepare("SELECT credit FROM usage_events").get()).toEqual({ credit: 0.42 });
+    db.close();
+  });
+
   it("projects observations, lifecycle, and usage idempotently", () => {
     const db = createDb();
     runDomainMigrations(db);

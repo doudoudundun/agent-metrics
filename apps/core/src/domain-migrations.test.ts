@@ -170,7 +170,8 @@ describe("runDomainMigrations", () => {
       { version: 5, name: "005-cover-tool-aggregate-queries", applied_at: "2026-07-17T12:00:00.000Z" },
       { version: 6, name: "006-add-usage-timing-columns", applied_at: "2026-07-17T12:00:00.000Z" },
       { version: 7, name: "007-backfill-session-started-at", applied_at: "2026-07-17T12:00:00.000Z" },
-      { version: 8, name: "008-add-usage-service-tier", applied_at: "2026-07-17T12:00:00.000Z" }
+      { version: 8, name: "008-add-usage-service-tier", applied_at: "2026-07-17T12:00:00.000Z" },
+      { version: 9, name: "009-add-usage-credit", applied_at: "2026-07-17T12:00:00.000Z" }
     ]);
 
     db.close();
@@ -427,6 +428,7 @@ describe("runDomainMigrations", () => {
     expect(Object.keys(USAGE_REGISTRY).sort()).toEqual(
       [
         "claude-transcript",
+        "codebuddy-log",
         "codex-logs",
         "codex-rollout",
         "cursor-composer-context",

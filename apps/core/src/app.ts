@@ -11,6 +11,7 @@ import { syncKimicodeSessions } from "@agent-metrics/adapters-kimicode";
 import { syncMiMoDatabase } from "@agent-metrics/adapters-mimo";
 import { syncDshSessions } from "@agent-metrics/adapters-dsh";
 import { syncWorkbuddySessions } from "@agent-metrics/adapters-workbuddy";
+import { syncCodebuddyCliLogs } from "@agent-metrics/adapters-codebuddy-log";
 import { getAgentMetricsPaths } from "@agent-metrics/shared-utils";
 import { runDomainMigrations, type SqliteDatabaseLike } from "./domain-migrations.js";
 import {
@@ -258,7 +259,30 @@ export function buildApp(input: BuildAppInput): MetricsApp {
             await syncWorkbuddySessions({
               eventLogPath: canonicalEventLogPath,
               cursorPath: agentPaths.workbuddyCursorPath,
-              ledgerPath: agentPaths.workbuddyLedgerPath
+              ledgerPath: agentPaths.workbuddyLedgerPath,
+              cliLogLedgerPath: agentPaths.codebuddyCliLogLedgerPath
+            });
+            return projectAfterSourceSync();
+          })
+        }
+      ,
+      {
+        // Headless CodeBuddy CLI runs (anyagent's `--print` mode) leave no
+        // transcript, so their usage only exists in the CLI request log. The
+        // events still belong to the WorkBuddy vendor row because the CLI bills
+        // the same account.
+        adapterInstanceId: "codebuddy-cli-log@workbuddy:default",
+        sourceInstanceId: "workbuddy:default",
+        sourceAdapter: "codebuddy-cli-log",
+        sourceVendor: "workbuddy",
+        enabled: true,
+        sync: async ({ signal }) =>
+          runWithCanonicalWriterLease(signal, async () => {
+            await syncCodebuddyCliLogs({
+              eventLogPath: canonicalEventLogPath,
+              cursorPath: agentPaths.codebuddyCliLogCursorPath,
+              ledgerPath: agentPaths.codebuddyCliLogLedgerPath,
+              workbuddyLedgerPath: agentPaths.workbuddyLedgerPath
             });
             return projectAfterSourceSync();
           })
@@ -445,8 +469,20 @@ export function buildApp(input: BuildAppInput): MetricsApp {
                       syncWorkbuddySessions({
                         eventLogPath,
                         cursorPath: paths.workbuddyCursorPath,
-                        ledgerPath: paths.workbuddyLedgerPath
+                        ledgerPath: paths.workbuddyLedgerPath,
+                        cliLogLedgerPath: paths.codebuddyCliLogLedgerPath
                       })
+                  },
+                  {
+                    id: "codebuddy-cli-log@workbuddy:default",
+                    run: async () => {
+                      await syncCodebuddyCliLogs({
+                        eventLogPath,
+                        cursorPath: paths.codebuddyCliLogCursorPath,
+                        ledgerPath: paths.codebuddyCliLogLedgerPath,
+                        workbuddyLedgerPath: paths.workbuddyLedgerPath
+                      });
+                    }
                   },
                   {
                     id: "cursor-ide@cursor:default",
