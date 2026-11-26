@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@agent-metrics/contracts": "workspace:*",
+    "@agent-metrics/event-schema": "workspace:*",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "recharts": "^2.15.3"

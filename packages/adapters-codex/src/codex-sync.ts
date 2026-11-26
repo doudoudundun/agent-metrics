@@ -4,24 +4,40 @@ import { readdir, readFile, rename, rm, stat, writeFile, mkdir } from "node:fs/p
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
-import { type NormalizedEventV2 } from "@agent-metrics/event-schema";
+import { AnyEventSchema, normalizeModelId, type NormalizedEventV2 } from "@agent-metrics/event-schema";
 import {
   appendJsonLine,
   loadEventLedgerWithFallback,
   persistEventLedger,
+  readJsonlLines,
   reconcileLedgerSessionsWithEventLog
 } from "@agent-metrics/shared-utils";
 import {
-  extractCodexEventsFromRollout,
+  createCodexRolloutParser,
+  type CodexParserState,
   type CodexProviderConfig
 } from "./codex.js";
+import {
+  collectCodexTurnInputMetadata,
+  type CodexTurnInputMetadata,
+  type CodexTurnInputLogRow
+} from "./turn-metadata.js";
 
 /** Re-check rollouts under this many days so ledger/jsonl drift self-heals. */
 const RECENT_ROLLOUT_RECONCILE_DAYS = 4;
+const CODEX_TURN_INPUT_LOG_TAIL_LIMIT = 5_000;
+const CODEX_TURN_INPUT_LOG_SESSION_SCAN_LIMIT = 5_000;
+const CODEX_TURN_INPUT_LOG_SESSION_MATCH_LIMIT = 500;
 
 type RolloutFileSignature = {
   size: number;
   mtimeMs: number;
+  ino?: number;
+  /** Byte offset after the last fully consumed JSONL record. */
+  offset?: number;
+  /** False while a rollout still has unread bytes; the next run resumes. */
+  caughtUp?: boolean;
+  parserState?: CodexParserState;
 };
 
 type SyncCursor = {
@@ -156,12 +172,18 @@ export async function syncCodexRollouts(input: {
    * files whose size/mtime changed.
    */
   reconcileRecent?: boolean;
+  /** Byte budget per rollout file per run (default 8 MiB). */
+  maxBytesPerFile?: number;
+  /** Total byte budget per run across all rollouts (default 64 MiB). */
+  maxBytesPerSync?: number;
 }): Promise<void> {
   const { sessionsRoots, logsDbPath, configPath } = resolveCodexSourcePaths(input);
   const existingRoots = sessionsRoots.filter((root) => existsSync(toFsPath(root)));
   if (existingRoots.length === 0) {
     return;
   }
+
+  let bytesReadTotal = 0;
 
   const reconcileRecent = input.reconcileRecent !== false;
   const cursor = await loadCursor(input.cursorPath);
@@ -190,7 +212,9 @@ export async function syncCodexRollouts(input: {
 
   // Recent rollouts: trust events.jsonl over ledger, and drop cursor so files
   // are re-read when ledger claimed "seen" but rows never landed in the log.
-  if (reconcileRecent) {
+  // Reconciling needs evidence from the event log; when none exists yet there
+  // is nothing to heal and a scan would fail on the missing file.
+  if (reconcileRecent && existsSync(input.eventLogPath)) {
     const recentSessionIds = new Set<string>();
     let recentCursorHit = false;
     for (const filePath of rolloutFiles) {
@@ -229,49 +253,169 @@ export async function syncCodexRollouts(input: {
     }
   }
 
-  for (const filePath of rolloutFiles) {
-    const signature = await readFileSignature(filePath);
-    const previousSignature = nextRolloutFiles[filePath];
+  const commitEvent = async (event: NormalizedEventV2): Promise<void> => {
+    // The parser already emits NormalizedEventV2; source_record_id carries the
+    // stable pre-conversion legacy event_id that the ledger has always keyed on.
+    const ledgerKey = ledgerKeyFor(event);
+    if (seenEventIds.has(ledgerKey)) {
+      return;
+    }
 
-    if (isSameRolloutSignature(signature, previousSignature)) {
+    await appendJsonLine(input.eventLogPath, event);
+    seenEventIds.add(ledgerKey);
+    ledgerChanged = true;
+  };
+
+  const candidates = (
+    await Promise.all(
+      rolloutFiles.map(async (filePath) => {
+        try {
+          return { filePath, signature: await readFileSignature(filePath) };
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+            return null;
+          }
+          throw error;
+        }
+      })
+    )
+  ).filter((candidate): candidate is { filePath: string; signature: RolloutFileSignature } => {
+    return candidate !== null;
+  });
+  // Newer sessions get a turn first so bounded catch-up of huge historical
+  // rollouts can never starve active sessions.
+  candidates.sort((left, right) => right.signature.mtimeMs - left.signature.mtimeMs);
+
+  const perFileBudget = input.maxBytesPerFile ?? 8 * 1024 * 1024;
+  const syncBudget = input.maxBytesPerSync ?? 64 * 1024 * 1024;
+  const turnInputMetadataBySession = new Map<
+    string,
+    ReadonlyMap<string, CodexTurnInputMetadata>
+  >();
+  let globalTurnInputMetadata: ReadonlyMap<string, CodexTurnInputMetadata> | undefined;
+
+  for (const { filePath, signature } of candidates) {
+    const previous = nextRolloutFiles[filePath];
+    if (isSameRolloutSignature(signature, previous) && previous?.caughtUp === true) {
+      continue;
+    }
+    if (bytesReadTotal >= syncBudget) {
       continue;
     }
 
-    const contents = await readFile(toFsPath(filePath), "utf8");
-    let events;
+    // Resume only when the checkpointed parser state provably belongs to the
+    // same file revision: same inode, offset still inside the file, and the
+    // file appended (or is untouched) rather than rewritten.
+    let start = 0;
+    let resumeState: CodexParserState | undefined;
+    if (
+      previous &&
+      previous.parserState !== undefined &&
+      previous.parserState.turnId !== undefined &&
+      // Old checkpoints did not retain thread_settings_applied. Replay once
+      // on the next change so appended records inherit the correct tier.
+      previous.parserState.threadServiceTier !== undefined &&
+      // Older checkpoints cannot tell whether earlier token_count records
+      // already disabled mirror fallback. Replay once before resuming them.
+      previous.parserState.tokenCountUsageSeen !== undefined &&
+      previous.offset !== undefined &&
+      previous.ino !== undefined &&
+      previous.ino === signature.ino &&
+      previous.offset <= signature.size &&
+      (signature.size > previous.size || signature.mtimeMs === previous.mtimeMs)
+    ) {
+      start = previous.offset;
+      resumeState = previous.parserState;
+    }
+
     try {
-      events = extractCodexEventsFromRollout({
-        filePath,
-        contents,
-        sessionModels,
-        providerConfigs,
-        sourceInstanceId: isMulticaSessionsPath(filePath) ? "codex:multica" : undefined
-      });
+      const pathSessionId = sessionIdFromRolloutPath(filePath);
+      const checkpointSessionId = resumeState?.sessionMeta?.sessionId ?? null;
+      const metadataSessionId =
+        pathSessionId !== null && checkpointSessionId !== null && pathSessionId !== checkpointSessionId
+          ? null
+          : pathSessionId ?? checkpointSessionId;
+      let turnInputMetadata: ReadonlyMap<string, CodexTurnInputMetadata>;
+      if (metadataSessionId !== null) {
+        turnInputMetadata = turnInputMetadataBySession.get(metadataSessionId) ??
+          await loadCodexTurnInputMetadata(logsDbPath, metadataSessionId);
+        turnInputMetadataBySession.set(metadataSessionId, turnInputMetadata);
+      } else {
+        globalTurnInputMetadata ??= await loadCodexTurnInputMetadata(logsDbPath);
+        turnInputMetadata = globalTurnInputMetadata;
+      }
+
+      const parser = createCodexRolloutParser(
+        {
+          filePath,
+          sessionModels,
+          providerConfigs,
+          turnInputMetadata,
+          sourceInstanceId: isMulticaSessionsPath(filePath) ? "codex:multica" : undefined
+        },
+        resumeState
+      );
+      let offset = start;
+      let budgetExhausted = false;
+      let unterminatedTailState: CodexParserState | undefined;
+      // A batch may exceed its budget by one record so complete records are
+      // never split or dropped.
+      const budget = Math.min(perFileBudget, syncBudget - bytesReadTotal);
+
+      for await (const entry of readJsonlLines({
+        filePath: toFsPath(filePath),
+        start,
+        end: signature.size,
+        includeUnterminated: true
+      })) {
+        // Never checkpoint a partial record: its bytes are re-read once the
+        // record completes, and must reparse with the same context.
+        if (!entry.complete) {
+          unterminatedTailState = parser.checkpoint();
+        }
+        const events = parser.parseLines([entry.line.replace(/\r$/u, "")]);
+        for (const event of events) {
+          await commitEvent(event);
+        }
+        if (entry.complete) {
+          offset = entry.nextOffset;
+        }
+        if (entry.nextOffset - start >= budget) {
+          budgetExhausted = true;
+          break;
+        }
+      }
+
+      const caughtUp = !budgetExhausted;
+      if (caughtUp) {
+        // Emit the buffered same-timestamp tail group. For an unterminated
+        // final record this publishes what already parsed cleanly, while the
+        // persisted state stays at the last complete record so those bytes are
+        // re-read (and deduped via the ledger) once the record completes.
+        for (const event of parser.flush()) {
+          await commitEvent(event);
+        }
+      }
+
+      bytesReadTotal += (caughtUp ? signature.size : offset) - start;
+      // Only advance the cursor after this run's events were appended (or
+      // skipped as already present). Avoids the cursor running past a crashed
+      // mid-file write.
+      nextRolloutFiles[filePath] = {
+        ...signature,
+        offset,
+        caughtUp,
+        parserState: unterminatedTailState ?? parser.checkpoint()
+      };
     } catch (error) {
       // One corrupt/legacy rollout must not fail the whole Codex adapter run.
+      // Oversized JSONL records surface here as a redacted
+      // JSONL_LINE_TOO_LARGE error; the source file is left untouched.
       console.error(
         `[codex-sync] skipped ${filePath}: ${error instanceof Error ? error.message : String(error)}`
       );
       continue;
     }
-
-    for (const event of events) {
-      // extractCodexEventsFromRollout already emits NormalizedEventV2;
-      // source_record_id carries the stable pre-conversion legacy event_id
-      // that the ledger has always keyed on.
-      const ledgerKey = ledgerKeyFor(event);
-      if (seenEventIds.has(ledgerKey)) {
-        continue;
-      }
-
-      await appendJsonLine(input.eventLogPath, event);
-      seenEventIds.add(ledgerKey);
-      ledgerChanged = true;
-    }
-
-    // Only mark the file synced after its events were appended (or skipped as
-    // already present). Avoids cursor advancing past a crashed mid-file write.
-    nextRolloutFiles[filePath] = signature;
   }
 
   const nextCursor = {
@@ -338,14 +482,17 @@ function loadSessionModelsFromLogs(input: {
         continue;
       }
 
-      const match = /(?:conversation\.id|thread\.id)=([0-9a-f-]+).*?\bmodel=([^\s"]+)/iu.exec(
+      const match = /(?:conversation\.id|thread\.id)=([0-9a-f-]+).*?\bmodel=([^\s";]+)/iu.exec(
         row.feedback_log_body
       );
       if (!match) {
         continue;
       }
 
-      sessionModels[match[1]] = match[2];
+      const model = normalizeModelId(match[2]);
+      if (model) {
+        sessionModels[match[1]] = model;
+      }
     }
 
     return {
@@ -354,6 +501,83 @@ function loadSessionModelsFromLogs(input: {
     };
   } finally {
     db.close();
+  }
+}
+
+export async function loadCodexTurnInputMetadata(
+  logsDbPath: string,
+  sessionId?: string
+): Promise<ReadonlyMap<string, CodexTurnInputMetadata>> {
+  if (!existsSync(toFsPath(logsDbPath))) {
+    return new Map();
+  }
+
+  let db: ReadOnlyDatabase | null = null;
+
+  try {
+    db = new Database(toFsPath(logsDbPath), {
+      readonly: true,
+      fileMustExist: true
+    }) as ReadOnlyDatabase;
+    // Prefer the indexed session lookup for rollouts being parsed. It survives
+    // unrelated sessions pushing their logs beyond the global tail. Limit raw
+    // rows before filtering so even a very active session has a bounded scan.
+    // Unknown rollout IDs retain the bounded global-tail fallback.
+    const rows = sessionId
+      ? db
+          .prepare<CodexTurnInputLogRow>(
+            `
+              SELECT target, thread_id, feedback_log_body
+              FROM (
+                SELECT id, target, thread_id, feedback_log_body
+                FROM logs
+                WHERE thread_id = ?
+                ORDER BY id DESC
+                LIMIT ?
+              )
+              WHERE target = 'feedback_tags'
+                AND feedback_log_body IS NOT NULL
+                AND length(CAST(feedback_log_body AS BLOB)) <= 65536
+                AND (
+                  feedback_log_body LIKE '%op.dispatch.turn_input%'
+                  OR feedback_log_body LIKE '%op.dispatch.inter_agent_communication%'
+                )
+              ORDER BY id DESC
+              LIMIT ?
+            `
+          )
+          .all(
+            sessionId,
+            CODEX_TURN_INPUT_LOG_SESSION_SCAN_LIMIT,
+            CODEX_TURN_INPUT_LOG_SESSION_MATCH_LIMIT
+          )
+      : db
+          .prepare<CodexTurnInputLogRow>(
+            `
+              SELECT target, thread_id, feedback_log_body
+              FROM (
+                SELECT id, target, thread_id, feedback_log_body
+                FROM logs
+                ORDER BY id DESC
+                LIMIT ?
+              )
+              WHERE target = 'feedback_tags'
+                AND feedback_log_body IS NOT NULL
+                AND length(CAST(feedback_log_body AS BLOB)) <= 65536
+                AND (
+                  feedback_log_body LIKE '%op.dispatch.turn_input%'
+                  OR feedback_log_body LIKE '%op.dispatch.inter_agent_communication%'
+                )
+              ORDER BY id DESC
+            `
+          )
+          .all(CODEX_TURN_INPUT_LOG_TAIL_LIMIT);
+
+    return collectCodexTurnInputMetadata(rows);
+  } catch {
+    return new Map();
+  } finally {
+    db?.close();
   }
 }
 
@@ -425,7 +649,8 @@ async function readFileSignature(filePath: string): Promise<RolloutFileSignature
   const details = await stat(toFsPath(filePath));
   return {
     size: details.size,
-    mtimeMs: details.mtimeMs
+    mtimeMs: details.mtimeMs,
+    ino: details.ino
   };
 }
 
@@ -433,7 +658,12 @@ function isSameRolloutSignature(
   left: RolloutFileSignature,
   right: RolloutFileSignature | undefined
 ): boolean {
-  return !!right && left.size === right.size && left.mtimeMs === right.mtimeMs;
+  return (
+    !!right &&
+    left.size === right.size &&
+    left.mtimeMs === right.mtimeMs &&
+    (right.ino === undefined || left.ino === right.ino)
+  );
 }
 
 async function loadCursor(cursorPath: string): Promise<SyncCursor> {
@@ -507,10 +737,120 @@ function parseRolloutFiles(value: unknown): Record<string, RolloutFileSignature>
       return [];
     }
 
-    return [[filePath, { size, mtimeMs }] as const];
+    // Legacy entries ({size, mtimeMs} only, from before byte checkpoints)
+    // stay readable but count as not caught up, so their file is re-read from
+    // byte 0 once instead of being skipped forever.
+    const offset =
+      typeof signature.offset === "number" &&
+      Number.isSafeInteger(signature.offset) &&
+      signature.offset >= 0 &&
+      signature.offset <= size
+        ? signature.offset
+        : undefined;
+    const parserState = isValidParserState(signature.parserState)
+      ? signature.parserState
+      : undefined;
+
+    return [
+      [
+        filePath,
+        {
+          size,
+          mtimeMs,
+          ino: typeof signature.ino === "number" ? signature.ino : undefined,
+          offset,
+          caughtUp: signature.caughtUp === true,
+          parserState
+        }
+      ] as const
+    ];
   });
 
   return Object.fromEntries(entries);
+}
+
+function isValidParserState(value: unknown): value is CodexParserState {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  if (!Number.isSafeInteger(value.lineIndex) || (value.lineIndex as number) < 0) {
+    return false;
+  }
+
+  if (value.sourceInstanceId !== null && value.sourceInstanceId !== undefined &&
+    typeof value.sourceInstanceId !== "string") {
+    return false;
+  }
+
+  // New turn-scoped metadata is optional so checkpoints written before this
+  // parser version remain readable.
+  if (
+    (value.turnId !== undefined && value.turnId !== null && typeof value.turnId !== "string") ||
+    (value.turnModel !== undefined && value.turnModel !== null && typeof value.turnModel !== "string") ||
+    (value.turnServiceTier !== undefined &&
+      value.turnServiceTier !== null &&
+      typeof value.turnServiceTier !== "string") ||
+    (value.threadServiceTier !== undefined &&
+      value.threadServiceTier !== null &&
+      typeof value.threadServiceTier !== "string")
+  ) {
+    return false;
+  }
+
+  if (
+    value.sessionMeta !== null &&
+    value.sessionMeta !== undefined &&
+    !isRecord(value.sessionMeta)
+  ) {
+    return false;
+  }
+
+  const sessionMeta = value.sessionMeta;
+  if (
+    isRecord(sessionMeta) &&
+    (typeof sessionMeta.sessionId !== "string" ||
+      typeof sessionMeta.timestamp !== "string" ||
+      typeof sessionMeta.workspacePath !== "string" ||
+      (sessionMeta.providerId !== null && typeof sessionMeta.providerId !== "string"))
+  ) {
+    return false;
+  }
+
+  if (
+    !Array.isArray(value.pendingToolCalls) ||
+    !value.pendingToolCalls.every(
+      (entry) =>
+        Array.isArray(entry) &&
+        typeof entry[0] === "string" &&
+        isRecord(entry[1]) &&
+        ["sessionId", "workspacePath", "timestamp", "toolName", "argumentSummary"].every(
+          (key) => typeof entry[1][key] === "string"
+        )
+    )
+  ) {
+    return false;
+  }
+
+  if (
+    !Array.isArray(value.pendingEvents) ||
+    !value.pendingEvents.every((event) => isRecord(event) && AnyEventSchema.safeParse(event).success)
+  ) {
+    return false;
+  }
+
+  if (value.tokenCountUsageSeen !== undefined && typeof value.tokenCountUsageSeen !== "boolean") {
+    return false;
+  }
+  for (const key of ["mirroredUsageEvents", "mirroredUsageDeferredEvents"]) {
+    const events = value[key];
+    if (events !== undefined &&
+      (!Array.isArray(events) || !events.every((event) => AnyEventSchema.safeParse(event).success))) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 function parseSessionModels(value: unknown): Record<string, string> {
@@ -519,7 +859,10 @@ function parseSessionModels(value: unknown): Record<string, string> {
   }
 
   return Object.fromEntries(
-    Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === "string")
+    Object.entries(value).flatMap(([sessionId, rawModel]) => {
+      const model = typeof rawModel === "string" ? normalizeModelId(rawModel) : null;
+      return model ? [[sessionId, model]] : [];
+    })
   );
 }
 

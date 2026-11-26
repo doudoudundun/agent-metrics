@@ -1,4 +1,5 @@
 import type { SqliteDatabaseLike } from "./domain-types.js";
+import { collectAntigravityKeyUsage } from "./official-key-usage-antigravity.js";
 import { collectKimicodeKeyUsage } from "./official-key-usage-kimicode.js";
 import { collectZCodeApiKeyUsage } from "./official-key-usage-zcode-api.js";
 
@@ -9,8 +10,9 @@ export type KeyUsageRefreshHandle = {
 };
 
 /**
- * Network-side official key quota refresh (Kimi Code). Local log scrapers
- * (Codex rollouts, ZCode billing logs) ride the source light refresh loop.
+ * Network-side official key quota refresh (Kimi Code, ZCode API, Antigravity).
+ * Local log scrapers (Codex rollouts, ZCode billing logs) ride the source
+ * light refresh loop.
  */
 export function startOfficialKeyUsageRefreshLoop(
   db: SqliteDatabaseLike,
@@ -33,6 +35,7 @@ export function startOfficialKeyUsageRefreshLoop(
     try {
       await collectKimicodeKeyUsage(db, { log: options.log });
       await collectZCodeApiKeyUsage(db, { log: options.log });
+      await collectAntigravityKeyUsage(db, { log: options.log });
     } catch (error) {
       options.log?.warn(
         `official key usage refresh failed: ${error instanceof Error ? error.message : String(error)}`

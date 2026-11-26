@@ -242,6 +242,14 @@ async function findDesktopExecutable(artifact, target) {
     const candidate = join(artifact, "AgentMetrics.exe");
     return candidate;
   }
+  // The default macOS artifact points directly at the .app bundle.
+  if (artifact.endsWith(".app")) {
+    const executableDirectory = join(artifact, "Contents", "MacOS");
+    const files = await readdir(executableDirectory);
+    if (files.length > 0) {
+      return join(executableDirectory, files[0]);
+    }
+  }
   const entries = await readdir(artifact, { withFileTypes: true });
   for (const entry of entries) {
     if (entry.isDirectory() && entry.name.endsWith(".app")) {

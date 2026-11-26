@@ -241,6 +241,31 @@ describe("api client", () => {
     });
   });
 
+  it("keeps Antigravity rows in the source breakdown and still drops unknown vendors", async () => {
+    stubFetchJson({
+      mode: "calendar",
+      range: "day",
+      timezone: "Asia/Shanghai",
+      windowStart: "2026-05-26T16:00:00.000Z",
+      windowEnd: "2026-05-27T10:30:00.000Z",
+      updatedAt: "2026-05-27T10:30:00.000Z",
+      sessionCount: 2,
+      totalToolCalls: 5,
+      successRate: 1,
+      sourceBreakdown: [
+        { sourceVendor: "antigravity", sessionCount: 2, turnCount: 8, totalTokens: 4200, toolCalls: 5 },
+        { sourceVendor: "not-a-vendor", sessionCount: 9, turnCount: 9, totalTokens: 9, toolCalls: 9 }
+      ],
+      providerBreakdown: []
+    });
+
+    await expect(fetchOverview()).resolves.toMatchObject({
+      sourceBreakdown: [
+        { sourceVendor: "antigravity", sessionCount: 2, turnCount: 8, totalTokens: 4200, toolCalls: 5 }
+      ]
+    });
+  });
+
   it("returns scoped tool envelopes", async () => {
     const rows = [{ toolName: "Read", count: 1, failures: 0, averageDurationMs: 14 }];
     const scopeMeta = {

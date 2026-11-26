@@ -65,6 +65,9 @@ importers:
 
   apps/core:
     dependencies:
+      '@agent-metrics/adapters-antigravity':
+        specifier: workspace:*
+        version: link:../../packages/adapters-antigravity
       '@agent-metrics/adapters-claude':
         specifier: workspace:*
         version: link:../../packages/adapters-claude
@@ -123,6 +126,9 @@ importers:
       '@agent-metrics/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@agent-metrics/event-schema':
+        specifier: workspace:*
+        version: link:../../packages/event-schema
       react:
         specifier: ^19.1.0
         version: 19.2.6
@@ -140,8 +146,8 @@ importers:
         version: link:../../packages/contracts
     devDependencies:
       electron:
-        specifier: ^33.2.1
-        version: 33.4.11
+        specifier: ^35.7.5
+        version: 35.7.5
       electron-builder:
         specifier: ^25.1.8
         version: 25.1.8(electron-builder-squirrel-windows@25.1.8)
@@ -157,6 +163,19 @@ importers:
       electron:
         specifier: ^33.2.1
         version: 33.4.11
+
+  packages/adapters-antigravity:
+    dependencies:
+      '@agent-metrics/event-schema':
+        specifier: workspace:*
+        version: link:../event-schema
+      '@agent-metrics/shared-utils':
+        specifier: workspace:*
+        version: link:../shared-utils
+    devDependencies:
+      '@agent-metrics/test-utils':
+        specifier: workspace:*
+        version: link:../test-utils
 
   packages/adapters-claude:
     dependencies:
@@ -1677,6 +1696,11 @@ packages:
 
   electron@33.4.11:
     resolution: {integrity: sha512-xmdAs5QWRkInC7TpXGNvzo/7exojubk+72jn1oJL7keNeIlw7xNglf8TGtJtkR4rWC5FJq0oXiIXPS9BcK2Irg==}
+    engines: {node: '>= 12.20.55'}
+    hasBin: true
+
+  electron@35.7.5:
+    resolution: {integrity: sha512-dnL+JvLraKZl7iusXTVTGYs10TKfzUi30uEDTqsmTm0guN9V2tbOjTzyIZbh9n3ygUjgEYyo+igAwMRXIi3IPw==}
     engines: {node: '>= 12.20.55'}
     hasBin: true
 
@@ -4489,6 +4513,14 @@ snapshots:
     dependencies:
       '@electron/get': 2.0.3
       '@types/node': 20.19.41
+      extract-zip: 2.0.1
+    transitivePeerDependencies:
+      - supports-color
+
+  electron@35.7.5:
+    dependencies:
+      '@electron/get': 2.0.3
+      '@types/node': 22.19.19
       extract-zip: 2.0.1
     transitivePeerDependencies:
       - supports-color

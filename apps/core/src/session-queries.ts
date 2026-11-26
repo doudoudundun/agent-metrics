@@ -163,7 +163,7 @@ export function selectSessions(
           displayed_input_tokens + output_tokens +
           cache_read_input_tokens + cache_creation_input_tokens
         ) AS totalTokens
-      FROM usage_events
+      FROM additive_usage_events
       WHERE usage_measurement = 'increment'
       GROUP BY source_instance_id, session_id`
     )
@@ -272,11 +272,11 @@ export function selectSourceBreakdown(
     // is what the price table expects since cache reads are priced separately.
     const costUsd = estimateCostUsd({
       model: row.model,
+      serviceTier: row.service_tier,
       inputTokens: row.input_tokens,
       outputTokens: row.output_tokens,
       cacheReadTokens: row.cache_read_input_tokens,
-      cacheCreationTokens: row.cache_creation_input_tokens,
-      serviceTier: row.service_tier
+      cacheCreationTokens: row.cache_creation_input_tokens
     });
     if (costUsd !== null) {
       target.costUsd = (target.costUsd ?? 0) + costUsd;

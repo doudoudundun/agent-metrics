@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { resolveUsageMode } from "@agent-metrics/event-schema";
+
 import { estimateCostUsd } from "./pricing.js";
 
 const USAGE = {
@@ -70,6 +72,96 @@ describe("estimateCostUsd", () => {
     })).toBeCloseTo(expected, 9);
   });
 
+  it.each([
+    ["gemini-4-neon", 18.15],
+    ["gemini-4-carbon", 12.1],
+    ["gemini-4-hydrogen", 9.075],
+    ["gemini-3.7-flash", 4.575],
+    ["gemini-3.1-pro", 14.2],
+    ["gemini-3.1-pro-preview", 14.2],
+    ["gpt-oss-120b", 0.825],
+    ["claude-opus-4-6", 36.75]
+  ])("prices Antigravity/T3 base model %s at the 2026-11-23 snapshot card", (model, expected) => {
+    expect(estimateCostUsd({
+      ...USAGE,
+      model,
+      cacheReadTokens: 1_000_000,
+      cacheCreationTokens: 1_000_000
+    })).toBeCloseTo(expected, 9);
+  });
+
+  it("prices claude-opus-4-6 standard against its doubled fast-mode card", () => {
+    const usage = { ...USAGE, cacheReadTokens: 1_000_000, cacheCreationTokens: 1_000_000 };
+
+    expect(estimateCostUsd({ ...usage, model: "claude-opus-4-6" })).toBeCloseTo(36.75, 9);
+    expect(estimateCostUsd({ ...usage, model: "claude-opus-4-6", serviceTier: "fast" })).toBeCloseTo(73.5, 9);
+  });
+
+  it.each([
+    ["gemini-4-neon-low", "gemini-4-neon"],
+    ["gemini-4-neon-medium", "gemini-4-neon"],
+    ["gemini-4-neon-high", "gemini-4-neon"],
+    ["gemini-4-neon-xhigh", "gemini-4-neon"],
+    ["gemini-4-carbon-low", "gemini-4-carbon"],
+    ["gemini-4-carbon-medium", "gemini-4-carbon"],
+    ["gemini-4-carbon-high", "gemini-4-carbon"],
+    ["gemini-4-argon-low", "gemini-4-argon"],
+    ["gemini-4-argon-medium", "gemini-4-argon"],
+    ["gemini-4-argon-high", "gemini-4-argon"],
+    ["gemini-4-hydrogen-low", "gemini-4-hydrogen"],
+    ["gemini-4-hydrogen-medium", "gemini-4-hydrogen"],
+    ["gemini-4-hydrogen-high", "gemini-4-hydrogen"],
+    ["gemini-4-hydrogen-xhigh", "gemini-4-hydrogen"],
+    ["gemini-4-hydrogen-tiered-low", "gemini-4-hydrogen"],
+    ["gemini-4-hydrogen-tiered-medium", "gemini-4-hydrogen"],
+    ["gemini-4-hydrogen-tiered-high", "gemini-4-hydrogen"],
+    ["gemini-4-hydrogen-tiered-xhigh", "gemini-4-hydrogen"],
+    ["gemini-4-hydrogen-orchestrator", "gemini-4-hydrogen"],
+    ["gemini-3.8-flash-low", "gemini-3.8-flash"],
+    ["gemini-3.8-flash-medium", "gemini-3.8-flash"],
+    ["gemini-3.8-flash-high", "gemini-3.8-flash"],
+    ["gemini-3.7-flash-low", "gemini-3.7-flash"],
+    ["gemini-3.7-flash-medium", "gemini-3.7-flash"],
+    ["gemini-3.7-flash-high", "gemini-3.7-flash"],
+    ["gemini-3.6-flash-low", "gemini-3.6-flash"],
+    ["gemini-3.6-flash-medium", "gemini-3.6-flash"],
+    ["gemini-3.6-flash-high", "gemini-3.6-flash"],
+    ["gemini-3.1-pro-low", "gemini-3.1-pro"],
+    ["gemini-3.1-pro-medium", "gemini-3.1-pro"],
+    ["gemini-3.1-pro-high", "gemini-3.1-pro"],
+    ["gemini-pro-agent", "gemini-3.1-pro"],
+    ["gpt-oss-120b-low", "gpt-oss-120b"],
+    ["gpt-oss-120b-medium", "gpt-oss-120b"],
+    ["gpt-oss-120b-high", "gpt-oss-120b"]
+  ])("prices T3 thinking tier %s at the %s base card", (variant, base) => {
+    const usage = { ...USAGE, cacheReadTokens: 1_000_000, cacheCreationTokens: 1_000_000 };
+
+    expect(estimateCostUsd({ ...usage, model: variant })).toBe(
+      estimateCostUsd({ ...usage, model: base })
+    );
+  });
+
+  it("maps ACP transcript planner and executor ids to the served models", () => {
+    const usage = { ...USAGE, cacheReadTokens: 1_000_000, cacheCreationTokens: 1_000_000 };
+
+    expect(estimateCostUsd({ ...usage, model: "gemini-pro-orchestrator-neon" })).toBeCloseTo(18.15, 9);
+    expect(estimateCostUsd({ ...usage, model: "gemini-pro-orchestrator-g1-pro" })).toBeCloseTo(12.1, 9);
+    expect(estimateCostUsd({ ...usage, model: "gemini-flash-worker-agy" })).toBeCloseTo(9.075, 9);
+  });
+
+  it("keeps T3 thinking tiers and Antigravity role ids out of fast mode", () => {
+    expect(resolveUsageMode("gemini-4-neon-xhigh")).toBe("standard");
+    expect(resolveUsageMode("gemini-4-hydrogen-tiered-low")).toBe("standard");
+    expect(resolveUsageMode("gemini-3.1-pro-high")).toBe("standard");
+    expect(resolveUsageMode("gpt-oss-120b-high")).toBe("standard");
+    expect(resolveUsageMode("gemini-pro-orchestrator-neon")).toBe("standard");
+    expect(resolveUsageMode("gemini-flash-worker-agy")).toBe("standard");
+  });
+
+  it("leaves Antigravity's generic router target unpriced", () => {
+    expect(estimateCostUsd({ ...USAGE, model: "antigravity-default" })).toBeNull();
+  });
+
   it("prices GPT-6.1 Terra input, output, cache read, and cache write", () => {
     expect(estimateCostUsd({
       ...USAGE,
@@ -79,6 +171,55 @@ describe("estimateCostUsd", () => {
     })).toBeCloseTo(7.3, 9);
   });
 
+  it("prices Codex fast and ultrafast tiers at the verified speed-specific rates", () => {
+    const usage = { model: "gpt-6.1-sol", inputTokens: 1_000_000, outputTokens: 1_000_000, cacheReadTokens: 1_000_000, cacheCreationTokens: 1_000_000 };
+    expect(estimateCostUsd(usage)).toBeCloseTo(14.6);
+    expect(estimateCostUsd({ ...usage, serviceTier: "priority" })).toBeCloseTo(29.2);
+    expect(estimateCostUsd({ ...usage, serviceTier: "fast" })).toBeCloseTo(29.2);
+    expect(estimateCostUsd({ ...usage, serviceTier: "ultrafast" })).toBeCloseTo(87.6);
+    expect(estimateCostUsd({ ...usage, model: "gpt-5.5", serviceTier: "fast", cacheCreationTokens: 0 })).toBeCloseTo(88.75);
+  });
+
+  it.each([
+    ["gpt-6.2-astra", 58.4, 116.8, 175.2],
+    ["gpt-6.2-sol", 14.6, 29.2, 43.8]
+  ])("prices GPT-6.2 model %s at Standard, Fast, and launch Ultrafast rates", (model, standard, fast, ultrafast) => {
+    const usage = {
+      ...USAGE,
+      model: `openai/${model}`,
+      cacheReadTokens: 1_000_000,
+      cacheCreationTokens: 1_000_000
+    };
+    expect(estimateCostUsd(usage)).toBeCloseTo(standard, 9);
+    expect(estimateCostUsd({ ...usage, serviceTier: "fast" })).toBeCloseTo(fast, 9);
+    expect(estimateCostUsd({ ...usage, serviceTier: "ultrafast" })).toBeCloseTo(ultrafast, 9);
+  });
+
+  it("prices Cursor named fast variants once, with their own cache and output rates", () => {
+    expect(estimateCostUsd({ ...USAGE, model: "cursor-grok-4.7-high-fast" })).toBe(16);
+    expect(estimateCostUsd({ ...USAGE, model: "grok-4.5-fast" })).toBe(22);
+    expect(estimateCostUsd({ ...USAGE, model: "cursor-grok-4.5-high-fast" })).toBe(22);
+    expect(estimateCostUsd({ ...USAGE, model: "cursor-grok-4.6-high-fast" })).toBe(16);
+    expect(estimateCostUsd({ ...USAGE, model: "composer-2.5-fast", serviceTier: "fast" })).toBe(18);
+    expect(estimateCostUsd({ ...USAGE, model: "composer-2.5", serviceTier: "fast" })).toBe(18);
+    expect(estimateCostUsd({ ...USAGE, model: "provider/cursor-grok-4.6-high", serviceTier: "fast" })).toBe(16);
+    expect(estimateCostUsd({ ...USAGE, model: "claude-opus-5-thinking-high", serviceTier: "fast" })).toBe(60);
+    expect(estimateCostUsd({ ...USAGE, model: "claude-opus-5-fast", serviceTier: "fast" })).toBe(60);
+  });
+
+  it("uses Claude fast rates and leaves unverified fast prices unknown", () => {
+    expect(estimateCostUsd({ ...USAGE, model: "claude-opus-5-5", usageMode: "fast" })).toBe(48);
+    expect(estimateCostUsd({ ...USAGE, model: "claude-opus-4-8", usageMode: "fast" })).toBe(60);
+    expect(estimateCostUsd({ ...USAGE, model: "claude-sonnet-5-5", usageMode: "fast" })).toBeNull();
+    expect(estimateCostUsd({ ...USAGE, model: "gpt-6-luna", usageMode: "ultrafast" })).toBeNull();
+  });
+
+  it("prices historical semicolon-suffixed model ids", () => {
+    expect(estimateCostUsd({ ...USAGE, model: " gpt-6-luna; " }))
+      .toBe(estimateCostUsd({ ...USAGE, model: "gpt-6-luna" }));
+    expect(estimateCostUsd({ ...USAGE, model: "openai/gpt-6-luna;" }))
+      .toBe(estimateCostUsd({ ...USAGE, model: "gpt-6-luna" }));
+  });
   it("strips the OpenRouter-style provider prefix before lookup", () => {
     const prefixed = estimateCostUsd({ ...USAGE, model: "传音/deepseek-v4.1-flash" });
     const bare = estimateCostUsd({ ...USAGE, model: "deepseek-v4.1-flash" });
@@ -164,6 +305,29 @@ describe("estimateCostUsd", () => {
 
   it("prices kimi-for-coding at the kimi-k2.8-preview reference rate", () => {
     expect(estimateCostUsd({ ...USAGE, model: "kimi-code/kimi-for-coding" })).toBeCloseTo(5, 6);
+  });
+
+  it("prices Kimi K3.1 Pro from the refreshed upstream rate card", () => {
+    expect(estimateCostUsd({ ...USAGE, model: "kimi-code/k3.1-pro" })).toBeCloseTo(12, 6);
+    expect(estimateCostUsd({ ...USAGE, model: "k3.1-pro" })).toBeCloseTo(12, 6);
+    expect(
+      estimateCostUsd({
+        model: "kimi-code/k3.1-pro",
+        inputTokens: 1_000_000,
+        outputTokens: 1_000_000,
+        cacheReadTokens: 1_000_000,
+        cacheCreationTokens: 1_000_000
+      })
+    ).toBeCloseTo(14.2, 6);
+  });
+
+  it("keeps the K3.1 Pro Highspeed variant on its own doubled rate card", () => {
+    expect(estimateCostUsd({ ...USAGE, model: "kimi-code/k3.1-pro-highspeed" })).toBeCloseTo(24, 6);
+    expect(estimateCostUsd({ ...USAGE, model: "k3.1-pro-highspeed", serviceTier: "fast" })).toBeCloseTo(24, 6);
+    // The highspeed id resolves to fast mode, so it must not inherit a K3 multiplier.
+    expect(
+      estimateCostUsd({ ...USAGE, model: "kimi-code/k3.1-pro-highspeed", cacheCreationTokens: 1_000_000 })
+    ).toBeCloseTo(28, 6);
   });
 
   it("keeps kimi-for-coding-highspeed at the k2.7-code highspeed rate", () => {

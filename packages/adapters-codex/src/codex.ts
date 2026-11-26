@@ -1,6 +1,7 @@
 import { basename } from "node:path";
-import { normalizeNativeId, toNormalizedEventV2 } from "@agent-metrics/event-schema";
-import type { AnyEvent, NormalizedEventV2, ServiceTier, SourceAdapter, SourceVendor } from "@agent-metrics/event-schema";
+import { normalizeModelId, normalizeNativeId, toNormalizedEventV2 } from "@agent-metrics/event-schema";
+import type { AnyEvent, NormalizedEventV2, SourceAdapter, SourceVendor } from "@agent-metrics/event-schema";
+import { codexTurnMetadataKey, type CodexTurnInputMetadata } from "./turn-metadata.js";
 
 const CODEX_SOURCE_VENDOR: SourceVendor = "codex";
 const CODEX_ROLLOUT_ADAPTER: SourceAdapter = "codex-rollout";
@@ -26,647 +27,1002 @@ type PendingCodexToolCall = {
   argumentSummary: string;
 };
 
+export type CodexParserState = {
+  lineIndex: number;
+  sourceInstanceId: string | null;
+  /** Model and service tier from the most recent turn_context record. */
+  turnId?: string | null;
+  turnModel?: string | null;
+  turnServiceTier?: string | null;
+  /** Persisted session setting, used when a turn lacks more specific tier data. */
+  threadServiceTier?: string | null;
+  sessionMeta: {
+    sessionId: string;
+    timestamp: string;
+    workspacePath: string;
+    providerId: string | null;
+  } | null;
+  pendingToolCalls: [string, PendingCodexToolCall][];
+  /**
+   * Events sharing the newest timestamp seen so far. They are held (also
+   * across parseLines calls and checkpoints) so same-timestamp ordering stays
+   * identical to a whole-file extraction when reads are chunked.
+   */
+  pendingEvents: AnyEvent[];
+  /** Mirror fallback stays buffered until the current file has been consumed. */
+  mirroredUsageEvents?: AnyEvent[];
+  mirroredUsageDeferredEvents?: AnyEvent[];
+  tokenCountUsageSeen?: boolean;
+  /** Optional for compatibility with checkpoints created before timing support. */
+  lastTokenEventMs?: number | null;
+  /** Model and tier for the last timing anchor; omitted by older checkpoints. */
+  lastTokenEventModel?: string | null;
+  lastTokenEventTier?: string | null;
+  /** Tool calls that can still be running across parseLines/checkpoint boundaries. */
+  activeTimingToolCalls?: string[];
+  /** Unmatched tool boundaries without a usable call id; kept conservative. */
+  activeUnkeyedTimingTools?: number;
+  turnStartedMs?: number | null;
+  turnFirstTokenReported?: boolean;
+};
+
+type TimingBoundary = {
+  kind: "begin" | "end";
+  key: string | null;
+};
+
+export type CodexRolloutParser = {
+  parseLines(lines: Iterable<string>): NormalizedEventV2[];
+  flush(): NormalizedEventV2[];
+  checkpoint(): CodexParserState;
+};
+
+function getResponseItemTimingBoundary(
+  payloadType: string,
+  callId: string | null
+): TimingBoundary | null {
+  const normalized = payloadType.toLowerCase();
+  const key = callId === null ? null : `tool:${callId}`;
+
+  if (/(?:^|_)call_output$/u.test(normalized) || /(?:^|_)tool_output$/u.test(normalized)) {
+    return { kind: "end", key };
+  }
+  if (/(?:^|_)call$/u.test(normalized) || /(?:^|_)tool_call$/u.test(normalized)) {
+    return { kind: "begin", key };
+  }
+
+  return null;
+}
+
+function getEventMessageTimingBoundary(
+  payloadType: string,
+  callId: string | null
+): TimingBoundary | null {
+  const normalized = payloadType.toLowerCase();
+  const boundaryMatch =
+    /^(exec_command|web_search|patch_apply|mcp_tool_call|computer_call|tool_call)_(begin|end)$/u.exec(
+      normalized
+    );
+  if (boundaryMatch) {
+    const family = boundaryMatch[1] ?? "tool";
+    const phase = boundaryMatch[2];
+    return {
+      kind: phase === "begin" ? "begin" : "end",
+      key: callId === null ? null : `tool:${callId}`
+    };
+  }
+
+  const waitFamily = normalized.includes("approval")
+    ? "approval"
+    : normalized.includes("user_input")
+      ? "user-input"
+      : normalized.includes("wait")
+        ? "wait"
+        : null;
+  if (waitFamily === null) {
+    return null;
+  }
+
+  const key = callId === null ? `wait:${waitFamily}` : `wait:${waitFamily}:${callId}`;
+  if (
+    /(?:^|_)(?:end|complete|completed|resolved|approved|granted|denied|rejected|received|resumed)$/u.test(
+      normalized
+    )
+  ) {
+    return { kind: "end", key };
+  }
+  if (/(?:^|_)(?:begin|start|started|requested|waiting|pending)$/u.test(normalized)) {
+    return { kind: "begin", key };
+  }
+
+  // Unknown approval/wait markers still break the current interval. If the
+  // rollout does not describe when the wait ends, leave subsequent speed
+  // estimates unknown rather than silently counting the wait as decoding.
+  return { kind: "begin", key };
+}
+
 export function extractCodexEventsFromRollout(input: {
   filePath: string;
   contents: string;
   sessionModels?: Record<string, string>;
   providerConfigs?: Record<string, CodexProviderConfig>;
+  turnInputMetadata?: ReadonlyMap<string, CodexTurnInputMetadata>;
   sourceInstanceId?: string;
 }): NormalizedEventV2[] {
-  const lines = input.contents.split(/\r?\n/u).filter((line) => line.length > 0);
-  const events: AnyEvent[] = [];
-  const pendingToolCalls = new Map<string, PendingCodexToolCall>();
-  // Rollouts also mirror each response's usage into a `token_usage_record`
-  // line. The `event_msg/token_count` stream stays authoritative because the
-  // timing heuristics below are anchored on it, but a rollout that only writes
-  // the mirror (or a future Codex that drops token_count) would otherwise
-  // contribute zero usage. Mirror rows are buffered and only consumed when the
-  // file produced no token_count usage at all, so the two never double count.
-  const mirroredUsageEvents: AnyEvent[] = [];
-  let tokenCountUsageCount = 0;
-  let lastTokenEventMs: number | null = null;
-  // Turn start anchor (task_started) and whether this turn already spent its
-  // first-token observation on a token_count report.
-  let turnStartedMs: number | null = null;
-  let turnFirstTokenReported = false;
-  // Codex persists the session's speed tier in `thread_settings_applied` (written
-  // on /fast, model switches and profile changes). Usage reported after such an
-  // event is billed at that tier until the next settings record, so the tier is
-  // carried forward in file order rather than read from config.
-  let currentServiceTier: ServiceTier | null = null;
-  // Codex writes the model actually serving the turn into `turn_context`. It is
-  // the authoritative source: the session's model can change mid-session, and
-  // the tracing log this adapter used to rely on
-  // (`resolveCodexLogsDbPath` → `conversation.id=... model=...`) is not written
-  // for every invocation, which left usage rows with a NULL model.
-  let currentModel: string | null = null;
+  const parser = createCodexRolloutParser(input);
+  return [...parser.parseLines(input.contents.split(/\r?\n/u)), ...parser.flush()];
+}
+
+/**
+ * Stateful rollout parser. Session context and in-flight tool calls survive
+ * chunked reads, so records appended later keep their cross-line pairing.
+ * Events are emitted per call as NormalizedEventV2, in the same order a
+ * whole-file extraction produces.
+ */
+export function createCodexRolloutParser(
+  input: {
+    filePath: string;
+    sessionModels?: Record<string, string>;
+    providerConfigs?: Record<string, CodexProviderConfig>;
+    turnInputMetadata?: ReadonlyMap<string, CodexTurnInputMetadata>;
+    sourceInstanceId?: string;
+  },
+  state?: CodexParserState
+): CodexRolloutParser {
+  const pendingToolCalls = new Map<string, PendingCodexToolCall>(state?.pendingToolCalls ?? []);
+  const activeTimingToolCalls = new Set([
+    ...(state?.activeTimingToolCalls ?? []),
+    ...[...pendingToolCalls.keys()].map((callId) => `tool:${callId}`)
+  ]);
+  let activeUnkeyedTimingTools = Math.max(0, state?.activeUnkeyedTimingTools ?? 0);
+  let sessionMeta: CodexParserState["sessionMeta"] = state?.sessionMeta ?? null;
+  let lastTokenEventMs = state?.lastTokenEventMs ?? null;
+  let lastTokenEventModel = state?.lastTokenEventModel ?? null;
+  let lastTokenEventTier = state?.lastTokenEventTier ?? null;
+  let turnStartedMs = state?.turnStartedMs ?? null;
+  let turnFirstTokenReported = state?.turnFirstTokenReported ?? false;
+  let turnModel = state?.turnModel ?? null;
+  let turnServiceTier = state?.turnServiceTier ?? null;
+  let threadServiceTier = state?.threadServiceTier ?? null;
+  let turnId = state?.turnId ?? null;
   let sourceInstanceId =
+    state?.sourceInstanceId ??
     input.sourceInstanceId ??
-    (isMulticaRolloutPath(input.filePath) ? "codex:multica" : undefined);
-  let sessionMeta:
-    | {
-        sessionId: string;
-        timestamp: string;
-        workspacePath: string;
-        providerId: string | null;
-      }
-    | null = null;
+    (isMulticaRolloutPath(input.filePath) ? "codex:multica" : null);
+  let nextLineIndex = state?.lineIndex ?? 0;
+  const pendingEvents: AnyEvent[] = [...(state?.pendingEvents ?? [])];
+  const mirroredUsageEvents: AnyEvent[] = [...(state?.mirroredUsageEvents ?? [])];
+  const mirroredUsageDeferredEvents: AnyEvent[] = [...(state?.mirroredUsageDeferredEvents ?? [])];
+  let tokenCountUsageSeen = state?.tokenCountUsageSeen ?? false;
 
-  for (const [lineIndex, line] of lines.entries()) {
-    const parsed = parseJsonRecord(line);
-    if (parsed === null) {
-      continue;
-    }
-
-    const eventType = normalizeOptionalString(parsed.type);
-    const payload = asRecord(parsed.payload);
-
-    if (eventType === "session_meta" && payload !== null) {
-      const sessionId =
-        normalizeOptionalString(payload.id) ?? inferSessionIdFromPath(input.filePath);
-      const timestamp =
-        normalizeOptionalString(payload.timestamp) ??
-        normalizeOptionalString(parsed.timestamp);
-
-      if (sessionId === null || timestamp === null) {
-        continue;
-      }
-
-      const originator = normalizeOptionalString(payload.originator);
-      if (originator === "multica-agent-sdk") {
-        sourceInstanceId = "codex:multica";
-      }
-
-      sessionMeta = {
-        sessionId,
-        timestamp,
-        workspacePath: normalizeOptionalString(payload.cwd) ?? ".",
-        providerId: normalizeOptionalString(payload.model_provider)
-      };
-      events.push({
-        event_id: `codex:session:${sessionId}:started`,
-        session_id: sessionId,
-        timestamp,
-        source_vendor: CODEX_SOURCE_VENDOR,
-        source_adapter: CODEX_ROLLOUT_ADAPTER,
-        workspace_path: sessionMeta.workspacePath,
-        type: "session.started"
-      });
-      continue;
-    }
-
-    if (eventType === "turn_context" && payload !== null) {
-      const model = normalizeOptionalString(payload.model);
-      if (model !== null) {
-        currentModel = model;
-      }
-      continue;
-    }
-
-    if (eventType === "token_usage_record" && payload !== null) {
-      const sessionId = sessionMeta?.sessionId ?? inferSessionIdFromPath(input.filePath);
-      if (sessionId !== null) {
-        const mirrored = buildMirroredUsageEvent({
-          parsed,
-          payload,
-          sessionId,
-          workspacePath: sessionMeta?.workspacePath ?? ".",
-          model: currentModel ?? input.sessionModels?.[sessionId] ?? null,
-          serviceTier: currentServiceTier,
-          providerId: sessionMeta?.providerId ?? null,
-          providerConfig:
-            sessionMeta?.providerId != null ? input.providerConfigs?.[sessionMeta.providerId] : undefined
-        });
-        if (mirrored !== null) {
-          mirroredUsageEvents.push(mirrored);
-        }
-      }
-      continue;
-    }
-
-    if (eventType === "response_item" && payload !== null) {
-      const payloadType = normalizeOptionalString(payload.type);
-      const sessionId = sessionMeta?.sessionId ?? inferSessionIdFromPath(input.filePath);
-      const timestamp =
-        normalizeOptionalString(parsed.timestamp) ??
-        sessionMeta?.timestamp ??
-        new Date(0).toISOString();
-
-      if (sessionId !== null && payloadType === "custom_tool_call") {
-        const callId = normalizeOptionalString(payload.call_id);
-        if (callId === null) {
-          continue;
-        }
-
-        const toolName = normalizeOptionalString(payload.name) ?? "unknown";
-        const argumentSummary = serializeArgumentSummary(payload.input);
-
-        pendingToolCalls.set(callId, {
-          sessionId,
-          workspacePath: sessionMeta?.workspacePath ?? ".",
-          timestamp,
-          toolName,
-          argumentSummary
-        });
-        events.push({
-          event_id: `codex:session:${sessionId}:tool:${callId}:started`,
-          session_id: sessionId,
-          timestamp,
-          source_vendor: CODEX_SOURCE_VENDOR,
-          source_adapter: CODEX_ROLLOUT_ADAPTER,
-          workspace_path: sessionMeta?.workspacePath ?? ".",
-          type: "tool.called",
-          tool_call_id: normalizeNativeId(callId) ?? `native:${callId}`,
-          tool_name: toolName,
-          status: "started",
-          argument_summary: argumentSummary
-        });
-        continue;
-      }
-
-      if (sessionId !== null && payloadType === "function_call") {
-        const callId = normalizeOptionalString(payload.call_id);
-        if (callId === null) {
-          continue;
-        }
-
-        const functionName = normalizeOptionalString(payload.name) ?? "unknown";
-        if (!shouldTrackFunctionCall(functionName)) {
-          continue;
-        }
-        const argumentText = normalizeOptionalString(payload.arguments);
-
-        pendingToolCalls.set(callId, {
-          sessionId,
-          workspacePath: sessionMeta?.workspacePath ?? ".",
-          timestamp,
-          toolName: inferFunctionCallToolName(functionName, argumentText),
-          argumentSummary: summarizeFunctionCallArguments(functionName, argumentText)
-        });
-        const pending = pendingToolCalls.get(callId);
-        if (pending) {
-          events.push({
-            event_id: `codex:session:${sessionId}:function:${callId}:started`,
-            session_id: sessionId,
-            timestamp,
-            source_vendor: CODEX_SOURCE_VENDOR,
-            source_adapter: CODEX_ROLLOUT_ADAPTER,
-            workspace_path: sessionMeta?.workspacePath ?? ".",
-            type: "tool.called",
-            tool_call_id: normalizeNativeId(callId) ?? `native:${callId}`,
-            tool_name: pending.toolName,
-            status: "started",
-            argument_summary: pending.argumentSummary
-          });
-        }
-        continue;
-      }
-
-      if (payloadType === "custom_tool_call_output") {
-        const callId = normalizeOptionalString(payload.call_id);
-        const pending = callId ? pendingToolCalls.get(callId) : null;
-
-        if (callId === null || pending == null) {
-          continue;
-        }
-
-        // Codex often stores custom_tool_call_output.output as an array of
-        // {type,text} parts rather than a plain string. Coerce before parsing.
-        const result = parseCustomToolOutput(coerceToolOutputText(payload.output));
-
-        if (result.success) {
-          events.push({
-            event_id: `codex:session:${pending.sessionId}:tool:${callId}:succeeded`,
-            session_id: pending.sessionId,
-            timestamp,
-            source_vendor: CODEX_SOURCE_VENDOR,
-            source_adapter: CODEX_ROLLOUT_ADAPTER,
-            workspace_path: pending.workspacePath,
-            type: "tool.succeeded",
-            tool_call_id: normalizeNativeId(callId) ?? `native:${callId}`,
-            tool_name: pending.toolName,
-            status: "succeeded",
-            duration_ms: result.durationMs
-          });
-        } else {
-          events.push({
-            event_id: `codex:session:${pending.sessionId}:tool:${callId}:failed`,
-            session_id: pending.sessionId,
-            timestamp,
-            source_vendor: CODEX_SOURCE_VENDOR,
-            source_adapter: CODEX_ROLLOUT_ADAPTER,
-            workspace_path: pending.workspacePath,
-            type: "tool.failed",
-            tool_call_id: normalizeNativeId(callId) ?? `native:${callId}`,
-            tool_name: pending.toolName,
-            status: "failed",
-            duration_ms: result.durationMs
-          });
-        }
-        pendingToolCalls.delete(callId);
-        continue;
-      }
-
-      if (payloadType === "function_call_output") {
-        const callId = normalizeOptionalString(payload.call_id);
-        const pending = callId ? pendingToolCalls.get(callId) : null;
-
-        if (callId === null || pending == null) {
-          continue;
-        }
-
-        const result = parseFunctionCallOutput(coerceToolOutputText(payload.output));
-
-        if (result.success) {
-          events.push({
-            event_id: `codex:session:${pending.sessionId}:function:${callId}:succeeded`,
-            session_id: pending.sessionId,
-            timestamp,
-            source_vendor: CODEX_SOURCE_VENDOR,
-            source_adapter: CODEX_ROLLOUT_ADAPTER,
-            workspace_path: pending.workspacePath,
-            type: "tool.succeeded",
-            tool_call_id: normalizeNativeId(callId) ?? `native:${callId}`,
-            tool_name: pending.toolName,
-            status: "succeeded",
-            duration_ms: result.durationMs
-          });
-        } else {
-          events.push({
-            event_id: `codex:session:${pending.sessionId}:function:${callId}:failed`,
-            session_id: pending.sessionId,
-            timestamp,
-            source_vendor: CODEX_SOURCE_VENDOR,
-            source_adapter: CODEX_ROLLOUT_ADAPTER,
-            workspace_path: pending.workspacePath,
-            type: "tool.failed",
-            tool_call_id: normalizeNativeId(callId) ?? `native:${callId}`,
-            tool_name: pending.toolName,
-            status: "failed",
-            duration_ms: result.durationMs
-          });
-        }
-        pendingToolCalls.delete(callId);
-        continue;
-      }
-    }
-
-    if (eventType === "event_msg" && payload !== null) {
-      const payloadType = normalizeOptionalString(payload.type);
-      const sessionId = sessionMeta?.sessionId ?? inferSessionIdFromPath(input.filePath);
-      const timestamp =
-        normalizeOptionalString(parsed.timestamp) ??
-        sessionMeta?.timestamp ??
-        new Date(0).toISOString();
-      const eventKey = buildEventKey(parsed, payloadType ?? "event_msg", lineIndex);
-
-      if (payloadType === "thread_settings_applied") {
-        const settings = asRecord(payload.thread_settings);
-        currentServiceTier = normalizeCodexServiceTier(
-          settings?.service_tier ?? payload.service_tier
-        );
-        continue;
-      }
-
-      if (sessionId !== null && payloadType === "user_message") {
-        const promptText = normalizeOptionalString(payload.message) ?? "";
-
-        events.push({
-          event_id: `codex:session:${sessionId}:prompt:${eventKey}`,
-          session_id: sessionId,
-          timestamp,
-          source_vendor: CODEX_SOURCE_VENDOR,
-          source_adapter: CODEX_ROLLOUT_ADAPTER,
-          workspace_path: sessionMeta?.workspacePath ?? ".",
-          type: "prompt.submitted",
-          prompt_id: `prompt_${eventKey}`,
-          prompt_chars: promptText.length
-        });
-        continue;
-      }
-
-      if (sessionId !== null && payloadType === "agent_message") {
-        const responseText = normalizeOptionalString(payload.message) ?? "";
-        const providerId = sessionMeta?.providerId ?? null;
-        const providerConfig = providerId ? input.providerConfigs?.[providerId] : undefined;
-
-        events.push({
-          event_id: `codex:session:${sessionId}:response:${eventKey}`,
-          session_id: sessionId,
-          timestamp,
-          source_vendor: CODEX_SOURCE_VENDOR,
-          source_adapter: CODEX_ROLLOUT_ADAPTER,
-          workspace_path: sessionMeta?.workspacePath ?? ".",
-          type: "assistant.responded",
-          message_id: `response_${eventKey}`,
-          model: currentModel ?? input.sessionModels?.[sessionId] ?? null,
-          stop_reason: normalizeOptionalString(payload.phase) ?? null,
-          response_chars: responseText.length,
-          provider_id: providerId,
-          provider_base_url: providerConfig?.baseUrl ?? null,
-          provider_host: providerConfig?.host ?? null
-        });
-        continue;
-      }
-
-      if (sessionId !== null && payloadType === "web_search_end") {
-        const callId = buildEventKey(
-          parsed,
-          payloadType,
-          lineIndex,
-          normalizeOptionalString(payload.call_id)
-        );
-        events.push({
-          event_id: `codex:session:${sessionId}:web_search:${callId}:tool`,
-          session_id: sessionId,
-          timestamp,
-          source_vendor: CODEX_SOURCE_VENDOR,
-          source_adapter: CODEX_ROLLOUT_ADAPTER,
-          workspace_path: sessionMeta?.workspacePath ?? ".",
-          type: "tool.succeeded",
-          tool_call_id: normalizeNativeId(callId) ?? `native:${callId}`,
-          tool_name: "WebSearch",
-          status: "succeeded",
-          duration_ms: 0
-        });
-        continue;
-      }
-
-      if (sessionId !== null && payloadType === "exec_command_end") {
-        const callId = buildEventKey(
-          parsed,
-          payloadType,
-          lineIndex,
-          normalizeOptionalString(payload.call_id)
-        );
-        const exitCode = normalizeInteger(payload.exit_code);
-        const baseEvent = {
-          event_id: `codex:session:${sessionId}:exec:${callId}:tool`,
-          session_id: sessionId,
-          timestamp,
-          source_vendor: CODEX_SOURCE_VENDOR,
-          source_adapter: CODEX_ROLLOUT_ADAPTER,
-          workspace_path: sessionMeta?.workspacePath ?? ".",
-          tool_call_id: normalizeNativeId(callId) ?? `native:${callId}`,
-          tool_name: inferExecCommandToolName(payload.command),
-          duration_ms: getExecCommandDurationMs(payload)
-        };
-
-        if (exitCode === 0) {
-          events.push({
-            ...baseEvent,
-            type: "tool.succeeded",
-            status: "succeeded"
-          });
-        } else {
-          events.push({
-            ...baseEvent,
-            type: "tool.failed",
-            status: "failed"
-          });
-        }
-        continue;
-      }
-
-      if (sessionId !== null && payloadType === "patch_apply_end") {
-        const callId = buildEventKey(
-          parsed,
-          payloadType,
-          lineIndex,
-          normalizeOptionalString(payload.call_id)
-        );
-        const success = payload.success === true;
-
-        if (success) {
-          events.push({
-            event_id: `codex:session:${sessionId}:patch:${callId}:tool`,
-            session_id: sessionId,
-            timestamp,
-            source_vendor: CODEX_SOURCE_VENDOR,
-            source_adapter: CODEX_ROLLOUT_ADAPTER,
-            workspace_path: sessionMeta?.workspacePath ?? ".",
-            type: "tool.succeeded",
-            tool_call_id: normalizeNativeId(callId) ?? `native:${callId}`,
-            tool_name: "apply_patch",
-            status: "succeeded",
-            duration_ms: 0
-          });
-        } else {
-          events.push({
-            event_id: `codex:session:${sessionId}:patch:${callId}:tool`,
-            session_id: sessionId,
-            timestamp,
-            source_vendor: CODEX_SOURCE_VENDOR,
-            source_adapter: CODEX_ROLLOUT_ADAPTER,
-            workspace_path: sessionMeta?.workspacePath ?? ".",
-            type: "tool.failed",
-            tool_call_id: normalizeNativeId(callId) ?? `native:${callId}`,
-            tool_name: "apply_patch",
-            status: "failed",
-            duration_ms: 0
-          });
-        }
-
-        if (success) {
-          const changes = asRecord(payload.changes) ?? {};
-          const filesChanged = Object.keys(changes);
-          const totals = summarizePatchChanges(changes);
-
-          events.push({
-            event_id: `codex:session:${sessionId}:patch:${callId}:edit`,
-            session_id: sessionId,
-            timestamp,
-            source_vendor: CODEX_SOURCE_VENDOR,
-            source_adapter: CODEX_ROLLOUT_ADAPTER,
-            workspace_path: sessionMeta?.workspacePath ?? ".",
-            type: "code.edit.applied",
-            tool_name: "apply_patch",
-            files_changed: filesChanged,
-            file_count: filesChanged.length,
-            insertions: totals.insertions,
-            deletions: totals.deletions,
-            edit_operation_count: 1
-          });
-        }
-        continue;
-      }
-
-      if (sessionId !== null && payloadType === "item_completed") {
-        const item = asRecord(payload.item);
-        if (item === null || normalizeOptionalString(item.type) !== "FileChange") {
-          continue;
-        }
-
-        if (normalizeOptionalString(item.status) !== "completed") {
-          continue;
-        }
-
-        const changes = asRecord(item.changes) ?? {};
-        const filesChanged = Object.keys(changes);
-        if (filesChanged.length > 0) {
-          const changeId = normalizeOptionalString(item.id) ?? eventKey;
-          const totals = summarizePatchChanges(changes);
-          events.push({
-            event_id: `codex:session:${sessionId}:filechange:${changeId}:edit`,
-            session_id: sessionId,
-            timestamp,
-            source_vendor: CODEX_SOURCE_VENDOR,
-            source_adapter: CODEX_ROLLOUT_ADAPTER,
-            workspace_path: sessionMeta?.workspacePath ?? ".",
-            type: "code.edit.applied",
-            tool_name: "apply_patch",
-            files_changed: filesChanged,
-            file_count: filesChanged.length,
-            insertions: totals.insertions,
-            deletions: totals.deletions,
-            edit_operation_count: 1
-          });
-        }
-        continue;
-      }
-    }
-
-    if (
-      eventType === "event_msg" &&
-      payload !== null &&
-      normalizeOptionalString(payload.type) === "task_started"
-    ) {
-      // Turn boundary: the wait between turns (user thinking, overnight gaps)
-      // must never be attributed to decoding, so drop the previous anchor.
-      lastTokenEventMs = null;
-      // task_started carries the turn start in unix seconds; older rollouts omit
-      // it, so fall back to the row timestamp.
-      turnStartedMs = resolveTurnStartedMs(payload, parsed.timestamp);
-      turnFirstTokenReported = false;
-      continue;
-    }
-
-    if (
-      eventType !== "event_msg" ||
-      payload === null ||
-      normalizeOptionalString(payload.type) !== "token_count"
-    ) {
-      continue;
-    }
-
-    const info = asRecord(payload.info);
-    if (info === null) {
-      continue;
-    }
-
-    const totalUsage = asRecord(info.total_token_usage);
-    const lastUsage = asRecord(info.last_token_usage);
-    if (lastUsage === null && totalUsage === null) {
-      continue;
-    }
-
-    const sessionId = sessionMeta?.sessionId ?? inferSessionIdFromPath(input.filePath);
-    if (sessionId === null) {
-      continue;
-    }
-
-    const totalTokens =
-      normalizeInteger(totalUsage?.total_tokens) ??
-      normalizeInteger(lastUsage?.total_tokens);
-    if (totalTokens === null) {
-      continue;
-    }
-
-    const inputTokens = normalizeInteger(lastUsage?.input_tokens) ?? 0;
-    const cacheReadTokens = normalizeInteger(lastUsage?.cached_input_tokens) ?? 0;
-    // Codex reports cached input as a subset of input_tokens. Preserve the
-    // source-reported gross counter so the shared accounting policy can derive
-    // displayed input by subtracting cache-read input exactly once.
-    // Reasoning (chain-of-thought) tokens are model-generated output and must be
-    // counted alongside output_tokens, matching the opencode adapter and the
-    // accounting that Anthropic/OpenAI bill against. Excluding them understates
-    // real model output.
-    const outputTokens =
-      (normalizeInteger(lastUsage?.output_tokens) ?? 0) +
-      (normalizeInteger(lastUsage?.reasoning_output_tokens) ?? 0);
-
-    if (inputTokens === 0 && cacheReadTokens === 0 && outputTokens === 0) {
-      continue;
-    }
-
-    const providerId = sessionMeta?.providerId ?? null;
-    const providerConfig = providerId ? input.providerConfigs?.[providerId] : undefined;
-
-    const usageTimestamp =
-      normalizeOptionalString(parsed.timestamp) ??
-      sessionMeta?.timestamp ??
-      new Date(0).toISOString();
-    // Codex rollouts carry no per-request timing, so approximate the decode
-    // window with the gap between consecutive token_count events. Gaps past
-    // MAX_DECODE_GAP_MS are dominated by tool execution or idle time and are
-    // dropped instead of polluting the speed average.
-    const usageMs = Date.parse(usageTimestamp);
-    const decodeDurationMs =
-      lastTokenEventMs !== null &&
-      Number.isFinite(usageMs) &&
-      usageMs >= lastTokenEventMs &&
-      usageMs - lastTokenEventMs <= MAX_DECODE_GAP_MS
-        ? usageMs - lastTokenEventMs
-        : null;
-    if (Number.isFinite(usageMs)) {
-      lastTokenEventMs = usageMs;
-    }
-
-    // Only the turn's first token_count report can be a first-token observation:
-    // later reports are periodic snapshots of an already decoding response.
-    const firstTokenLatencyMs =
-      !turnFirstTokenReported &&
-      turnStartedMs !== null &&
-      Number.isFinite(usageMs) &&
-      usageMs >= turnStartedMs &&
-      usageMs - turnStartedMs <= MAX_FIRST_TOKEN_LATENCY_MS
-        ? usageMs - turnStartedMs
-        : null;
+  // Older checkpoints have a timestamp anchor but cannot say which model/tier
+  // it belongs to. Drop that one estimate rather than risk joining unlike work.
+  if (state?.lastTokenEventMs != null && state.lastTokenEventModel === undefined) {
+    lastTokenEventMs = null;
+  }
+  if (activeTimingToolCalls.size > 0 || activeUnkeyedTimingTools > 0) {
+    // Legacy checkpoints only preserved tool calls that the UI knows how to
+    // display. Treat those as timing interruptions too.
     turnFirstTokenReported = true;
-
-    events.push({
-      event_id: `codex:session:${sessionId}:usage:${totalTokens}`,
-      session_id: sessionId,
-      timestamp: usageTimestamp,
-      source_vendor: CODEX_SOURCE_VENDOR,
-      source_adapter: CODEX_ROLLOUT_ADAPTER,
-      workspace_path: sessionMeta?.workspacePath ?? ".",
-      type: "token.usage.recorded",
-      message_id: `usage_${totalTokens}`,
-      model: currentModel ?? input.sessionModels?.[sessionId] ?? null,
-      input_tokens: inputTokens,
-      output_tokens: outputTokens,
-      cache_creation_input_tokens: 0,
-      cache_read_input_tokens: cacheReadTokens,
-      server_tool_use: "{}",
-      usage_source: "codex-rollout",
-      ...(currentServiceTier ? { service_tier: currentServiceTier } : {}),
-      provider_id: providerId,
-      provider_base_url: providerConfig?.baseUrl ?? null,
-      provider_host: providerConfig?.host ?? null,
-      first_token_latency_ms: firstTokenLatencyMs,
-      decode_duration_ms: decodeDurationMs
-    });
-    tokenCountUsageCount += 1;
+    lastTokenEventMs = null;
   }
 
-  // Only fall back to the mirrored `token_usage_record` rows when this rollout
-  // produced no usage through the token_count stream at all.
-  if (tokenCountUsageCount === 0 && mirroredUsageEvents.length > 0) {
-    events.push(...mirroredUsageEvents);
+  function drainPendingEvents(): AnyEvent[] {
+    if (pendingEvents.length === 0) {
+      return [];
+    }
+
+    const drained = [...pendingEvents].sort(compareCodexEvents);
+    pendingEvents.length = 0;
+    return drained;
+  }
+
+  function pendingTimestamp(): string | null {
+    let latest: string | null = null;
+    for (const event of pendingEvents) {
+      if (latest === null || event.timestamp.localeCompare(latest) > 0) {
+        latest = event.timestamp;
+      }
+    }
+    return latest;
   }
 
   // Sort on the legacy AnyEvent shape (readable, stable event_id) before
   // wrapping to V2 so ordering among same-timestamp events is unaffected by
   // the hash-based V2 event_id.
-  return events
-    .sort(compareCodexEvents)
-    .map((event) =>
+  function wrapEvents(events: AnyEvent[]): NormalizedEventV2[] {
+    return events.map((event) =>
       toNormalizedEventV2(event, {
         sourceRecordId: event.event_id,
         ...(sourceInstanceId ? { sourceInstanceId } : {})
       })
     );
+  }
+
+  return {
+    checkpoint(): CodexParserState {
+      return {
+        lineIndex: nextLineIndex,
+        sourceInstanceId,
+        sessionMeta,
+        pendingToolCalls: [...pendingToolCalls],
+        pendingEvents: [...pendingEvents],
+        mirroredUsageEvents: [...mirroredUsageEvents],
+        mirroredUsageDeferredEvents: [...mirroredUsageDeferredEvents],
+        tokenCountUsageSeen,
+        lastTokenEventMs,
+        lastTokenEventModel,
+        lastTokenEventTier,
+        activeTimingToolCalls: [...activeTimingToolCalls],
+        activeUnkeyedTimingTools,
+        turnStartedMs,
+        turnFirstTokenReported,
+        turnId,
+        turnModel,
+        turnServiceTier,
+        threadServiceTier
+      };
+    },
+    flush(): NormalizedEventV2[] {
+      // token_count remains authoritative for the whole rollout, even when a
+      // mirror arrived in an earlier byte-budgeted chunk. Hold later events as
+      // well so falling back at EOF preserves chronological ordering.
+      const events = [
+        ...mirroredUsageDeferredEvents,
+        ...(tokenCountUsageSeen ? [] : mirroredUsageEvents),
+        ...drainPendingEvents()
+      ].sort(compareCodexEvents);
+      mirroredUsageEvents.length = 0;
+      mirroredUsageDeferredEvents.length = 0;
+      return wrapEvents(events);
+    },
+    parseLines(lines: Iterable<string>): NormalizedEventV2[] {
+      const emitted: AnyEvent[] = [];
+
+      const breakTimingAnchor = (timestamp: string | null, invalidateTtft: boolean): void => {
+        lastTokenEventMs = null;
+        lastTokenEventModel = null;
+        lastTokenEventTier = null;
+        if (invalidateTtft && !turnFirstTokenReported) {
+          turnFirstTokenReported = true;
+        }
+
+        if (timestamp === null) {
+          return;
+        }
+
+        // Same-timestamp records are sorted after parsing (tool events sort
+        // before token usage). Clear a usage row already seen at that timestamp
+        // so chunk boundaries cannot preserve a contaminated estimate.
+        for (const event of [...pendingEvents, ...emitted]) {
+          if (event.type === "token.usage.recorded" && event.timestamp === timestamp) {
+            event.decode_duration_ms = null;
+            if (invalidateTtft) {
+              event.first_token_latency_ms = null;
+            }
+          }
+        }
+      };
+
+      const applyTimingBoundary = (
+        boundary: TimingBoundary | null,
+        timestamp: string | null
+      ): void => {
+        if (boundary === null) {
+          return;
+        }
+
+        breakTimingAnchor(timestamp, true);
+        if (boundary.kind === "begin") {
+          if (boundary.key === null) {
+            activeUnkeyedTimingTools += 1;
+          } else {
+            activeTimingToolCalls.add(boundary.key);
+          }
+        } else if (boundary.key === null) {
+          activeUnkeyedTimingTools = Math.max(0, activeUnkeyedTimingTools - 1);
+        } else if (boundary.key.startsWith("wait:") && boundary.key.split(":").length === 2) {
+          const familyPrefix = `${boundary.key}:`;
+          for (const key of activeTimingToolCalls) {
+            if (key === boundary.key || key.startsWith(familyPrefix)) {
+              activeTimingToolCalls.delete(key);
+            }
+          }
+        } else {
+          activeTimingToolCalls.delete(boundary.key);
+        }
+      };
+
+      const endTimingWaits = (timestamp: string | null): void => {
+        const waitKeys = [...activeTimingToolCalls].filter((key) => key.startsWith("wait:"));
+        if (waitKeys.length === 0) {
+          return;
+        }
+        breakTimingAnchor(timestamp, true);
+        for (const key of waitKeys) {
+          activeTimingToolCalls.delete(key);
+        }
+      };
+
+      const push = (event: AnyEvent): void => {
+        const latest = pendingTimestamp();
+        if (latest !== null && event.timestamp.localeCompare(latest) > 0) {
+          emitted.push(...drainPendingEvents());
+        }
+        pendingEvents.push(event);
+      };
+
+      for (const line of lines) {
+        if (line.length === 0) {
+          continue;
+        }
+
+        const lineIndex = nextLineIndex++;
+        const parsed = parseJsonRecord(line);
+        if (parsed === null) {
+          continue;
+        }
+
+        const eventType = normalizeOptionalString(parsed.type);
+        const payload = asRecord(parsed.payload);
+
+        if (eventType === "event_msg" && payload !== null &&
+            normalizeOptionalString(payload.type) === "thread_settings_applied") {
+          const settings = asRecord(payload.thread_settings);
+          const nextTier = normalizeCodexThreadServiceTier(settings?.service_tier ?? payload.service_tier);
+          if (threadServiceTier !== nextTier) {
+            breakTimingAnchor(normalizeOptionalString(parsed.timestamp), false);
+          }
+          threadServiceTier = nextTier;
+          continue;
+        }
+
+        if (eventType === "turn_context" && payload !== null) {
+          const nextTurnId = normalizeOptionalString(payload.turn_id);
+          const nextTurnModel = normalizeModelId(normalizeOptionalString(payload.model));
+          const nextTurnServiceTier =
+            normalizeOptionalString(payload.service_tier) ?? normalizeOptionalString(payload.speed);
+          if (
+            turnId !== nextTurnId ||
+            turnModel !== nextTurnModel ||
+            turnServiceTier !== nextTurnServiceTier
+          ) {
+            breakTimingAnchor(normalizeOptionalString(parsed.timestamp), false);
+          }
+          turnId = nextTurnId;
+          turnModel = nextTurnModel;
+          turnServiceTier = nextTurnServiceTier;
+          continue;
+        }
+
+        if (eventType === "session_meta" && payload !== null) {
+          const sessionId =
+            normalizeOptionalString(payload.id) ?? inferSessionIdFromPath(input.filePath);
+          const timestamp =
+            normalizeOptionalString(payload.timestamp) ??
+            normalizeOptionalString(parsed.timestamp);
+
+          if (sessionId === null || timestamp === null) {
+            continue;
+          }
+
+          const originator = normalizeOptionalString(payload.originator);
+          if (originator === "multica-agent-sdk") {
+            sourceInstanceId = "codex:multica";
+          }
+
+          sessionMeta = {
+            sessionId,
+            timestamp,
+            workspacePath: normalizeOptionalString(payload.cwd) ?? ".",
+            providerId: normalizeOptionalString(payload.model_provider)
+          };
+          push({
+            event_id: `codex:session:${sessionId}:started`,
+            session_id: sessionId,
+            timestamp,
+            source_vendor: CODEX_SOURCE_VENDOR,
+            source_adapter: CODEX_ROLLOUT_ADAPTER,
+            workspace_path: sessionMeta.workspacePath,
+            type: "session.started"
+          });
+          continue;
+        }
+
+        if (eventType === "token_usage_record" && payload !== null) {
+          const sessionId = sessionMeta?.sessionId ?? inferSessionIdFromPath(input.filePath);
+          if (!tokenCountUsageSeen && sessionId !== null) {
+            const providerId = sessionMeta?.providerId ?? null;
+            const turnInputMetadata = turnModel !== null && turnId !== null
+              ? input.turnInputMetadata?.get(codexTurnMetadataKey(sessionId, turnId))
+              : undefined;
+            const databaseTier = turnModel !== null && turnInputMetadata !== undefined &&
+              normalizeModelId(turnInputMetadata.model) === turnModel
+                ? normalizeOptionalString(turnInputMetadata.serviceTier)
+                : null;
+            const mirrored = buildMirroredUsageEvent({
+              parsed,
+              payload,
+              sessionId,
+              workspacePath: sessionMeta?.workspacePath ?? ".",
+              model: turnModel ?? normalizeModelId(input.sessionModels?.[sessionId]),
+              serviceTier: turnServiceTier ?? databaseTier ?? threadServiceTier,
+              providerId,
+              providerConfig: providerId ? input.providerConfigs?.[providerId] : undefined
+            });
+            if (mirrored !== null) {
+              mirroredUsageEvents.push(mirrored);
+            }
+          }
+          continue;
+        }
+
+        if (eventType === "response_item" && payload !== null) {
+          const payloadType = normalizeOptionalString(payload.type);
+          const timestamp =
+            normalizeOptionalString(parsed.timestamp) ??
+            sessionMeta?.timestamp ??
+            new Date(0).toISOString();
+          applyTimingBoundary(
+            getResponseItemTimingBoundary(
+              payloadType ?? "",
+              normalizeOptionalString(payload.call_id)
+            ),
+            timestamp
+          );
+          const sessionId = sessionMeta?.sessionId ?? inferSessionIdFromPath(input.filePath);
+
+          if (sessionId !== null && payloadType === "custom_tool_call") {
+            const callId = normalizeOptionalString(payload.call_id);
+            if (callId === null) {
+              continue;
+            }
+
+            const toolName = normalizeOptionalString(payload.name) ?? "unknown";
+            const argumentSummary = serializeArgumentSummary(payload.input);
+
+            pendingToolCalls.set(callId, {
+              sessionId,
+              workspacePath: sessionMeta?.workspacePath ?? ".",
+              timestamp,
+              toolName,
+              argumentSummary
+            });
+            push({
+              event_id: `codex:session:${sessionId}:tool:${callId}:started`,
+              session_id: sessionId,
+              timestamp,
+              source_vendor: CODEX_SOURCE_VENDOR,
+              source_adapter: CODEX_ROLLOUT_ADAPTER,
+              workspace_path: sessionMeta?.workspacePath ?? ".",
+              type: "tool.called",
+              tool_call_id: normalizeNativeId(callId) ?? `native:${callId}`,
+              tool_name: toolName,
+              status: "started",
+              argument_summary: argumentSummary
+            });
+            continue;
+          }
+
+          if (sessionId !== null && payloadType === "function_call") {
+            const callId = normalizeOptionalString(payload.call_id);
+            if (callId === null) {
+              continue;
+            }
+
+            const functionName = normalizeOptionalString(payload.name) ?? "unknown";
+            if (!shouldTrackFunctionCall(functionName)) {
+              continue;
+            }
+            const argumentText = normalizeOptionalString(payload.arguments);
+
+            pendingToolCalls.set(callId, {
+              sessionId,
+              workspacePath: sessionMeta?.workspacePath ?? ".",
+              timestamp,
+              toolName: inferFunctionCallToolName(functionName, argumentText),
+              argumentSummary: summarizeFunctionCallArguments(functionName, argumentText)
+            });
+            const pending = pendingToolCalls.get(callId);
+            if (pending) {
+              push({
+                event_id: `codex:session:${sessionId}:function:${callId}:started`,
+                session_id: sessionId,
+                timestamp,
+                source_vendor: CODEX_SOURCE_VENDOR,
+                source_adapter: CODEX_ROLLOUT_ADAPTER,
+                workspace_path: sessionMeta?.workspacePath ?? ".",
+                type: "tool.called",
+                tool_call_id: normalizeNativeId(callId) ?? `native:${callId}`,
+                tool_name: pending.toolName,
+                status: "started",
+                argument_summary: pending.argumentSummary
+              });
+            }
+            continue;
+          }
+
+          if (payloadType === "custom_tool_call_output") {
+            const callId = normalizeOptionalString(payload.call_id);
+            const pending = callId ? pendingToolCalls.get(callId) : null;
+
+            if (callId === null || pending == null) {
+              continue;
+            }
+
+            // Codex often stores custom_tool_call_output.output as an array of
+            // {type,text} parts rather than a plain string. Coerce before parsing.
+            const result = parseCustomToolOutput(coerceToolOutputText(payload.output));
+
+            if (result.success) {
+              push({
+                event_id: `codex:session:${pending.sessionId}:tool:${callId}:succeeded`,
+                session_id: pending.sessionId,
+                timestamp,
+                source_vendor: CODEX_SOURCE_VENDOR,
+                source_adapter: CODEX_ROLLOUT_ADAPTER,
+                workspace_path: pending.workspacePath,
+                type: "tool.succeeded",
+                tool_call_id: normalizeNativeId(callId) ?? `native:${callId}`,
+                tool_name: pending.toolName,
+                status: "succeeded",
+                duration_ms: result.durationMs
+              });
+            } else {
+              push({
+                event_id: `codex:session:${pending.sessionId}:tool:${callId}:failed`,
+                session_id: pending.sessionId,
+                timestamp,
+                source_vendor: CODEX_SOURCE_VENDOR,
+                source_adapter: CODEX_ROLLOUT_ADAPTER,
+                workspace_path: pending.workspacePath,
+                type: "tool.failed",
+                tool_call_id: normalizeNativeId(callId) ?? `native:${callId}`,
+                tool_name: pending.toolName,
+                status: "failed",
+                duration_ms: result.durationMs
+              });
+            }
+            pendingToolCalls.delete(callId);
+            continue;
+          }
+
+          if (payloadType === "function_call_output") {
+            const callId = normalizeOptionalString(payload.call_id);
+            const pending = callId ? pendingToolCalls.get(callId) : null;
+
+            if (callId === null || pending == null) {
+              continue;
+            }
+
+            const result = parseFunctionCallOutput(coerceToolOutputText(payload.output));
+
+            if (result.success) {
+              push({
+                event_id: `codex:session:${pending.sessionId}:function:${callId}:succeeded`,
+                session_id: pending.sessionId,
+                timestamp,
+                source_vendor: CODEX_SOURCE_VENDOR,
+                source_adapter: CODEX_ROLLOUT_ADAPTER,
+                workspace_path: pending.workspacePath,
+                type: "tool.succeeded",
+                tool_call_id: normalizeNativeId(callId) ?? `native:${callId}`,
+                tool_name: pending.toolName,
+                status: "succeeded",
+                duration_ms: result.durationMs
+              });
+            } else {
+              push({
+                event_id: `codex:session:${pending.sessionId}:function:${callId}:failed`,
+                session_id: pending.sessionId,
+                timestamp,
+                source_vendor: CODEX_SOURCE_VENDOR,
+                source_adapter: CODEX_ROLLOUT_ADAPTER,
+                workspace_path: pending.workspacePath,
+                type: "tool.failed",
+                tool_call_id: normalizeNativeId(callId) ?? `native:${callId}`,
+                tool_name: pending.toolName,
+                status: "failed",
+                duration_ms: result.durationMs
+              });
+            }
+            pendingToolCalls.delete(callId);
+            continue;
+          }
+        }
+
+        if (eventType === "event_msg" && payload !== null) {
+          const payloadType = normalizeOptionalString(payload.type);
+          const timestamp =
+            normalizeOptionalString(parsed.timestamp) ??
+            sessionMeta?.timestamp ??
+            new Date(0).toISOString();
+          applyTimingBoundary(
+            getEventMessageTimingBoundary(
+              payloadType ?? "",
+              normalizeOptionalString(payload.call_id)
+            ),
+            timestamp
+          );
+          if (payloadType === "user_message") {
+            endTimingWaits(timestamp);
+          }
+          const sessionId = sessionMeta?.sessionId ?? inferSessionIdFromPath(input.filePath);
+          const eventKey = buildEventKey(parsed, payloadType ?? "event_msg", lineIndex);
+
+          if (sessionId !== null && payloadType === "user_message") {
+            const promptText = normalizeOptionalString(payload.message) ?? "";
+
+            push({
+              event_id: `codex:session:${sessionId}:prompt:${eventKey}`,
+              session_id: sessionId,
+              timestamp,
+              source_vendor: CODEX_SOURCE_VENDOR,
+              source_adapter: CODEX_ROLLOUT_ADAPTER,
+              workspace_path: sessionMeta?.workspacePath ?? ".",
+              type: "prompt.submitted",
+              prompt_id: `prompt_${eventKey}`,
+              prompt_chars: promptText.length
+            });
+            continue;
+          }
+
+          if (sessionId !== null && payloadType === "agent_message") {
+            const responseText = normalizeOptionalString(payload.message) ?? "";
+            const providerId = sessionMeta?.providerId ?? null;
+            const providerConfig = providerId ? input.providerConfigs?.[providerId] : undefined;
+
+            push({
+              event_id: `codex:session:${sessionId}:response:${eventKey}`,
+              session_id: sessionId,
+              timestamp,
+              source_vendor: CODEX_SOURCE_VENDOR,
+              source_adapter: CODEX_ROLLOUT_ADAPTER,
+              workspace_path: sessionMeta?.workspacePath ?? ".",
+              type: "assistant.responded",
+              message_id: `response_${eventKey}`,
+              model: turnModel ?? normalizeModelId(input.sessionModels?.[sessionId]),
+              stop_reason: normalizeOptionalString(payload.phase) ?? null,
+              response_chars: responseText.length,
+              provider_id: providerId,
+              provider_base_url: providerConfig?.baseUrl ?? null,
+              provider_host: providerConfig?.host ?? null
+            });
+            continue;
+          }
+
+          if (sessionId !== null && payloadType === "web_search_end") {
+            const callId = buildEventKey(
+              parsed,
+              payloadType,
+              lineIndex,
+              normalizeOptionalString(payload.call_id)
+            );
+            push({
+              event_id: `codex:session:${sessionId}:web_search:${callId}:tool`,
+              session_id: sessionId,
+              timestamp,
+              source_vendor: CODEX_SOURCE_VENDOR,
+              source_adapter: CODEX_ROLLOUT_ADAPTER,
+              workspace_path: sessionMeta?.workspacePath ?? ".",
+              type: "tool.succeeded",
+              tool_call_id: normalizeNativeId(callId) ?? `native:${callId}`,
+              tool_name: "WebSearch",
+              status: "succeeded",
+              duration_ms: 0
+            });
+            continue;
+          }
+
+          if (sessionId !== null && payloadType === "exec_command_end") {
+            const callId = buildEventKey(
+              parsed,
+              payloadType,
+              lineIndex,
+              normalizeOptionalString(payload.call_id)
+            );
+            const exitCode = normalizeInteger(payload.exit_code);
+            const baseEvent = {
+              event_id: `codex:session:${sessionId}:exec:${callId}:tool`,
+              session_id: sessionId,
+              timestamp,
+              source_vendor: CODEX_SOURCE_VENDOR,
+              source_adapter: CODEX_ROLLOUT_ADAPTER,
+              workspace_path: sessionMeta?.workspacePath ?? ".",
+              tool_call_id: normalizeNativeId(callId) ?? `native:${callId}`,
+              tool_name: inferExecCommandToolName(payload.command),
+              duration_ms: getExecCommandDurationMs(payload)
+            };
+
+            if (exitCode === 0) {
+              push({
+                ...baseEvent,
+                type: "tool.succeeded",
+                status: "succeeded"
+              });
+            } else {
+              push({
+                ...baseEvent,
+                type: "tool.failed",
+                status: "failed"
+              });
+            }
+            continue;
+          }
+
+          if (sessionId !== null && payloadType === "patch_apply_end") {
+            const callId = buildEventKey(
+              parsed,
+              payloadType,
+              lineIndex,
+              normalizeOptionalString(payload.call_id)
+            );
+            const success = payload.success === true;
+
+            if (success) {
+              push({
+                event_id: `codex:session:${sessionId}:patch:${callId}:tool`,
+                session_id: sessionId,
+                timestamp,
+                source_vendor: CODEX_SOURCE_VENDOR,
+                source_adapter: CODEX_ROLLOUT_ADAPTER,
+                workspace_path: sessionMeta?.workspacePath ?? ".",
+                type: "tool.succeeded",
+                tool_call_id: normalizeNativeId(callId) ?? `native:${callId}`,
+                tool_name: "apply_patch",
+                status: "succeeded",
+                duration_ms: 0
+              });
+            } else {
+              push({
+                event_id: `codex:session:${sessionId}:patch:${callId}:tool`,
+                session_id: sessionId,
+                timestamp,
+                source_vendor: CODEX_SOURCE_VENDOR,
+                source_adapter: CODEX_ROLLOUT_ADAPTER,
+                workspace_path: sessionMeta?.workspacePath ?? ".",
+                type: "tool.failed",
+                tool_call_id: normalizeNativeId(callId) ?? `native:${callId}`,
+                tool_name: "apply_patch",
+                status: "failed",
+                duration_ms: 0
+              });
+            }
+
+            if (success) {
+              const changes = asRecord(payload.changes) ?? {};
+              const filesChanged = Object.keys(changes);
+              const totals = summarizePatchChanges(changes);
+
+              push({
+                event_id: `codex:session:${sessionId}:patch:${callId}:edit`,
+                session_id: sessionId,
+                timestamp,
+                source_vendor: CODEX_SOURCE_VENDOR,
+                source_adapter: CODEX_ROLLOUT_ADAPTER,
+                workspace_path: sessionMeta?.workspacePath ?? ".",
+                type: "code.edit.applied",
+                tool_name: "apply_patch",
+                files_changed: filesChanged,
+                file_count: filesChanged.length,
+                insertions: totals.insertions,
+                deletions: totals.deletions,
+                edit_operation_count: 1
+              });
+            }
+            continue;
+          }
+
+          if (sessionId !== null && payloadType === "item_completed") {
+            const item = asRecord(payload.item);
+            if (item === null || normalizeOptionalString(item.type) !== "FileChange") {
+              continue;
+            }
+
+            if (normalizeOptionalString(item.status) !== "completed") {
+              continue;
+            }
+
+            const changes = asRecord(item.changes) ?? {};
+            const filesChanged = Object.keys(changes);
+            if (filesChanged.length > 0) {
+              const changeId = normalizeOptionalString(item.id) ?? eventKey;
+              const totals = summarizePatchChanges(changes);
+              push({
+                event_id: `codex:session:${sessionId}:filechange:${changeId}:edit`,
+                session_id: sessionId,
+                timestamp,
+                source_vendor: CODEX_SOURCE_VENDOR,
+                source_adapter: CODEX_ROLLOUT_ADAPTER,
+                workspace_path: sessionMeta?.workspacePath ?? ".",
+                type: "code.edit.applied",
+                tool_name: "apply_patch",
+                files_changed: filesChanged,
+                file_count: filesChanged.length,
+                insertions: totals.insertions,
+                deletions: totals.deletions,
+                edit_operation_count: 1
+              });
+            }
+            continue;
+          }
+        }
+
+        if (
+          eventType === "event_msg" &&
+          payload !== null &&
+          normalizeOptionalString(payload.type) === "task_started"
+        ) {
+          // Turn boundaries reset decode timing so idle time between turns is
+          // never attributed to generated tokens.
+          breakTimingAnchor(normalizeOptionalString(parsed.timestamp), false);
+          endTimingWaits(normalizeOptionalString(parsed.timestamp));
+          turnStartedMs = resolveTurnStartedMs(payload, parsed.timestamp);
+          turnFirstTokenReported = activeTimingToolCalls.size > 0 || activeUnkeyedTimingTools > 0;
+          // A context that arrived early still belongs to this turn when IDs
+          // match. Older/different context is cleared so its tier cannot leak.
+          const taskTurnId = normalizeOptionalString(payload.turn_id);
+          if (taskTurnId === null || turnId !== taskTurnId) {
+            turnId = null;
+            turnModel = null;
+            turnServiceTier = null;
+          }
+          continue;
+        }
+
+        if (
+          eventType !== "event_msg" ||
+          payload === null ||
+          normalizeOptionalString(payload.type) !== "token_count"
+        ) {
+          continue;
+        }
+
+        const info = asRecord(payload.info);
+        if (info === null) {
+          continue;
+        }
+
+        const totalUsage = asRecord(info.total_token_usage);
+        const lastUsage = asRecord(info.last_token_usage);
+        if (lastUsage === null && totalUsage === null) {
+          continue;
+        }
+
+        const sessionId = sessionMeta?.sessionId ?? inferSessionIdFromPath(input.filePath);
+        if (sessionId === null) {
+          continue;
+        }
+
+        const totalTokens =
+          normalizeInteger(totalUsage?.total_tokens) ??
+          normalizeInteger(lastUsage?.total_tokens);
+        if (totalTokens === null) {
+          continue;
+        }
+
+        const inputTokens = normalizeInteger(lastUsage?.input_tokens) ?? 0;
+        const cacheReadTokens = normalizeInteger(lastUsage?.cached_input_tokens) ?? 0;
+        // Codex reports cached input as a subset of input_tokens. Preserve the
+        // source-reported gross counter so the shared accounting policy can derive
+        // displayed input by subtracting cache-read input exactly once.
+        // Codex's output_tokens already includes reasoning_output_tokens. Keep
+        // the reported output total so reasoning is not counted twice.
+        const outputTokens = normalizeInteger(lastUsage?.output_tokens) ?? 0;
+        const turnInputMetadata =
+          turnModel !== null && turnId !== null
+            ? input.turnInputMetadata?.get(
+                codexTurnMetadataKey(sessionMeta?.sessionId ?? sessionId, turnId)
+              )
+            : undefined;
+        const databaseTier =
+          turnModel !== null &&
+          turnInputMetadata !== undefined &&
+          normalizeModelId(turnInputMetadata.model) === turnModel
+            ? normalizeOptionalString(turnInputMetadata.serviceTier)
+            : null;
+        const usageServiceTier =
+          normalizeOptionalString(lastUsage?.service_tier) ??
+          normalizeOptionalString(lastUsage?.speed) ??
+          normalizeOptionalString(info.service_tier) ??
+          normalizeOptionalString(info.speed) ??
+          turnServiceTier ??
+          databaseTier ??
+          threadServiceTier;
+
+        if (inputTokens === 0 && cacheReadTokens === 0 && outputTokens === 0) {
+          continue;
+        }
+
+        tokenCountUsageSeen = true;
+        mirroredUsageEvents.length = 0;
+
+        const providerId = sessionMeta?.providerId ?? null;
+        const providerConfig = providerId ? input.providerConfigs?.[providerId] : undefined;
+        const usageTimestamp =
+          normalizeOptionalString(parsed.timestamp) ??
+          sessionMeta?.timestamp ??
+          new Date(0).toISOString();
+        // Rollouts have no stream chunks, so only estimate decode time between
+        // consecutive reports when no tool/wait boundary intervened.
+        const usageMs = Date.parse(usageTimestamp);
+        const usageModel = turnModel ?? normalizeModelId(input.sessionModels?.[sessionId]);
+        if (
+          lastTokenEventMs !== null &&
+          (usageModel !== lastTokenEventModel || usageServiceTier !== lastTokenEventTier)
+        ) {
+          breakTimingAnchor(usageTimestamp, false);
+        }
+        const timingBlocked = activeTimingToolCalls.size > 0 || activeUnkeyedTimingTools > 0;
+        const decodeDurationMs =
+          !timingBlocked &&
+          lastTokenEventMs !== null &&
+          Number.isFinite(usageMs) &&
+          usageMs >= lastTokenEventMs &&
+          usageMs - lastTokenEventMs <= MAX_DECODE_GAP_MS
+            ? usageMs - lastTokenEventMs
+            : null;
+        if (Number.isFinite(usageMs) && !timingBlocked) {
+          lastTokenEventMs = usageMs;
+          lastTokenEventModel = usageModel;
+          lastTokenEventTier = usageServiceTier;
+        } else {
+          lastTokenEventMs = null;
+          lastTokenEventModel = null;
+          lastTokenEventTier = null;
+        }
+
+        // The first usage report in a turn is an upper-bound first-token
+        // observation. Later periodic reports do not measure first-token time.
+        const firstTokenLatencyMs =
+          !turnFirstTokenReported &&
+          turnStartedMs !== null &&
+          Number.isFinite(usageMs) &&
+          usageMs >= turnStartedMs &&
+          usageMs - turnStartedMs <= MAX_FIRST_TOKEN_LATENCY_MS
+            ? usageMs - turnStartedMs
+            : null;
+        turnFirstTokenReported = true;
+
+        push({
+          event_id: `codex:session:${sessionId}:usage:${totalTokens}`,
+          session_id: sessionId,
+          timestamp: usageTimestamp,
+          source_vendor: CODEX_SOURCE_VENDOR,
+          source_adapter: CODEX_ROLLOUT_ADAPTER,
+          workspace_path: sessionMeta?.workspacePath ?? ".",
+          type: "token.usage.recorded",
+          message_id: `usage_${totalTokens}`,
+          model: turnModel ?? normalizeModelId(input.sessionModels?.[sessionId]),
+          ...(usageServiceTier ? { service_tier: usageServiceTier } : {}),
+          input_tokens: inputTokens,
+          output_tokens: outputTokens,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: cacheReadTokens,
+          server_tool_use: "{}",
+          usage_source: "codex-rollout",
+          provider_id: providerId,
+          provider_base_url: providerConfig?.baseUrl ?? null,
+          provider_host: providerConfig?.host ?? null,
+          first_token_latency_ms: firstTokenLatencyMs,
+          decode_duration_ms: decodeDurationMs
+        });
+      }
+
+      if (!tokenCountUsageSeen && mirroredUsageEvents.length > 0) {
+        mirroredUsageDeferredEvents.push(...emitted);
+        return [];
+      }
+      return wrapEvents([...mirroredUsageDeferredEvents.splice(0), ...emitted].sort(compareCodexEvents));
+    }
+  };
+}
+
+function normalizeCodexThreadServiceTier(value: unknown): string | null {
+  const tier = normalizeOptionalString(value)?.toLowerCase();
+  return tier === "fast" || tier === "priority" || tier === "ultrafast" || tier === "flex"
+    ? tier
+    : null;
 }
 
 export function inferSessionIdFromPath(filePath: string): string | null {
@@ -675,22 +1031,14 @@ export function inferSessionIdFromPath(filePath: string): string | null {
   return match?.[1] ?? null;
 }
 
-/**
- * Build a usage event from a `token_usage_record` line.
- *
- * Codex writes this mirror once per response with the response's own `usage`
- * block, which is the same shape `token_count` reports as `last_token_usage`.
- * No timing is attached: the record carries no decode window and the
- * token_count heuristics that estimate one are keyed on the token_count
- * stream, which by definition is absent when this fallback is used.
- */
+/** Mirror-only rollouts carry usage but do not expose a decode timing window. */
 function buildMirroredUsageEvent(input: {
   parsed: Record<string, unknown>;
   payload: Record<string, unknown>;
   sessionId: string;
   workspacePath: string;
   model: string | null;
-  serviceTier: ServiceTier | null;
+  serviceTier: string | null;
   providerId: string | null;
   providerConfig?: CodexProviderConfig;
 }): AnyEvent | null {
@@ -701,29 +1049,41 @@ function buildMirroredUsageEvent(input: {
 
   const inputTokens = normalizeInteger(usage.input_tokens) ?? 0;
   const cacheReadTokens = normalizeInteger(usage.cached_input_tokens) ?? 0;
-  const outputTokens =
-    (normalizeInteger(usage.output_tokens) ?? 0) + (normalizeInteger(usage.reasoning_output_tokens) ?? 0);
+  // The mirror uses the same Codex usage shape: reasoning is part of output.
+  const outputTokens = normalizeInteger(usage.output_tokens) ?? 0;
   if (inputTokens === 0 && cacheReadTokens === 0 && outputTokens === 0) {
     return null;
   }
 
   const responseId = normalizeOptionalString(input.payload.response_id);
-  const ordinal = normalizeInteger(input.payload.ordinal);
-  const key = responseId ?? (ordinal !== null ? `ordinal-${ordinal}` : null);
+  const ordinal = normalizeInteger(input.payload.ordinal) ?? normalizeInteger(input.parsed.ordinal);
+  // Live files can end between the mirror and the token_count written a few
+  // milliseconds later. Current mirrors carry the same cumulative thread total
+  // as token_count: using its identity lets the ledger dedupe that later append.
+  const threadUsage = asRecord(input.payload.thread_token_usage);
+  const cumulativeTotalTokens = normalizeInteger(threadUsage?.total_tokens);
+  const key = cumulativeTotalTokens !== null
+    ? String(cumulativeTotalTokens)
+    : responseId ?? (ordinal !== null ? `ordinal-${ordinal}` : null);
   if (key === null) {
     return null;
   }
 
-  const timestamp = normalizeOptionalString(input.parsed.timestamp) ?? new Date(0).toISOString();
+  const serviceTier = normalizeOptionalString(usage.service_tier) ??
+    normalizeOptionalString(usage.speed) ?? input.serviceTier;
   return {
-    event_id: `codex:session:${input.sessionId}:usage:record:${key}`,
+    event_id: cumulativeTotalTokens !== null
+      ? `codex:session:${input.sessionId}:usage:${key}`
+      : `codex:session:${input.sessionId}:usage:record:${key}`,
     session_id: input.sessionId,
-    timestamp,
+    timestamp: normalizeOptionalString(input.parsed.timestamp) ?? new Date(0).toISOString(),
     source_vendor: CODEX_SOURCE_VENDOR,
     source_adapter: CODEX_ROLLOUT_ADAPTER,
     workspace_path: input.workspacePath,
     type: "token.usage.recorded",
-    message_id: responseId !== null ? `usage_${responseId}` : `usage_record_${ordinal}`,
+    message_id: cumulativeTotalTokens !== null
+      ? `usage_${key}`
+      : responseId !== null ? `usage_${responseId}` : `usage_record_${ordinal}`,
     model: input.model,
     input_tokens: inputTokens,
     output_tokens: outputTokens,
@@ -731,7 +1091,7 @@ function buildMirroredUsageEvent(input: {
     cache_read_input_tokens: cacheReadTokens,
     server_tool_use: "{}",
     usage_source: "codex-rollout",
-    ...(input.serviceTier ? { service_tier: input.serviceTier } : {}),
+    ...(serviceTier ? { service_tier: serviceTier } : {}),
     provider_id: input.providerId,
     provider_base_url: input.providerConfig?.baseUrl ?? null,
     provider_host: input.providerConfig?.host ?? null,
@@ -763,29 +1123,17 @@ function normalizeInteger(value: unknown): number | null {
 
 function resolveTurnStartedMs(payload: Record<string, unknown>, lineTimestamp: unknown): number | null {
   const startedAtSeconds = payload.started_at;
-  if (typeof startedAtSeconds === "number" && Number.isFinite(startedAtSeconds) && startedAtSeconds > 0) {
-    // Round to whole milliseconds: the schema requires an integer latency, and a
-    // fractional unix-seconds value would otherwise leak into the subtraction.
+  if (
+    typeof startedAtSeconds === "number" &&
+    Number.isFinite(startedAtSeconds) &&
+    startedAtSeconds > 0
+  ) {
+    // Round to whole milliseconds because the event schema requires integers.
     return Math.round(startedAtSeconds * 1000);
   }
 
   const lineMs = typeof lineTimestamp === "string" ? Date.parse(lineTimestamp) : Number.NaN;
   return Number.isFinite(lineMs) ? lineMs : null;
-}
-
-/**
- * Map Codex's `service_tier` string onto the normalized speed tier. `fast`
- * (renamed from `priority`, the old value still works) and `ultrafast` cost 2x
- * and 6x of list price; `flex` is the discounted batch queue. Every other value
- * ("default", "auto", "standard", unknown) means the standard queue, which is
- * stored as null so the cost layer bills the plain rate card.
- */
-function normalizeCodexServiceTier(value: unknown): ServiceTier | null {
-  const tier = normalizeOptionalString(value)?.toLowerCase();
-  if (tier === "fast" || tier === "priority" || tier === "ultrafast" || tier === "flex") {
-    return tier;
-  }
-  return null;
 }
 
 function buildEventKey(

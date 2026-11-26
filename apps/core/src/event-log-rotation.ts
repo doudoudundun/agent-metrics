@@ -1,7 +1,6 @@
 import { createReadStream, createWriteStream } from "node:fs";
 import { mkdir, rename, stat, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { createInterface } from "node:readline";
 import { once } from "node:events";
 import { createGzip } from "node:zlib";
 import { pipeline } from "node:stream/promises";
@@ -18,12 +17,10 @@ import { pipeline } from "node:stream/promises";
  * (3) move the original into `<data>/events/archive/` as a cold backup, and
  * (4) atomically replace the live log with the trimmed copy.
  *
- * The ingestion cursor is intentionally left alone: `readEventLogIncremental`
- * compares the committed offset against the new (smaller) file size and the
- * prefix hash, so the next sync resets to offset 0 and re-projects. Reprojection
- * is idempotent (`INSERT OR IGNORE` on `normalized_events`, event-id keyed
- * `INSERT OR REPLACE` on the legacy tables), so already-projected history is
- * never duplicated or lost.
+ * A caller can provide its validated committed projection boundary. While
+ * trimming we map that boundary to the retained bytes, so an upgrade does not
+ * replay an already-projected retention window. Unknown boundaries stay null
+ * and must restart from zero; retained unprojected records are never skipped.
  */
 
 export const DEFAULT_EVENT_LOG_MAX_BYTES = 512 * 1024 * 1024;
@@ -86,6 +83,8 @@ export type EventLogRotationResult = {
   archivePath: string | null;
   /** Cutoff actually applied, as an ISO string; records older than this were dropped. */
   cutoffIso: string | null;
+  /** Committed retained bytes, or null when the original cursor was untrusted. */
+  committedOffsetAfterRotation: number | null;
 };
 
 export type EventLogRotationInput = {
@@ -96,6 +95,8 @@ export type EventLogRotationInput = {
   archiveDir?: string;
   now?: Date;
   logger?: EventLogRotationLogger;
+  /** Must first be validated against the original log's identity and prefix hash. */
+  committedOffset?: number;
 };
 
 export async function rotateEventLogIfNeeded(
@@ -112,7 +113,8 @@ export async function rotateEventLogIfNeeded(
     droppedLines: 0,
     droppedMalformedLines: 0,
     archivePath: null,
-    cutoffIso: null
+    cutoffIso: null,
+    committedOffsetAfterRotation: null
   };
 
   let details;
@@ -129,6 +131,12 @@ export async function rotateEventLogIfNeeded(
     return { ...emptyResult, skipReason: "below-threshold", originalBytes: details.size };
   }
 
+  if (input.committedOffset !== undefined && (
+    !Number.isSafeInteger(input.committedOffset) || input.committedOffset < 0 || input.committedOffset > details.size
+  )) {
+    throw new RangeError("committedOffset must be within the original event log");
+  }
+
   const now = input.now ?? new Date();
   const cutoffMs = now.getTime() - retentionDays * MS_PER_DAY;
   const cutoffIso = new Date(cutoffMs).toISOString();
@@ -143,7 +151,8 @@ export async function rotateEventLogIfNeeded(
     trimmed = await trimEventLogFile({
       sourcePath: input.eventLogPath,
       targetPath: tempPath,
-      cutoffMs
+      cutoffMs,
+      committedOffset: input.committedOffset
     });
   } catch (error) {
     await safeUnlink(tempPath);
@@ -170,7 +179,8 @@ export async function rotateEventLogIfNeeded(
     droppedLines: trimmed.droppedLines,
     droppedMalformedLines: trimmed.malformedLines,
     archivePath,
-    cutoffIso
+    cutoffIso,
+    committedOffsetAfterRotation: trimmed.committedOffset
   };
 
   input.logger?.warn(
@@ -182,6 +192,7 @@ export async function rotateEventLogIfNeeded(
       keptLines: result.keptLines,
       droppedLines: result.droppedLines,
       droppedMalformedLines: result.droppedMalformedLines,
+      committedOffsetAfterRotation: result.committedOffsetAfterRotation,
       cutoffIso
     },
     "rotated oversized events.jsonl"
@@ -201,39 +212,66 @@ async function trimEventLogFile(input: {
   sourcePath: string;
   targetPath: string;
   cutoffMs: number;
-}): Promise<{ keptLines: number; droppedLines: number; malformedLines: number; keptBytes: number }> {
-  const reader = createInterface({
-    input: createReadStream(input.sourcePath, { encoding: "utf8" }),
-    crlfDelay: Infinity
-  });
+  committedOffset?: number;
+}): Promise<{ keptLines: number; droppedLines: number; malformedLines: number; keptBytes: number; committedOffset: number | null }> {
+  const reader = createReadStream(input.sourcePath);
   const writer = createWriteStream(input.targetPath, { encoding: "utf8" });
 
   let keptLines = 0;
   let droppedLines = 0;
   let malformedLines = 0;
   let keptBytes = 0;
+  let committedOffset: number | null = input.committedOffset === undefined ? null : 0;
 
-  try {
-    for await (const line of reader) {
-      if (line.length === 0) {
-        continue;
-      }
+  const keepLine = async (rawLine: Buffer, endOffset: number, complete: boolean): Promise<void> => {
+    // Track source bytes before decoding: CRLF and multibyte text need different
+    // source and retained offsets because the retained log uses LF endings.
+    const line = rawLine.toString("utf8").replace(/\r$/u, "");
+    if (line.length > 0) {
       const timestampMs = extractTimestampMs(line);
       if (timestampMs === null) {
         malformedLines += 1;
         droppedLines += 1;
-        continue;
-      }
-      if (timestampMs < input.cutoffMs) {
+      } else if (timestampMs < input.cutoffMs) {
         droppedLines += 1;
-        continue;
+      } else {
+        const record = `${line}\n`;
+        keptLines += 1;
+        keptBytes += Buffer.byteLength(record, "utf8");
+        if (!writer.write(record)) {
+          await once(writer, "drain");
+        }
       }
-      const record = `${line}\n`;
-      keptLines += 1;
-      keptBytes += Buffer.byteLength(record, "utf8");
-      if (!writer.write(record)) {
-        await once(writer, "drain");
+    }
+    if (complete && input.committedOffset !== undefined && endOffset <= input.committedOffset) {
+      committedOffset = keptBytes;
+    }
+  };
+
+  try {
+    let sourceOffset = 0;
+    let pending: Buffer[] = [];
+    for await (const chunk of reader) {
+      const bytes = chunk as Buffer;
+      let start = 0;
+      let newline = bytes.indexOf(0x0a);
+      while (newline >= 0) {
+        pending.push(bytes.subarray(start, newline));
+        const rawLine = pending.length === 1 ? pending[0]! : Buffer.concat(pending);
+        sourceOffset += rawLine.length + 1;
+        await keepLine(rawLine, sourceOffset, true);
+        pending = [];
+        start = newline + 1;
+        newline = bytes.indexOf(0x0a, start);
       }
+      if (start < bytes.length) {
+        pending.push(bytes.subarray(start));
+      }
+    }
+    if (pending.length > 0) {
+      const rawLine = Buffer.concat(pending);
+      // Incremental ingestion only commits complete newline-terminated records.
+      await keepLine(rawLine, sourceOffset + rawLine.length, false);
     }
     writer.end();
     await once(writer, "finish");
@@ -241,10 +279,10 @@ async function trimEventLogFile(input: {
     writer.destroy();
     throw error;
   } finally {
-    reader.close();
+    reader.destroy();
   }
 
-  return { keptLines, droppedLines, malformedLines, keptBytes };
+  return { keptLines, droppedLines, malformedLines, keptBytes, committedOffset };
 }
 
 function extractTimestampMs(line: string): number | null {

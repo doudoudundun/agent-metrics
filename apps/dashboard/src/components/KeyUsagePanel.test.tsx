@@ -113,6 +113,48 @@ describe("KeyUsagePanel", () => {
     expect(screen.getByText(/7d window/)).toBeInTheDocument();
   });
 
+  it("renders separate Antigravity model-group cards without merging or dropping windows", () => {
+    render(
+      <KeyUsagePanel
+        now={NOW}
+        data={{
+          updatedAt: "2026-10-10T08:55:00.000Z",
+          entries: [
+            {
+              vendor: "antigravity",
+              source: "antigravity-quota-api",
+              limitId: "gemini",
+              limitName: "Gemini Models",
+              primary: { usedPercent: 8.1, windowMinutes: 300, resetsAt: "2026-10-10T12:20:00.000Z" },
+              secondary: { usedPercent: 9.2, windowMinutes: 10080, resetsAt: "2026-10-15T01:19:16.000Z" },
+              credits: null,
+              expiresAt: null
+            },
+            {
+              vendor: "antigravity",
+              source: "antigravity-quota-api",
+              limitId: "3p",
+              limitName: "Claude and GPT models",
+              primary: { usedPercent: 0, windowMinutes: 300, resetsAt: null },
+              secondary: { usedPercent: 55.8, windowMinutes: 10080, resetsAt: "2026-10-14T16:48:39.000Z" },
+              credits: null,
+              expiresAt: null
+            }
+          ]
+        }}
+      />
+    );
+
+    expect(screen.getAllByRole("listitem")).toHaveLength(2);
+    expect(screen.getAllByText("Antigravity")).toHaveLength(2);
+    expect(screen.getByText("Gemini Models")).toBeInTheDocument();
+    expect(screen.getByText("Claude and GPT models")).toBeInTheDocument();
+    expect(screen.getByText("8.1%")).toBeInTheDocument();
+    expect(screen.getByText("9.2%")).toBeInTheDocument();
+    expect(screen.getByText("0%")).toBeInTheDocument();
+    expect(screen.getByText("55.8%")).toBeInTheDocument();
+  });
+
   it("marks a window whose reset time already passed as expired", () => {
     render(
       <KeyUsagePanel

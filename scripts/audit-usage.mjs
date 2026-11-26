@@ -132,6 +132,14 @@ const SOURCE_PROBES = [
       }
       return newestMtime([join(homedir(), ".dsh", "sessions")], 2_000);
     }
+  },
+  {
+    source: "antigravity-acp",
+    adapter: "antigravity-acp",
+    roots: [join(homedir(), ".t3", "userdata", "providers", "antigravity")],
+    // ~/.t3 根下 auth、cache、sqlite-wal 等几乎一直在写，上层目录 mtime 说明
+    // 不了有没有模型调用；只 stat 精确层级下的 transcript_full.jsonl。
+    latestActivity: () => newestAntigravityTranscript()
   }
 ];
 
@@ -480,6 +488,54 @@ function daysSince(isoTimestamp) {
   const parsed = Date.parse(isoTimestamp);
   if (Number.isNaN(parsed)) return null;
   return (Date.now() - parsed) / 86_400_000;
+}
+
+/**
+ * Antigravity ACP 的 transcript 固定长在
+ * providers/antigravity/<account>/antigravity-acp/brain/<session>/.system_generated/logs/
+ * 的精确层级里，深度超过通用 walk 的预算；而且 ~/.t3 根目录下 auth、cache、
+ * sqlite-wal 等文件几乎一直在写，任何上层目录的 mtime 都只能证明「T3 在写状态」，
+ * 不能证明发生了模型调用。所以沿精确层级逐个 stat transcript_full.jsonl，
+ * 目录不存在或还没有任何 transcript 时返回 null（走 source_silent 判定）。
+ */
+function newestAntigravityTranscript() {
+  const providersRoot = join(homedir(), ".t3", "userdata", "providers", "antigravity");
+  let newest = null;
+
+  let accounts;
+  try {
+    accounts = readdirSync(providersRoot, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+
+  for (const account of accounts) {
+    if (!account.isDirectory()) continue;
+    const brainRoot = join(providersRoot, account.name, "antigravity-acp", "brain");
+    let sessions;
+    try {
+      sessions = readdirSync(brainRoot, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const session of sessions) {
+      if (!session.isDirectory()) continue;
+      const transcript = join(
+        brainRoot,
+        session.name,
+        ".system_generated",
+        "logs",
+        "transcript_full.jsonl"
+      );
+      try {
+        const mtime = statSync(transcript).mtimeMs;
+        if (newest === null || mtime > newest) newest = mtime;
+      } catch {
+        // 该会话还没写出 transcript，跳过。
+      }
+    }
+  }
+  return newest;
 }
 
 /**

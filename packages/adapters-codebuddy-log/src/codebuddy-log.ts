@@ -37,6 +37,9 @@ const CREDIT_PATTERN = /Credit received: rootRequestId=([^,\s]+), source=([^,\s]
 const CREDIT_SOURCE = "raw_model_stream_event";
 const LOG_TIMESTAMP_PATTERN =
   /^\[(\d{4})\/(\d{2})\/(\d{2}) (\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?\]/u;
+// WorkBuddy's bundled CLI formats dates with the host locale (en-US on macOS).
+const US_LOG_TIMESTAMP_PATTERN =
+  /^\[(\d{1,2})\/(\d{1,2})\/(\d{4}),\s*(\d{1,2}):(\d{2}):(\d{2})\s*([AP]M)(?:\.(\d{1,3}))?\]/u;
 const MAIN_SESSION_PATTERN = /Registered mainSession: id=([^,\s]+), meta=(\{.*\})\s*$/u;
 const WORKSPACE_PATTERN = /[Ww]orkspace [Pp]ath: (\S.*?)\s*$/u;
 
@@ -376,7 +379,14 @@ function parseJsonRecord(value: string): Record<string, unknown> | null {
 function readLogTimestamp(line: string): number | null {
   const match = LOG_TIMESTAMP_PATTERN.exec(line);
   if (match === null) {
-    return null;
+    const local = US_LOG_TIMESTAMP_PATTERN.exec(line);
+    if (local === null) return null;
+    const [, month, day, year, hour, minute, second, period, millis] = local;
+    const hour12 = Number(hour);
+    if (hour12 < 1 || hour12 > 12) return null;
+    return new Date(Number(year), Number(month) - 1, Number(day),
+      hour12 % 12 + (period === "PM" ? 12 : 0), Number(minute), Number(second),
+      millis === undefined ? 0 : Number(millis.padEnd(3, "0"))).getTime();
   }
   const [, year, month, day, hour, minute, second, millis] = match;
   const ms = millis === undefined ? 0 : Number(millis.padEnd(3, "0"));

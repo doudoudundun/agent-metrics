@@ -112,6 +112,7 @@ export function createCanonicalSchema(db: SqliteDatabaseLike): void {
       message_id TEXT NOT NULL,
       occurred_at TEXT NOT NULL,
       model_id TEXT,
+      service_tier TEXT,
       provider_id TEXT NOT NULL,
       provider_base_url TEXT,
       provider_host TEXT,
@@ -124,10 +125,6 @@ export function createCanonicalSchema(db: SqliteDatabaseLike): void {
       cache_read_input_tokens INTEGER NOT NULL CHECK (cache_read_input_tokens >= 0),
       server_tool_use TEXT NOT NULL,
       usage_source TEXT NOT NULL,
-      -- Accelerated speed tier that was actually served (fast/priority/ultrafast/
-      -- flex). NULL means standard pricing, which keeps rows recorded before the
-      -- column existed semantically unchanged.
-      service_tier TEXT CHECK (service_tier IN ('standard', 'flex', 'fast', 'priority', 'ultrafast')),
       first_token_latency_ms INTEGER,
       decode_duration_ms INTEGER,
       -- Vendor-billed credit units for sources that charge in credits rather
@@ -252,6 +249,101 @@ export function createAggregateQueryIndexes(db: SqliteDatabaseLike): void {
       ON normalized_events (event_type, timestamp);
   `);
   ensureToolAggregateQueryIndex(db);
+}
+
+/** Preserve provider tiers that the upstream 009 schema's enum rejected. */
+export function relaxUsageServiceTierConstraint(db: SqliteDatabaseLike): void {
+  const table = db.prepare<{ sql: string }>(
+    "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'usage_events'"
+  ).get();
+  if (!table) return;
+  const legacyConstraint = /(\bservice_tier\s+TEXT)\s+CHECK\s*\(\s*service_tier\s+IN\s*\(\s*'standard'\s*,\s*'flex'\s*,\s*'fast'\s*,\s*'priority'\s*,\s*'ultrafast'\s*\)\s*\)/iu;
+  const relaxedSql = table.sql.replace(legacyConstraint, "$1");
+  if (relaxedSql === table.sql) return;
+
+  db.transaction(() => {
+    const objects = db.prepare<{ type: string; name: string; sql: string }>(
+      `SELECT type, name, sql FROM sqlite_master
+       WHERE sql IS NOT NULL AND (
+         type = 'view'
+         OR (tbl_name = 'usage_events' AND type IN ('index', 'trigger'))
+         OR (type = 'trigger' AND tbl_name IN (SELECT name FROM sqlite_master WHERE type = 'view'))
+       )
+       ORDER BY rowid`
+    ).all();
+    // Save dependent views and their INSTEAD OF triggers before replacing the
+    // table, including views that only refer to additive_usage_events.
+    for (const object of objects.filter((object) => object.type === "view")) {
+      db.exec(`DROP VIEW ${quoteIdentifier(object.name)}`);
+    }
+    db.exec(`CREATE TABLE usage_events_tier_upgrade ${relaxedSql.slice(relaxedSql.indexOf("("))}`);
+    const columns = db.prepare<{ name: string }>("PRAGMA table_info(usage_events)").all()
+      .map((column) => quoteIdentifier(column.name)).join(", ");
+    // Keep rowids too: this changes the tier constraint, not fact identities,
+    // order, timestamps, credit values, or any other stored column.
+    db.exec(`INSERT INTO usage_events_tier_upgrade (rowid, ${columns}) SELECT rowid, ${columns} FROM usage_events`);
+    db.exec("DROP TABLE usage_events");
+    db.exec("ALTER TABLE usage_events_tier_upgrade RENAME TO usage_events");
+    for (const object of objects.filter((object) => object.type !== "trigger")) db.exec(object.sql);
+    // Every target view must exist before restoring its INSTEAD OF triggers.
+    for (const object of objects.filter((object) => object.type === "trigger")) db.exec(object.sql);
+  })();
+}
+
+function quoteIdentifier(value: string): string {
+  return `"${value.replaceAll('"', '""')}"`;
+}
+
+/**
+ * Keep raw usage rows intact while exposing one additive row for WorkBuddy
+ * transcript entries that share a provider message id across sessions.
+ */
+export function ensureAdditiveUsageSchema(db: SqliteDatabaseLike): void {
+  const view = db.prepare<{ sql: string }>(
+    "SELECT sql FROM sqlite_master WHERE type = 'view' AND name = 'additive_usage_events'"
+  ).get();
+  // Upgrade the pre-credit local view without touching its raw usage facts.
+  if (view && !view.sql.includes("canonical.credit IS usage.credit")) {
+    db.exec("DROP VIEW additive_usage_events");
+  }
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_usage_events_workbuddy_message
+      ON usage_events (source_instance_id, message_id, event_id)
+      WHERE source_vendor = 'workbuddy'
+        AND usage_source = 'workbuddy-usage'
+        AND usage_measurement = 'increment';
+
+    CREATE VIEW IF NOT EXISTS additive_usage_events AS
+    SELECT usage.*
+    FROM usage_events AS usage
+    WHERE usage.source_vendor <> 'workbuddy'
+       OR usage.usage_source <> 'workbuddy-usage'
+       OR usage.usage_measurement <> 'increment'
+       OR NOT EXISTS (
+         SELECT 1
+         FROM usage_events AS canonical
+         WHERE canonical.source_instance_id = usage.source_instance_id
+           AND canonical.source_vendor = 'workbuddy'
+           AND canonical.usage_source = 'workbuddy-usage'
+           AND canonical.usage_measurement = 'increment'
+           AND canonical.message_id = usage.message_id
+           AND canonical.event_id < usage.event_id
+           AND canonical.occurred_at IS usage.occurred_at
+           AND canonical.model_id IS usage.model_id
+           AND canonical.service_tier IS usage.service_tier
+           AND canonical.provider_id IS usage.provider_id
+           AND canonical.provider_base_url IS usage.provider_base_url
+           AND canonical.provider_host IS usage.provider_host
+           AND canonical.input_token_semantics IS usage.input_token_semantics
+           AND canonical.raw_input_tokens IS usage.raw_input_tokens
+           AND canonical.displayed_input_tokens IS usage.displayed_input_tokens
+           AND canonical.output_tokens IS usage.output_tokens
+           AND canonical.cache_creation_input_tokens IS usage.cache_creation_input_tokens
+           AND canonical.cache_read_input_tokens IS usage.cache_read_input_tokens
+           AND canonical.server_tool_use IS usage.server_tool_use
+           AND canonical.credit IS usage.credit
+       );
+  `);
 }
 
 export function ensureToolAggregateQueryIndex(db: SqliteDatabaseLike): void {

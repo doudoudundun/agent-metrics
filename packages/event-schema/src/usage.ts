@@ -50,7 +50,9 @@ export const ServerToolUseSchema = z
  * `standard` is the default and is stored as NULL so that rows recorded before
  * the tier existed keep their original meaning (standard pricing).
  */
-export const ServiceTierSchema = z.enum(["standard", "flex", "fast", "priority", "ultrafast"]);
+// Preserve provider-specific and future tier names instead of rejecting the
+// entire usage event. Pricing only applies multipliers to recognized tiers.
+export const ServiceTierSchema = z.string().min(1);
 
 export type InputTokenSemantics = z.infer<typeof InputTokenSemanticsSchema>;
 export type UsageMeasurement = z.infer<typeof UsageMeasurementSchema>;
@@ -85,5 +87,11 @@ export const USAGE_SOURCE_SEMANTICS: Record<
    * CodeBuddy CLI's own request log reports the full prompt size per request
    * (`prompt_tokens`) with no split for cache hits, so it is gross input.
    */
-  "codebuddy-log": { inputTokenSemantics: "gross", usageMeasurement: "increment" }
+  "codebuddy-log": { inputTokenSemantics: "gross", usageMeasurement: "increment" },
+  /**
+   * Antigravity ACP transcript logs report `input_tokens` as the non-cached
+   * portion of the request, so `cache_read_tokens` (which routinely exceeds
+   * `input_tokens`) is a separate counter and must not be subtracted.
+   */
+  "antigravity-acp": { inputTokenSemantics: "delta", usageMeasurement: "increment" }
 };

@@ -13,6 +13,7 @@ export type KeyUsagePanelProps = {
 };
 
 const VENDOR_LABELS: Record<string, string> = {
+  antigravity: "Antigravity",
   codex: "Codex",
   cursor: "Cursor",
   "claude-code": "Claude Code",
@@ -131,18 +132,26 @@ function QuotaWindow({ label, window, now }: { label: string; window: KeyUsageWi
 }
 
 function mergeVendorWindowEntries(entries: KeyUsageEntry[]): KeyUsageEntry[] {
-  const windowedCountByVendor = new Map<string, number>();
+  // Only single-window entries (like Kimi Code's or ZCode's separate 5h/weekly
+  // rows) belong together on one card. Entries that already carry two windows
+  // or distinct Antigravity model-group pools stay separate with their limitName.
+  const singleWindowCountByVendor = new Map<string, number>();
   for (const entry of entries) {
-    if (entry.primary !== null || entry.secondary !== null) {
-      windowedCountByVendor.set(entry.vendor, (windowedCountByVendor.get(entry.vendor) ?? 0) + 1);
+    const isSingleWindow = (entry.primary !== null) !== (entry.secondary !== null);
+    if (isSingleWindow && entry.vendor !== "antigravity") {
+      singleWindowCountByVendor.set(entry.vendor, (singleWindowCountByVendor.get(entry.vendor) ?? 0) + 1);
     }
   }
 
   const mergedByVendor = new Map<string, KeyUsageEntry>();
   const result: KeyUsageEntry[] = [];
   for (const entry of entries) {
-    const hasWindow = entry.primary !== null || entry.secondary !== null;
-    if (!hasWindow || (windowedCountByVendor.get(entry.vendor) ?? 0) < 2) {
+    const isSingleWindow = (entry.primary !== null) !== (entry.secondary !== null);
+    if (
+      !isSingleWindow ||
+      entry.vendor === "antigravity" ||
+      (singleWindowCountByVendor.get(entry.vendor) ?? 0) < 2
+    ) {
       result.push(entry);
       continue;
     }

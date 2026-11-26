@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 import Fastify from "fastify";
+import { syncAntigravityAcpSessions } from "@agent-metrics/adapters-antigravity";
 import { syncKnownClaudeTranscripts } from "@agent-metrics/adapters-claude";
 import { syncCodexRollouts } from "@agent-metrics/adapters-codex";
 import { syncCursorArtifacts, syncCursorOfficialUsage } from "@agent-metrics/adapters-cursor";
@@ -41,7 +42,7 @@ import { runIsolatedSourceRefreshTasks, startSourceLightRefreshLoop } from "./so
 import type { BuildAppInput, MetricsDatabase } from "./core-types.js";
 
 /** Vendors covered by dedicated light refresh loops (not the heavy periodic coordinator). */
-const LIGHT_REFRESH_VENDORS = new Set(["cursor", "codex", "opencode", "zcode", "kimicode", "dsh", "mimo", "workbuddy"]);
+const LIGHT_REFRESH_VENDORS = new Set(["antigravity", "cursor", "codex", "opencode", "zcode", "kimicode", "dsh", "mimo", "workbuddy"]);
 
 export { createEventLogSynchronizer } from "./event-log-projector.js";
 
@@ -328,6 +329,23 @@ export function buildApp(input: BuildAppInput): MetricsApp {
             return projectAfterSourceSync();
           })
         }
+      ,
+      {
+        adapterInstanceId: "antigravity-acp@antigravity:default",
+        sourceInstanceId: "antigravity:default",
+        sourceAdapter: "antigravity-acp",
+        sourceVendor: "antigravity",
+        enabled: true,
+        sync: async ({ signal }) =>
+          runWithCanonicalWriterLease(signal, async () => {
+            await syncAntigravityAcpSessions({
+              eventLogPath: canonicalEventLogPath,
+              cursorPath: agentPaths.antigravityCursorPath,
+              ledgerPath: agentPaths.antigravityLedgerPath
+            });
+            return projectAfterSourceSync();
+          })
+        }
     );
   }
 
@@ -491,6 +509,15 @@ export function buildApp(input: BuildAppInput): MetricsApp {
                         eventLogPath,
                         cursorPath: paths.cursorIdeStatePath,
                         ledgerPath: paths.cursorIdeLedgerPath
+                      })
+                  },
+                  {
+                    id: "antigravity-acp@antigravity:default",
+                    run: () =>
+                      syncAntigravityAcpSessions({
+                        eventLogPath,
+                        cursorPath: paths.antigravityCursorPath,
+                        ledgerPath: paths.antigravityLedgerPath
                       })
                   }
                 ],

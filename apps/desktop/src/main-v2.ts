@@ -229,6 +229,8 @@ function ensureWidgetWindow(): any | null {
     focusable: true,
     alwaysOnTop: true,
     hasShadow: false,
+    // CSS draws the card's rounded corners; native macOS rounding adds a bright rim.
+    roundedCorners: false,
     backgroundColor: "#00000000",
     webPreferences: secureWebPreferences("widget")
   });

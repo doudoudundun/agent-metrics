@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, open, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import {
   appendJsonLine,
   loadEventLedger,
@@ -49,7 +49,16 @@ type CodebuddyLogCursorState = {
 };
 
 export function resolveDefaultCodebuddyLogRoot(): string {
-  return join(homedir(), ".codebuddy", "logs");
+  return join(process.env.AGENT_METRICS_CODEBUDDY_HOME ?? join(homedir(), ".codebuddy"), "logs");
+}
+
+/** WorkBuddy's bundled headless CLI uses its own home, not ~/.codebuddy. */
+export function resolveCodebuddyLogRoots(input: { logRoot?: string } = {}): string[] {
+  // An explicit source remains exclusive (fixtures and targeted recovery).
+  if (input.logRoot !== undefined) return [input.logRoot];
+  const workbuddyHome = process.env.AGENT_METRICS_WORKBUDDY_HOME ??
+    process.env.WORKBUDDY_HOME ?? join(homedir(), ".workbuddy");
+  return [...new Set([resolveCodebuddyLogRoot(), join(workbuddyHome, "logs")].map((root) => resolve(root)))];
 }
 
 export function resolveCodebuddyLogRoot(input: { logRoot?: string } = {}): string {
@@ -67,7 +76,7 @@ export type CodebuddyLogSyncSummary = {
 };
 
 /**
- * Collect model usage from the CodeBuddy CLI request logs.
+ * Collect model usage from CodeBuddy and WorkBuddy bundled CLI request logs.
  *
  * CodeBuddy CLI bills against the same WorkBuddy account as the desktop app, so
  * these events are reported under the WorkBuddy vendor. They are still a
@@ -94,12 +103,9 @@ export async function syncCodebuddyCliLogs(input: {
     requestsSkippedAsDuplicate: 0
   };
 
-  const logRoot = resolveCodebuddyLogRoot({ logRoot: input.logRoot });
-  if (!existsSync(logRoot)) {
-    return summary;
-  }
-
-  const logFiles = await discoverRequestLogs(logRoot);
+  const logFiles = (await Promise.all(resolveCodebuddyLogRoots(input).map((logRoot) =>
+    existsSync(logRoot) ? discoverRequestLogs(logRoot) : Promise.resolve([])
+  ))).flat();
   if (logFiles.length === 0) {
     return summary;
   }
@@ -123,7 +129,9 @@ export async function syncCodebuddyCliLogs(input: {
     } catch {
       continue;
     }
-    if (fileStat.mtimeMs > settledBefore || fileStat.size === 0) {
+    // Zero disables settling. Filesystems can report sub-millisecond mtimes
+    // ahead of Date.now(), which must not suppress an immediately flushed log.
+    if ((settleMs > 0 && fileStat.mtimeMs > settledBefore) || fileStat.size === 0) {
       continue;
     }
 

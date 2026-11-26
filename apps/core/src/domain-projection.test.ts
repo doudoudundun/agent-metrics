@@ -29,6 +29,59 @@ function event<T extends NormalizedEventV2["type"]>(
 }
 
 describe("canonical V2 projection", () => {
+  it("merges late WorkBuddy billing, cache, tier and precise timing together and keeps stale replays idempotent", () => {
+    const db = createDb();
+    runDomainMigrations(db);
+    const initial = toNormalizedEventV2({
+      event_id: "workbuddy:session-combined:usage:message-1", session_id: "session-combined",
+      timestamp: "2026-10-20T02:37:38.535Z", source_vendor: "workbuddy", source_adapter: "workbuddy-jsonl",
+      workspace_path: ".", type: "token.usage.recorded", message_id: "message-1", model: "deepseek-v4.1-flash",
+      input_tokens: 1000, output_tokens: 50, cache_creation_input_tokens: 0, cache_read_input_tokens: 0,
+      server_tool_use: "{}", usage_source: "workbuddy-usage", provider_id: "unknown",
+      first_token_latency_ms: null, decode_duration_ms: 5000
+    });
+    const enriched = { ...initial, service_tier: "fast", credit: 0.42,
+      cache_read_input_tokens: 800, first_token_latency_ms: 500, decode_duration_ms: 1000 } as NormalizedEventV2;
+    projectNormalizedEvents(db, [initial]);
+    expect(projectNormalizedEvents(db, [enriched, initial]).every((result) => result.conflict === false)).toBe(true);
+    expect(db.prepare(`SELECT service_tier, credit, displayed_input_tokens, cache_read_input_tokens,
+      first_token_latency_ms, decode_duration_ms, output_tokens FROM usage_events`).get())
+      .toEqual({ service_tier: "fast", credit: 0.42, displayed_input_tokens: 200,
+        cache_read_input_tokens: 800, first_token_latency_ms: 500, decode_duration_ms: 1000, output_tokens: 50 });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM usage_events").get()).toEqual({ count: 1 });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM event_diagnostics").get()).toEqual({ count: 0 });
+    for (const change of [{ credit: 0.99 }, { cache_read_input_tokens: 801 }, { provider_id: "other" }, { output_tokens: 51 }]) {
+      expect(projectNormalizedEvents(db, [{ ...enriched, ...change } as NormalizedEventV2])[0].conflict).toBe(true);
+    }
+    expect(db.prepare("SELECT credit, cache_read_input_tokens, output_tokens FROM usage_events").get())
+      .toEqual({ credit: 0.42, cache_read_input_tokens: 800, output_tokens: 50 });
+    db.close();
+  });
+
+  it("replaces estimated WorkBuddy decode timing when precise timing and tier arrive together", () => {
+    const db = createDb();
+    runDomainMigrations(db);
+    const estimated = toNormalizedEventV2({
+      event_id: "workbuddy:session-precise:usage:message-1", session_id: "session-precise",
+      timestamp: "2026-10-20T02:37:38.535Z", source_vendor: "workbuddy", source_adapter: "workbuddy-jsonl",
+      workspace_path: ".", type: "token.usage.recorded", message_id: "message-1", model: "deepseek-v4.1-flash",
+      input_tokens: 1000, output_tokens: 50, cache_creation_input_tokens: 0, cache_read_input_tokens: 800,
+      server_tool_use: "{}", usage_source: "workbuddy-usage", provider_id: "unknown",
+      first_token_latency_ms: null, decode_duration_ms: 5000
+    });
+    const precise = { ...estimated, service_tier: "fast", first_token_latency_ms: 500, decode_duration_ms: 1000 } as NormalizedEventV2;
+    projectNormalizedEvents(db, [estimated]);
+    expect(projectNormalizedEvents(db, [precise])[0].conflict).toBe(false);
+    expect(projectNormalizedEvents(db, [estimated])[0].conflict).toBe(false);
+    expect(db.prepare("SELECT service_tier, first_token_latency_ms, decode_duration_ms FROM usage_events").get())
+      .toEqual({ service_tier: "fast", first_token_latency_ms: 500, decode_duration_ms: 1000 });
+    expect(db.prepare("SELECT semantic_fingerprint FROM normalized_events").get())
+      .toEqual({ semantic_fingerprint: semanticFingerprint(precise) });
+    expect(projectNormalizedEvents(db, [{ ...precise, output_tokens: 51 } as NormalizedEventV2])[0].conflict).toBe(true);
+    expect(db.prepare("SELECT count(*) AS count FROM usage_events").get()).toEqual({ count: 1 });
+    db.close();
+  });
+
   it("backfills WorkBuddy timing consistently without double counting, downgrading or changing usage", () => {
     const db = createDb(); runDomainMigrations(db);
     const original = toNormalizedEventV2({
@@ -203,6 +256,113 @@ describe("canonical V2 projection", () => {
     projectNormalizedEvents(db, [usageEvent("glm-5.3-flash")]);
     expect(db.prepare("SELECT model_id FROM usage_events").get()).toEqual({ model_id: "glm-5.3" });
     expect(db.prepare("SELECT COUNT(*) AS count FROM usage_events").get()).toEqual({ count: 1 });
+
+    db.close();
+  });
+
+  it("fills a previously missing service tier without duplicating usage or counting an identity conflict", () => {
+    const db = createDb();
+    runDomainMigrations(db);
+
+    const usageEvent = (
+      serviceTier?: string,
+      adapter: "claude-hook" | "claude-transcript" = "claude-hook"
+    ): NormalizedEventV2 =>
+      event({
+        event_id: "event-usage-tier-enrichment",
+        source_record_id: "usage-tier-record",
+        source_adapter: adapter,
+        adapter_instance_id: `${adapter}@claude:default`,
+        timestamp: "2026-07-17T10:00:03.000Z",
+        type: "token.usage.recorded",
+        message_id: "message-tier",
+        model: "sonnet",
+        input_tokens: 120,
+        input_token_semantics: "gross",
+        usage_measurement: "increment",
+        output_tokens: 10,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 20,
+        server_tool_use: "{}",
+        usage_source: "claude-transcript",
+        provider_id: "unknown",
+        ...(serviceTier ? { service_tier: serviceTier } : {})
+      });
+
+    const initial = usageEvent();
+    const enriched = usageEvent("fast", "claude-transcript");
+    const [initialResult] = projectNormalizedEvents(db, [initial]);
+
+    const [result] = projectNormalizedEvents(db, [usageEvent("fast")]);
+
+    expect(result).toMatchObject({ projected: false, idempotent: false, conflict: false });
+    expect(
+      db.prepare("SELECT semantic_fingerprint FROM event_observations WHERE event_id = ?").all(initial.event_id)
+    ).toEqual([{ semantic_fingerprint: initialResult.semanticFingerprint }]);
+
+    const [crossAdapterReplay] = projectNormalizedEvents(db, [enriched]);
+    expect(crossAdapterReplay).toMatchObject({ idempotent: true, conflict: false });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM normalized_events").get()).toEqual({ count: 1 });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM usage_events").get()).toEqual({ count: 1 });
+    expect(
+      db.prepare("SELECT COUNT(*) AS count FROM event_observations WHERE event_id = ?").get(initial.event_id)
+    ).toEqual({ count: 2 });
+    expect(db.prepare("SELECT SUM(output_tokens) AS output_tokens FROM usage_events").get()).toEqual({ output_tokens: 10 });
+    expect(db.prepare("SELECT service_tier FROM usage_events").get()).toEqual({ service_tier: "fast" });
+    expect(
+      JSON.parse(db.prepare("SELECT payload_json FROM normalized_events WHERE event_id = ?").get("event-usage-tier-enrichment").payload_json)
+    ).toMatchObject({ service_tier: "fast", source_adapter: "claude-hook" });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM event_diagnostics WHERE diagnostic_code = 'IDENTITY_CONFLICT'").get()).toEqual({ count: 0 });
+
+    const [replayed] = projectNormalizedEvents(db, [enriched]);
+    expect(replayed).toMatchObject({ idempotent: true, conflict: false });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM usage_events").get()).toEqual({ count: 1 });
+
+    db.close();
+  });
+
+  it("keeps known service tiers and token fields immutable on conflicting replays", () => {
+    const db = createDb();
+    runDomainMigrations(db);
+
+    const usageEvent = (serviceTier: string, outputTokens = 10): NormalizedEventV2 =>
+      event({
+        event_id: "event-usage-tier-conflict",
+        source_record_id: "usage-tier-conflict-record",
+        timestamp: "2026-07-17T10:00:03.000Z",
+        type: "token.usage.recorded",
+        message_id: "message-tier-conflict",
+        model: "sonnet",
+        input_tokens: 120,
+        input_token_semantics: "gross",
+        usage_measurement: "increment",
+        output_tokens: outputTokens,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 20,
+        server_tool_use: "{}",
+        usage_source: "claude-transcript",
+        provider_id: "unknown",
+        service_tier: serviceTier
+      });
+
+    const canonical = usageEvent("standard");
+    projectNormalizedEvents(db, [canonical]);
+
+    const [tierConflict] = projectNormalizedEvents(db, [usageEvent("fast")]);
+    const [tokenConflict] = projectNormalizedEvents(db, [usageEvent("standard", 11)]);
+
+    expect(tierConflict.conflict).toBe(true);
+    expect(tokenConflict.conflict).toBe(true);
+    expect(db.prepare("SELECT service_tier, output_tokens FROM usage_events").get()).toEqual({
+      service_tier: "standard",
+      output_tokens: 10
+    });
+    const storedPayload = JSON.parse(
+      db.prepare("SELECT payload_json FROM normalized_events WHERE event_id = ?").get("event-usage-tier-conflict").payload_json
+    );
+    expect(storedPayload).toMatchObject({ service_tier: "standard", output_tokens: 10 });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM usage_events").get()).toEqual({ count: 1 });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM event_diagnostics WHERE diagnostic_code = 'IDENTITY_CONFLICT'").get()).toEqual({ count: 2 });
 
     db.close();
   });

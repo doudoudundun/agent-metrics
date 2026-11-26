@@ -16,7 +16,7 @@ import {
   type WidgetSnapshotResponse
 } from "@agent-metrics/contracts";
 
-export type SourceVendor = "all" | "claude-code" | "opencode" | "zcode" | "kimicode" | "dsh" | "codex" | "cursor" | "mimo" | "workbuddy";
+export type SourceVendor = "all" | "claude-code" | "opencode" | "zcode" | "kimicode" | "dsh" | "codex" | "cursor" | "mimo" | "workbuddy" | "antigravity";
 
 export type AggregateMeta = {
   mode: TimeScopeSelection["mode"];
@@ -482,7 +482,8 @@ function isSourceVendor(value: unknown): value is SourceBreakdownRow["sourceVend
     value === "codex" ||
     value === "cursor" ||
     value === "mimo" ||
-    value === "workbuddy"
+    value === "workbuddy" ||
+    value === "antigravity"
   );
 }
 

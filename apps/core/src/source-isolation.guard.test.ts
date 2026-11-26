@@ -13,6 +13,7 @@ import { resolveOpenCodeSourcePaths, resolveZCodeSourcePaths } from "@agent-metr
 import { resolveKimicodeSourcePaths } from "@agent-metrics/adapters-kimicode";
 import { resolveMiMoSourcePaths } from "@agent-metrics/adapters-mimo";
 import { resolveDshSourcePaths } from "@agent-metrics/adapters-dsh";
+import { resolveAntigravitySourcePaths } from "@agent-metrics/adapters-antigravity";
 import {
   resolveCodebuddyHome,
   resolveWorkbuddySourcePaths,
@@ -55,8 +56,8 @@ function expectOutsideFixtureRoot(path: string): void {
 }
 
 describe("source isolation guard", () => {
-  it("resolves all 20 production source paths under the fixture root", () => {
-    expect(AGENT_METRICS_SOURCE_ENV_VARS).toHaveLength(20);
+  it("resolves all 21 production source paths under the fixture root", () => {
+    expect(AGENT_METRICS_SOURCE_ENV_VARS).toHaveLength(21);
 
     const claudeRoots = resolveDefaultClaudeDiscoveryRoots("unused-by-resolver");
     const opencode = resolveOpenCodeSourcePaths();
@@ -67,6 +68,7 @@ describe("source isolation guard", () => {
     const workbuddy = resolveWorkbuddySourcePaths();
     const codex = resolveCodexSourcePaths();
     const cursor = resolveCursorSourcePaths();
+    const antigravity = resolveAntigravitySourcePaths();
 
     expect(claudeRoots).toEqual([expectedPath("AGENT_METRICS_CLAUDE_DISCOVERY_ROOTS")]);
     for (const path of claudeRoots) {
@@ -154,6 +156,11 @@ describe("source isolation guard", () => {
       cursorProjectsRoot: expectedPath("AGENT_METRICS_CURSOR_PROJECTS_ROOT")
     });
     Object.values(cursor).forEach(expectInsideFixtureRoot);
+
+    expect(antigravity).toEqual({
+      providersRoot: expectedPath("AGENT_METRICS_ANTIGRAVITY_PROVIDERS_ROOT")
+    });
+    expectInsideFixtureRoot(antigravity.providersRoot);
   });
 
   it("falls back outside the fixture root when the Claude override is removed", () => {
@@ -240,6 +247,13 @@ describe("source isolation guard", () => {
     delete process.env.AGENT_METRICS_CODEBUDDY_HOME;
     expectOutsideFixtureRoot(resolveCodebuddyHome());
     process.env.AGENT_METRICS_CODEBUDDY_HOME = redirected;
+  });
+
+  it("falls back outside the fixture root when the Antigravity override is removed", () => {
+    const redirected = expectedPath("AGENT_METRICS_ANTIGRAVITY_PROVIDERS_ROOT");
+    delete process.env.AGENT_METRICS_ANTIGRAVITY_PROVIDERS_ROOT;
+    expectOutsideFixtureRoot(resolveAntigravitySourcePaths().providersRoot);
+    process.env.AGENT_METRICS_ANTIGRAVITY_PROVIDERS_ROOT = redirected;
   });
 
   it("falls back outside the fixture root when a directly-resolved Cursor override is removed", () => {

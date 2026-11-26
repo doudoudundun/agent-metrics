@@ -527,6 +527,30 @@ function readIncrementalCursor(db: EventProjectorDatabase): EventLogCursor | nul
   };
 }
 
+/** Read only cursor fingerprints, without projecting or reading any event rows. */
+export async function readTrustedIngestionCursor(input: {
+  db: EventProjectorDatabase;
+  eventLogPath: string;
+}): Promise<EventLogCursor | null> {
+  const cursor = readIncrementalCursor(input.db);
+  if (cursor === null) {
+    return null;
+  }
+  try {
+    const result = await readEventLogIncremental({
+      filePath: input.eventLogPath,
+      cursor,
+      maxBytes: 0
+    });
+    return result.reset ? null : cursor;
+  } catch (error) {
+    if (isMissingFileError(error)) {
+      return null;
+    }
+    throw error;
+  }
+}
+
 function writeIncrementalCursor(
   db: EventProjectorDatabase,
   cursor: EventLogCursor,
@@ -573,10 +597,22 @@ export async function readEventLogSignature(eventLogPath: string): Promise<Event
 export async function repairBrokenIngestionCursor(input: {
   db: EventProjectorDatabase;
   eventLogPath: string;
+  resetForRotatedLog?: boolean;
+  /** Only supplied after mapping a trusted pre-rotation committed boundary. */
+  committedOffsetAfterRotation?: number | null;
 }): Promise<{ repaired: boolean; committedOffset: number }> {
   const signature = await readEventLogSignature(input.eventLogPath);
   if (signature === null) {
     return { repaired: false, committedOffset: 0 };
+  }
+
+  // Only the rotation's byte mapping can carry a trusted projection boundary
+  // into the new file. An old offset with missing/stale metadata must reset.
+  if (input.resetForRotatedLog) {
+    const committedOffset = input.committedOffsetAfterRotation ?? 0;
+    const cursor = await createEventLogCursor(input.eventLogPath, committedOffset);
+    writeIncrementalCursor(input.db, cursor, signature);
+    return { repaired: true, committedOffset };
   }
 
   const existing = readIncrementalCursor(input.db);
@@ -645,7 +681,7 @@ function parsedSourceVendor(value: unknown): SourceVendor | null {
   return null;
 }
 
-function sourceInstanceIdForVendor(sourceVendor: SourceVendor | null): string {
+export function sourceInstanceIdForVendor(sourceVendor: SourceVendor | null): string {
   if (sourceVendor === "claude-code") return "claude:default";
   if (sourceVendor === "opencode") return "opencode:default";
   if (sourceVendor === "zcode") return "zcode:default";
@@ -655,6 +691,7 @@ function sourceInstanceIdForVendor(sourceVendor: SourceVendor | null): string {
   if (sourceVendor === "cursor") return "cursor:default";
   if (sourceVendor === "mimo") return "mimo:default";
   if (sourceVendor === "workbuddy") return "workbuddy:default";
+  if (sourceVendor === "antigravity") return "antigravity:default";
   return "unknown:default";
 }
 

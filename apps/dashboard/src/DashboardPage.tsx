@@ -52,7 +52,8 @@ const SOURCE_CATALOG: SourceOption[] = [
   { value: "claude-code", label: "Claude Code" },
   { value: "opencode", label: "OpenCode" },
   { value: "dsh", label: "DSH" },
-  { value: "workbuddy", label: "WorkBuddy" }
+  { value: "workbuddy", label: "WorkBuddy" },
+  { value: "antigravity", label: "Antigravity" }
 ];
 
 const VISIBLE_SOURCE_LIMIT = 5;

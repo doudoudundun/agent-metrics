@@ -22,6 +22,7 @@ export type WorkbuddyToolStart = {
 
 export type WorkbuddyParseState = {
   timings?: WorkbuddyTimingIndex;
+  sessionIdentityMarkers?: ReadonlySet<string>;
   lastModel: string | null;
   toolStarts: Map<string, WorkbuddyToolStart>;
   /**
@@ -31,14 +32,33 @@ export type WorkbuddyParseState = {
    * messageId so a step is never counted twice.
    */
   usageMessageIds: Set<string>;
+  /** `stepSeq` of the step currently being parsed, when the record carries one. */
+  currentStepSeq: number | null;
+  /**
+   * Wall-clock start of the current step's generation window: the timestamp of
+   * the record that closed the previous step (the tool result that triggered
+   * this request). Null when that anchor is unusable.
+   */
+  stepAnchorAt: number | null;
+  lastRecordAt: number | null;
+  /** Only a tool result can anchor the following request's step window. */
+  lastRecordAnchors: boolean;
 };
 
-export function createWorkbuddyParseState(timings?: WorkbuddyTimingIndex): WorkbuddyParseState {
+export function createWorkbuddyParseState(
+  timings?: WorkbuddyTimingIndex,
+  sessionIdentityMarkers?: ReadonlySet<string>
+): WorkbuddyParseState {
   return {
     timings,
+    sessionIdentityMarkers,
     lastModel: null,
     toolStarts: new Map(),
-    usageMessageIds: new Set()
+    usageMessageIds: new Set(),
+    currentStepSeq: null,
+    stepAnchorAt: null,
+    lastRecordAt: null,
+    lastRecordAnchors: false
   };
 }
 
@@ -61,6 +81,19 @@ export function normalizeWorkbuddySessionHeader(header: {
   ]);
 }
 
+/**
+ * WorkBuddy transcripts carry no provider-side timing fields, so output speed
+ * has to be derived from the record timestamps. A step's records are written
+ * only once the step settles: its closing record (the usage-bearing
+ * `function_call` or assistant `message`) lands at the end of generation, and
+ * the record before it is the tool result that triggered the request. The gap
+ * between those two is therefore the whole step latency — request upload,
+ * queueing, prefill, TTFT and decode — so it is an upper bound on decode time
+ * and the derived speed is a lower bound. Gaps over two minutes are idle time,
+ * not generation, and are dropped.
+ */
+const MAX_DERIVED_STEP_MS = 120_000;
+
 export function normalizeWorkbuddyRecord(
   record: unknown,
   sessionId: string,
@@ -75,6 +108,18 @@ export function normalizeWorkbuddyRecord(
   const type = readString(parsed.type);
   if (type === null || IGNORED_RECORD_TYPES.has(type)) {
     return [];
+  }
+
+  const stepSeq = readNonNegativeInt(asRecord(parsed.providerData)?.stepSeq);
+  const isPrompt = type === "message" && readString(parsed.role) === "user";
+  if (isPrompt) {
+    // A new turn: the next step's request starts whenever the user hits send,
+    // so the previous record cannot time its generation.
+    state.currentStepSeq = null;
+    state.stepAnchorAt = null;
+  } else if (stepSeq !== null && stepSeq !== state.currentStepSeq) {
+    state.currentStepSeq = stepSeq;
+    state.stepAnchorAt = state.lastRecordAnchors ? state.lastRecordAt : null;
   }
 
   const recordWorkspace = normalizeWorkspacePath(readString(parsed.cwd) ?? workspacePath);
@@ -95,7 +140,11 @@ export function normalizeWorkbuddyRecord(
 
   events.push(...normalizeUsage(parsed, sessionId, recordWorkspace, state));
 
-  return toV2Events(events);
+  const recordTime = readTimestamp(parsed.timestamp);
+  state.lastRecordAt = recordTime;
+  state.lastRecordAnchors = type === "function_call_result" && recordTime !== null;
+
+  return toV2Events(events, state.sessionIdentityMarkers);
 }
 
 function normalizeUserMessage(
@@ -301,6 +350,15 @@ function normalizeUsage(
   state.usageMessageIds.add(messageId);
   const timing = matchWorkbuddyTiming(state.timings, sessionId, providerData!, usage);
 
+  // Only a step we can anchor gets a derived duration; anything else stays
+  // unknown rather than borrowing another step's window.
+  const stepSeq = readNonNegativeInt(providerData?.stepSeq);
+  const windowMs =
+    stepSeq !== null && stepSeq === state.currentStepSeq && state.stepAnchorAt !== null
+      ? time - state.stepAnchorAt
+      : null;
+  const decodeDurationMs = windowMs !== null && windowMs > 0 && windowMs <= MAX_DERIVED_STEP_MS ? windowMs : null;
+
   return [
     {
       event_id: buildEventId(`${sessionId}:usage:${messageId}`),
@@ -322,7 +380,7 @@ function normalizeUsage(
       provider_base_url: null,
       provider_host: null,
       first_token_latency_ms: timing?.firstTokenLatencyMs ?? null,
-      decode_duration_ms: timing?.decodeDurationMs ?? null
+      decode_duration_ms: timing?.decodeDurationMs ?? decodeDurationMs
     }
   ];
 }
@@ -449,25 +507,24 @@ function buildEventId(suffix: string): string {
   return `workbuddy:${suffix}`;
 }
 
-function toV2Events(events: AnyEvent[]): NormalizedEventV2[] {
-  return events.map((event) => toNormalizedEventV2(event, { sourceRecordId: ledgerIdentity(event) }));
+function toV2Events(events: AnyEvent[], sessionIdentityMarkers?: ReadonlySet<string>): NormalizedEventV2[] {
+  return events.map((event) => toNormalizedEventV2(event, {
+    sourceRecordId: sessionIdentityMarkers?.has(workbuddySessionIdentityMarker(event.event_id))
+      ? event.event_id
+      : ledgerIdentity(event)
+  }));
 }
 
-/**
- * WorkBuddy Switch clones a transcript under a brand new session id when it
- * syncs a conversation to another account, so the same native record can be
- * present in several session logs. Every event except the session header is
- * therefore identified by its session-less event id, which lets the ledger
- * recognize a cloned record no matter which session copy it was read from.
- */
+/** The key encodes a legacy session-scoped record ID without looking like a usage key. */
+export function workbuddySessionIdentityMarker(sourceRecordId: string): string {
+  return `workbuddy:session-identity-v1:${encodeURIComponent(sourceRecordId)}`;
+}
+
+/** Default to upstream's session-less source identity for new records. */
 function ledgerIdentity(event: AnyEvent): string {
-  if (event.type === "session.started") {
-    return event.event_id;
-  }
+  if (event.type === "session.started") return event.event_id;
   const prefix = "workbuddy:";
-  if (!event.event_id.startsWith(prefix)) {
-    return event.event_id;
-  }
+  if (!event.event_id.startsWith(prefix)) return event.event_id;
   const rest = event.event_id.slice(prefix.length);
   const separator = rest.indexOf(":");
   return separator === -1 ? event.event_id : `${prefix}${rest.slice(separator + 1)}`;

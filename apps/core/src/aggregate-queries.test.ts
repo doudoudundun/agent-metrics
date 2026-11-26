@@ -106,6 +106,53 @@ function customScope(windowStart: string, windowEnd: string): ResolvedTimeScope 
 }
 
 describe("selectTokensByModel", () => {
+  it("merges unmarked history into standard while keeping fast usage separate without changing totals", () => {
+    const db = createDb();
+    try {
+      seedUsage(db, [
+        usageSeed({ eventId: "codex-priority", model: "gpt-6-sol", sourceVendor: "codex", serviceTier: "priority", displayedInputTokens: 10, outputTokens: 20, decodeDurationMs: 1000 }),
+        usageSeed({ eventId: "codex-default", model: "gpt-6-sol", sourceVendor: "codex", serviceTier: "default", displayedInputTokens: 20, outputTokens: 40, decodeDurationMs: 4000 }),
+        usageSeed({ eventId: "codex-unknown", model: "gpt-6-sol", sourceVendor: "codex", displayedInputTokens: 30, outputTokens: 60 }),
+        usageSeed({ eventId: "cursor-fast", model: "grok-4.7-high-fast", sourceVendor: "cursor", displayedInputTokens: 4, outputTokens: 6 }),
+        usageSeed({ eventId: "claude-fast", model: "claude-opus-4-6", sourceVendor: "claude-code", serviceTier: "fast", displayedInputTokens: 5, outputTokens: 5 })
+      ]);
+      const rows = selectTokensByModel(db as unknown as MetricsDatabase);
+      expect(rows).toHaveLength(4);
+      expect(rows.reduce((sum, row) => sum + row.totalTokens, 0)).toBe(200);
+      expect(rows.find(row => row.sourceVendor === "codex" && row.usageMode === "fast"))
+        .toMatchObject({ totalTokens: 30, avgOutputTokensPerSecond: 20 });
+      expect(rows.find(row => row.sourceVendor === "codex" && row.usageMode === "standard"))
+        .toMatchObject({ totalTokens: 150, avgOutputTokensPerSecond: 10 });
+      expect(rows.some(row => row.usageMode === "unknown")).toBe(false);
+      expect(rows.find(row => row.sourceVendor === "cursor")).toMatchObject({ usageMode: "fast" });
+      expect(rows.find(row => row.sourceVendor === "claude-code")).toMatchObject({ usageMode: "fast" });
+    } finally { db.close(); }
+  });
+
+  it("merges historical model delimiters without losing tokens or vendor boundaries", () => {
+    const db = createDb();
+    try {
+      seedUsage(db, [
+        usageSeed({ eventId: "luna-clean", model: "gpt-6-luna", sourceVendor: "codex", usageSource: "codex-rollout", rawInputTokens: 100, displayedInputTokens: 40, outputTokens: 20, cacheReadTokens: 60 }),
+        usageSeed({ eventId: "luna-delimiter", model: "gpt-6-luna;", sourceVendor: "codex", usageSource: "codex-rollout", rawInputTokens: 168013, displayedInputTokens: 10317, outputTokens: 4804, cacheReadTokens: 157696 }),
+        usageSeed({ eventId: "luna-variant", model: "gpt-6-luna-high", sourceVendor: "codex", usageSource: "codex-rollout", displayedInputTokens: 10, outputTokens: 5 }),
+        usageSeed({ eventId: "luna-cursor", model: "gpt-6-luna", sourceVendor: "cursor", usageSource: "cursor-official", inputTokenSemantics: "delta", displayedInputTokens: 10, outputTokens: 5 })
+      ]);
+      const rows = selectTokensByModel(db as unknown as MetricsDatabase);
+      expect(rows).toHaveLength(3);
+      expect(rows[0]).toMatchObject({
+        model: "gpt-6-luna", sourceVendor: "codex", totalTokens: 172937,
+        inputTokens: 10357, outputTokens: 4824, cacheReadTokens: 157756,
+        cacheCreationTokens: 0
+      });
+      expect(rows[0]?.costUsd).toBeCloseTo(0.00502526, 10);
+      expect(rows.reduce((sum, row) => sum + row.totalTokens, 0)).toBe(172967);
+      expect(db.prepare("SELECT count(*) AS n FROM usage_events WHERE model_id = 'gpt-6-luna;'").get()).toEqual({ n: 1 });
+    } finally {
+      db.close();
+    }
+  });
+
   it("folds tokens and timing per (source vendor, model) from usage_events alone", () => {
     const db = createDb();
     seedUsage(db, [
@@ -143,6 +190,15 @@ describe("selectTokensByModel", () => {
         occurredAt: "2026-10-09T10:03:00.000Z",
         displayedInputTokens: 100,
         outputTokens: 999
+      }),
+      // Zero decode time cannot produce a speed sample; invalid negative TTFT is ignored.
+      usageSeed({
+        eventId: "u5-invalid-timing",
+        occurredAt: "2026-10-09T10:04:00.000Z",
+        displayedInputTokens: 0,
+        outputTokens: 0,
+        decodeDurationMs: 0,
+        firstTokenLatencyMs: -1
       })
     ]);
 
@@ -158,7 +214,9 @@ describe("selectTokensByModel", () => {
       // (40 + 20) output tokens over (4000 + 2000) ms => 10 tok/s
       avgOutputTokensPerSecond: 10,
       // mean of 500 and 700
-      avgFirstTokenLatencyMs: 600
+      avgFirstTokenLatencyMs: 600,
+      speedSampleCount: 2,
+      ttftSampleCount: 2
     });
 
     db.close();
@@ -184,6 +242,31 @@ describe("selectTokensByModel", () => {
     expect(rows[0]).toMatchObject({ model: "sonnet", inputTokens: 100, totalTokens: 140 });
     expect(rows[0]?.avgOutputTokensPerSecond).toBeNull();
     expect(rows[0]?.avgFirstTokenLatencyMs).toBeNull();
+    expect(rows[0]).toMatchObject({ speedSampleCount: 0, ttftSampleCount: 0 });
+
+    db.close();
+  });
+
+  it("counts one valid usage row as one timing sample, including a zero-millisecond TTFT", () => {
+    const db = createDb();
+    seedUsage(db, [
+      usageSeed({
+        eventId: "single-sample",
+        displayedInputTokens: 5,
+        outputTokens: 10,
+        decodeDurationMs: 200,
+        firstTokenLatencyMs: 0
+      })
+    ]);
+
+    const rows = selectTokensByModel(db as unknown as MetricsDatabase);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      avgOutputTokensPerSecond: 50,
+      avgFirstTokenLatencyMs: 0,
+      speedSampleCount: 1,
+      ttftSampleCount: 1
+    });
 
     db.close();
   });
@@ -255,6 +338,96 @@ describe("selectTokensByModel", () => {
       ["opencode", "gpt-5.4", 10, 0, 11],
       ["codex", "hy3-preview-free", 5, 0, 5]
     ]);
+
+    db.close();
+  });
+
+  it("keeps antigravity usage grouped per model with cost resolved through pricing", () => {
+    const db = createDb();
+    seedUsage(db, [
+      // Planner / executor model ids observed in real antigravity ACP transcripts.
+      usageSeed({
+        eventId: "antigravity-planner",
+        sourceVendor: "antigravity",
+        model: "gemini-pro-orchestrator-neon",
+        usageSource: "antigravity-acp",
+        inputTokenSemantics: "delta",
+        displayedInputTokens: 1000,
+        outputTokens: 100
+      }),
+      usageSeed({
+        eventId: "antigravity-executor",
+        sourceVendor: "antigravity",
+        model: "gemini-flash-worker-agy",
+        usageSource: "antigravity-acp",
+        inputTokenSemantics: "delta",
+        displayedInputTokens: 500,
+        outputTokens: 50
+      }),
+      // A model with a published card proves antigravity rows are priced at all.
+      usageSeed({
+        eventId: "antigravity-priced",
+        sourceVendor: "antigravity",
+        model: "gemini-4-argon",
+        usageSource: "antigravity-acp",
+        inputTokenSemantics: "delta",
+        displayedInputTokens: 1_000_000,
+        outputTokens: 0
+      }),
+      usageSeed({
+        eventId: "cursor-argon",
+        sourceVendor: "cursor",
+        model: "gemini-4-argon",
+        usageSource: "cursor-official",
+        inputTokenSemantics: "delta",
+        displayedInputTokens: 10,
+        outputTokens: 0
+      })
+    ]);
+
+    const rows = selectTokensByModel(db as unknown as MetricsDatabase);
+
+    expect(
+      rows
+        .filter((row) => row.sourceVendor === "antigravity")
+        .map((row) => [row.model, row.inputTokens, row.outputTokens, row.totalTokens])
+    ).toEqual([
+      ["gemini-4-argon", 1_000_000, 0, 1_000_000],
+      ["gemini-pro-orchestrator-neon", 1000, 100, 1100],
+      ["gemini-flash-worker-agy", 500, 50, 550]
+    ]);
+    // Planner and executor usage stay separate standard-mode rows. Their cost
+    // depends on the antigravity model cards, so only grouping is asserted here.
+    expect(rows.find((row) => row.model === "gemini-pro-orchestrator-neon")).toMatchObject({
+      sourceVendor: "antigravity",
+      usageMode: "standard",
+      serviceTier: null
+    });
+    expect(rows.find((row) => row.model === "gemini-flash-worker-agy")).toMatchObject({
+      sourceVendor: "antigravity",
+      usageMode: "standard",
+      serviceTier: null
+    });
+    // The same model under another vendor must not fold into the antigravity row.
+    expect(rows.find((row) => row.model === "gemini-4-argon" && row.sourceVendor === "cursor")).toMatchObject({
+      inputTokens: 10,
+      totalTokens: 10
+    });
+    // gemini-4-argon lists $2 per 1M input tokens.
+    expect(rows.find((row) => row.model === "gemini-4-argon" && row.sourceVendor === "antigravity")?.costUsd)
+      .toBeCloseTo(2, 9);
+
+    // The per-vendor filter keeps the antigravity grouping addressable end to end.
+    const antigravityUsage = selectTokenUsageRows(
+      db as unknown as MetricsDatabase,
+      undefined,
+      "antigravity"
+    );
+    expect(antigravityUsage).toHaveLength(3);
+    expect(antigravityUsage.every((row) => row.source_instance_id === "antigravity:default")).toBe(true);
+    expect(new Set(antigravityUsage.map((row) => row.model))).toEqual(
+      new Set(["gemini-4-argon", "gemini-flash-worker-agy", "gemini-pro-orchestrator-neon"])
+    );
 
     db.close();
   });
@@ -455,7 +628,12 @@ describe("selectOverviewRows", () => {
     ]);
     // Only the incremental usage row survives the snapshot filter.
     expect(rows.tokenUsage).toHaveLength(1);
-    expect(rows.tokenUsage[0]).toMatchObject({ input_tokens: 10, source_vendor: "claude-code" });
+    expect(rows.tokenUsage[0]).toMatchObject({
+      input_tokens: 10,
+      source_vendor: "claude-code",
+      source_instance_id: "claude-code:default",
+      session_id: "session-in"
+    });
 
     const codexRows = selectOverviewRows(
       db as unknown as MetricsDatabase,

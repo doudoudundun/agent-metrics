@@ -4,3 +4,4 @@ export * from "./tool-lifecycle.js";
 export * from "./events.js";
 export * from "./identity.js";
 export * from "./normalization.js";
+export * from "./model-id.js";

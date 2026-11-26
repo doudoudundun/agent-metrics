@@ -203,9 +203,71 @@ async function assertNoHorizontalOverflow(page: Page): Promise<void> {
   expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.clientWidth);
 }
 
+const AGENT_VENDORS = [
+  "codex",
+  "claude-code",
+  "cursor",
+  "opencode",
+  "workbuddy",
+  "kimicode",
+  "mimo"
+] as const;
+
+/** Overview fixture listing more agents than one usage page holds. */
+function overviewFixtureWithAgents() {
+  return {
+    ...overviewFixture,
+    tokensByModel: AGENT_VENDORS.map((sourceVendor, index) => ({
+      model: `${sourceVendor}-model`,
+      sourceVendor,
+      totalTokens: 30_000 - index * 1_000,
+      inputTokens: 10_000 - index * 100,
+      outputTokens: 5_000,
+      cacheReadTokens: 4_000,
+      cacheCreationTokens: 1_000,
+      costUsd: 1.5 - index * 0.1,
+      avgOutputTokensPerSecond: 42,
+      avgFirstTokenLatencyMs: 900,
+      cacheHitRate: 0.27
+    }))
+  };
+}
+
 test.describe("dashboard viewport matrix", () => {
   test.beforeEach(async ({ page }) => {
     await installDashboardApiMocks(page);
+  });
+
+  test("pages agents without growing the usage panel past the trend chart", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    // Registered after the shared mocks, so this scoped overview wins (scope
+    // travels as a query string, hence the pattern).
+    await page.route(/\/api\/overview(\?|$)/, async (route) => {
+      await route.fulfill({ json: overviewFixtureWithAgents() });
+    });
+    await page.goto("/");
+    await page.waitForSelector(".model-usage-panel .model-usage-row");
+
+    const chartPanel = page.locator(".dashboard-grid > .chart-panel").first();
+    const usagePanel = page.locator(".model-usage-panel");
+    const chartBox = await chartPanel.boundingBox();
+    const usageBox = await usagePanel.boundingBox();
+
+    // Both analytics panels share the first grid row, so their heights must match.
+    expect(chartBox).not.toBeNull();
+    expect(usageBox).not.toBeNull();
+    expect(Math.abs((chartBox?.height ?? 0) - (usageBox?.height ?? 0))).toBeLessThanOrEqual(1);
+    // The page shows at most five agents, so the panel stays bounded.
+    await expect(page.locator(".model-usage-group")).toHaveCount(5);
+    await expect(page.getByText("7 agents · page 1/2")).toBeVisible();
+    await expect(page.getByText("Agents 1–5 of 7")).toBeVisible();
+
+    await page.getByRole("button", { name: "Next agents" }).click();
+
+    await expect(page.getByText("7 agents · page 2/2")).toBeVisible();
+    await expect(page.getByText("Agents 6–7 of 7")).toBeVisible();
+    await expect(page.locator(".model-usage-group")).toHaveCount(2);
+    await expect(page.getByRole("button", { name: "Next agents" })).toBeDisabled();
   });
 
   test("Others menu stays above the overview cards and remains clickable", async ({ page }) => {

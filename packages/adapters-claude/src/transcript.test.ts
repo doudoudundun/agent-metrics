@@ -90,6 +90,50 @@ describe("extractClaudeTranscriptObservations", () => {
     ]);
   });
 
+  it.each([
+    {
+      usage: { service_tier: "standard", speed: "fast" },
+      expectedServiceTier: "fast"
+    },
+    {
+      usage: { service_tier: "standard" },
+      expectedServiceTier: "standard"
+    },
+    {
+      usage: { service_tier: "priority" },
+      expectedServiceTier: "claude-priority"
+    }
+  ])("preserves Claude's explicit speed before service_tier", ({ usage, expectedServiceTier }) => {
+    const [, observation] = extractClaudeTranscriptObservations({
+      type: "assistant",
+      sessionId: "ses_1",
+      cwd: "/workspace",
+      timestamp: "2026-05-27T10:00:10.000Z",
+      message: {
+        id: "msg-tier",
+        role: "assistant",
+        model: "claude-test",
+        stop_reason: "end_turn",
+        content: [{ type: "text", text: "Done." }],
+        usage: {
+          input_tokens: 12,
+          output_tokens: 5,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 1,
+          ...usage
+        }
+      }
+    });
+
+    expect(observation).toMatchObject({
+      kind: "token_usage_recorded",
+      serviceTier: expectedServiceTier
+    });
+    const event = normalizeClaudeTranscriptObservation(observation);
+    expect(event).toMatchObject({ type: "token.usage.recorded", service_tier: expectedServiceTier });
+    expect(NormalizedEventV2Schema.safeParse(event).success).toBe(true);
+  });
+
   it("records the reported speed tier so fast-mode usage is billed at its multiplier", () => {
     const fast = extractClaudeTranscriptObservations({
       type: "assistant",
@@ -483,7 +527,6 @@ describe("extractClaudeTranscriptObservations", () => {
       cacheCreationInputTokens: 0,
       cacheReadInputTokens: 1,
       serverToolUse: "{}",
-      serviceTier: null,
       providerId: null,
       providerBaseUrl: null,
       providerHost: null

@@ -4,6 +4,8 @@ import { mkdtemp, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
+import Database from "better-sqlite3";
+import { readTrustedIngestionCursor, repairBrokenIngestionCursor } from "./event-log-projector.js";
 import { createEventLogCursor, readEventLogIncremental } from "./raw-ingest.js";
 import {
   DEFAULT_EVENT_LOG_MAX_BYTES,
@@ -26,6 +28,32 @@ async function makeLogFile(lines: string[]): Promise<{ root: string; eventLogPat
   const eventLogPath = join(root, "events.jsonl");
   await writeFile(eventLogPath, lines.join(""), "utf8");
   return { root, eventLogPath };
+}
+
+function createCursorDatabase(): Database.Database {
+  const db = new Database(":memory:");
+  db.exec(`CREATE TABLE ingestion_state (stream_name TEXT PRIMARY KEY, offset_bytes INTEGER, size_bytes INTEGER, mtime_ms REAL, file_identity TEXT, committed_prefix_hash TEXT)`);
+  return db;
+}
+
+async function rotateWithSavedCursor(db: Database.Database, eventLogPath: string) {
+  const trustedCursor = await readTrustedIngestionCursor({ db: db as never, eventLogPath });
+  const rotation = await rotateEventLogIfNeeded({
+    eventLogPath, maxBytes: 100, retentionDays: 7, now: NOW,
+    committedOffset: trustedCursor?.committedOffset
+  });
+  expect(rotation.rotated).toBe(true);
+  await repairBrokenIngestionCursor({
+    db: db as never, eventLogPath, resetForRotatedLog: true,
+    committedOffsetAfterRotation: rotation.committedOffsetAfterRotation
+  });
+  const saved = db.prepare("SELECT * FROM ingestion_state").get() as {
+    offset_bytes: number; file_identity: string; committed_prefix_hash: string;
+  };
+  const read = await readEventLogIncremental({ filePath: eventLogPath, cursor: {
+    committedOffset: saved.offset_bytes, fileIdentity: saved.file_identity, committedPrefixHash: saved.committed_prefix_hash
+  } });
+  return { rotation, saved, read };
 }
 
 describe("event log rotation config", () => {
@@ -150,7 +178,7 @@ describe("rotateEventLogIfNeeded", () => {
     expect(await readFile(eventLogPath, "utf8")).toContain("kept");
   });
 
-  it("forces the projector to restart from offset 0 after rotation", async () => {
+  it("rejects an unmapped stale pre-rotation cursor", async () => {
     const lines: string[] = [];
     for (let index = 0; index < 40; index += 1) {
       lines.push(eventLine(`event-${index}`, "2026-09-15T00:00:00.000Z"));
@@ -178,6 +206,94 @@ describe("rotateEventLogIfNeeded", () => {
     expect(read.records.map((record) => record.line)).toEqual([
       JSON.stringify({ event_id: "recent", type: "session.started", timestamp: "2026-10-20T00:00:00.000Z" })
     ]);
+  });
+
+  it("maps a trusted caught-up cursor to retained EOF without replaying projections", async () => {
+    const lines = [
+      eventLine("old", "2026-09-15T00:00:00.000Z"),
+      eventLine("recent-中文", "2026-10-20T00:00:00.000Z").replace(/\n$/u, "\r\n"),
+      "\r\n",
+      "{not-json}\n",
+      eventLine("recent-2", "2026-10-20T00:00:00.000Z")
+    ];
+    const { eventLogPath } = await makeLogFile(lines);
+    const originalSize = (await stat(eventLogPath)).size;
+    const cursor = await createEventLogCursor(eventLogPath, originalSize);
+    const db = createCursorDatabase();
+    try {
+      db.prepare("INSERT INTO ingestion_state VALUES ('events.jsonl', ?, ?, 0, ?, ?)")
+        .run(originalSize, originalSize, cursor.fileIdentity, cursor.committedPrefixHash);
+      const { rotation, saved, read } = await rotateWithSavedCursor(db, eventLogPath);
+      expect(rotation.committedOffsetAfterRotation).toBe(rotation.keptBytes);
+      expect(saved.offset_bytes).toBe((await stat(eventLogPath)).size);
+      expect(read.reset).toBe(false);
+      expect(read.records).toEqual([]);
+    } finally { db.close(); }
+  });
+
+  it("maps a partial trusted boundary and reads the retained unprojected suffix", async () => {
+    const committedLine = eventLine(`committed-${"中".repeat(25_000)}`, "2026-10-20T00:00:00.000Z");
+    const lines = [
+      eventLine("old", "2026-09-15T00:00:00.000Z"),
+      committedLine.replace(/\n$/u, "\r\n"),
+      "\r\n",
+      eventLine("unprojected-old", "2026-09-15T00:00:00.000Z"),
+      eventLine("unprojected-recent", "2026-10-20T00:00:00.000Z")
+    ];
+    const { eventLogPath } = await makeLogFile(lines);
+    const offset = Buffer.byteLength(lines.slice(0, 3).join(""), "utf8");
+    const cursor = await createEventLogCursor(eventLogPath, offset);
+    const db = createCursorDatabase();
+    try {
+      db.prepare("INSERT INTO ingestion_state VALUES ('events.jsonl', ?, ?, 0, ?, ?)")
+        .run(offset, (await stat(eventLogPath)).size, cursor.fileIdentity, cursor.committedPrefixHash);
+      const { rotation, read } = await rotateWithSavedCursor(db, eventLogPath);
+      expect(rotation.committedOffsetAfterRotation).toBe(Buffer.byteLength(committedLine, "utf8"));
+      expect(read.reset).toBe(false);
+      expect(read.records.map(record => JSON.parse(record.line).event_id)).toEqual(["unprojected-recent"]);
+    } finally { db.close(); }
+  });
+
+  it("keeps an unterminated retained record uncommitted", async () => {
+    const { eventLogPath } = await makeLogFile([
+      eventLine("old", "2026-09-15T00:00:00.000Z"),
+      eventLine("recent", "2026-10-20T00:00:00.000Z").trimEnd()
+    ]);
+    // Even a cursor materialized at EOF must not imply that a record without a
+    // newline was projected: the incremental reader never commits such a row.
+    const originalSize = (await stat(eventLogPath)).size;
+    const cursor = await createEventLogCursor(eventLogPath, originalSize);
+    const db = createCursorDatabase();
+    try {
+      db.prepare("INSERT INTO ingestion_state VALUES ('events.jsonl', ?, ?, 0, ?, ?)")
+        .run(originalSize, originalSize, cursor.fileIdentity, cursor.committedPrefixHash);
+      const { rotation, read } = await rotateWithSavedCursor(db, eventLogPath);
+      expect(rotation.committedOffsetAfterRotation).toBe(0);
+      expect(read.records.map(record => JSON.parse(record.line).event_id)).toEqual(["recent"]);
+    } finally { db.close(); }
+  });
+
+  it.each(["absent-row", "missing-metadata", "wrong-identity", "wrong-prefix", "beyond-eof"])("resets an untrusted rotated cursor without skipping retained rows (%s)", async (broken) => {
+    const { eventLogPath } = await makeLogFile([
+      ...Array.from({ length: 40 }, (_, i) => eventLine(`old-${i}`, "2026-09-15T00:00:00.000Z")),
+      eventLine("recent", "2026-10-20T00:00:00.000Z")
+    ]);
+    const originalSize = (await stat(eventLogPath)).size;
+    const stale = await createEventLogCursor(eventLogPath, originalSize);
+    const db = createCursorDatabase();
+    try {
+      if (broken !== "absent-row") {
+        db.prepare("INSERT INTO ingestion_state VALUES ('events.jsonl', ?, ?, 0, ?, ?)")
+          .run(broken === "beyond-eof" ? originalSize + 1 : originalSize, originalSize,
+            broken === "missing-metadata" ? null : broken === "wrong-identity" ? "stale" : stale.fileIdentity,
+            broken === "missing-metadata" ? null : broken === "wrong-prefix" ? "0".repeat(64) : stale.committedPrefixHash);
+      }
+      const { rotation, saved, read } = await rotateWithSavedCursor(db, eventLogPath);
+      expect(rotation.committedOffsetAfterRotation).toBeNull();
+      expect(saved.offset_bytes).toBe(0);
+      expect(read.reset).toBe(false);
+      expect(read.records.map(record => JSON.parse(record.line).event_id)).toEqual(["recent"]);
+    } finally { db.close(); }
   });
 });
 

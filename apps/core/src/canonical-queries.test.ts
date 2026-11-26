@@ -124,6 +124,55 @@ describe("canonical widget queries", () => {
     db.close();
   });
 
+  it("uses OpenAI service tiers for widget cost across Codex and OpenCode usage rows", () => {
+    const db = new Database(":memory:") as unknown as SqliteDatabaseLike;
+    runDomainMigrations(db, "2026-07-17T00:00:00.000Z");
+    const insertUsage = db.prepare(
+      `INSERT INTO usage_events
+        (event_id, schema_version, source_instance_id, source_vendor, session_id, message_id,
+         occurred_at, model_id, service_tier, provider_id, input_token_semantics, usage_measurement,
+         raw_input_tokens, displayed_input_tokens, output_tokens, cache_creation_input_tokens,
+         cache_read_input_tokens, server_tool_use, usage_source, semantic_fingerprint)
+       VALUES (?, 2, ?, ?, ?, ?, ?, ?, ?, 'unknown', 'delta', 'increment', ?, ?, 0, 0, 0, '{}', ?, ?)`
+    );
+    insertUsage.run(
+      "usage-gpt6-luna-standard",
+      "codex:default",
+      "codex",
+      "session-codex",
+      "message-standard",
+      "2026-07-16T13:00:00.000Z",
+      "gpt-6-luna",
+      "standard",
+      1_000_000,
+      1_000_000,
+      "codex-rollout",
+      "fingerprint-standard"
+    );
+    insertUsage.run(
+      "usage-gpt6-luna-priority",
+      "opencode:default",
+      "opencode",
+      "session-opencode",
+      "message-priority",
+      "2026-07-16T14:00:00.000Z",
+      "gpt-6-luna",
+      "priority",
+      1_000_000,
+      1_000_000,
+      "opencode-step-finish",
+      "fingerprint-priority"
+    );
+
+    const result = selectWidgetSnapshot(db, new Date("2026-07-16T18:00:00.000Z"), {
+      offsetMinutes: 0
+    });
+
+    expect(result.metrics.inputTokens).toBe(2_000_000);
+    expect(result.metrics.totalCostUsd).toBeCloseTo(0.3, 8);
+    db.close();
+  });
+
   it("computes toolSuccessRate from terminal outcomes only, not started-only rows", () => {
     const db = new Database(":memory:") as unknown as SqliteDatabaseLike;
     runDomainMigrations(db, "2026-07-17T00:00:00.000Z");
@@ -262,6 +311,8 @@ describe("canonical widget queries", () => {
     expectQueryPlanUsesIndex(
       db,
       `SELECT
+         model_id AS modelId,
+         service_tier AS serviceTier,
          displayed_input_tokens AS displayedInputTokens,
          output_tokens AS outputTokens,
          cache_read_input_tokens AS cacheReadTokens,

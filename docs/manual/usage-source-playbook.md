@@ -24,18 +24,25 @@ node scripts/audit-usage.mjs --days 14 --json
    把 `cache_read` 再算进 input 就是双计（面板输入虚高的典型原因）。
 
 `delta` 来源不受第 2 条约束：它的 `input` 是增量，`cache_read` 是独立的缓存命中量，
-`cache_read > input` 完全正常（dsh / kimicode / cursor 常出现比例几十倍的情况，不是脏数据）。
+`cache_read > input` 完全正常（dsh / kimicode / cursor / antigravity-acp 常出现比例几十倍的情况，
+不是脏数据）。
 
 ## 二、规则（按踩坑时间排序）
 
 ### R1 不要让 CLI 关掉落盘
 
-`--ephemeral`（Codex）、`--no-session-persistence`（Claude Code / CodeBuddy）会让一次调用
-**一个字节都不留**，adapter 再完美也采不到。2026-10 的 42 次 Codex 调用就是这样永久丢失的
-（连 tracing 都没写），事后无法回补。
+`--ephemeral`（Codex）、`--no-session-persistence`（Claude Code / CodeBuddy）会关闭会话 transcript
+落盘。是否还有请求日志，要以客户端实际文件为准：2026-10 的 42 次 Codex 调用连 tracing 都没写，
+事后无法回补；2026-11-01 的 WorkBuddy Relay 调用虽然没有 transcript，仍在 `.workbuddy/logs` 留下了
+完整的逐请求用量，能够补采。不要把「无 transcript」直接当成「没有任何记录」。
 
 - 调用方在 `any-subagent` 仓库，`src/managed-backend.ts` / `src/codex.ts` 里有断言测试防止回归。
 - 新接入一个 CLI 时，先跑 10 次调用，确认对应目录真的出现了 session 文件，再接解析。
+
+WorkBuddy headless 回归：请求日志采集要同时覆盖 `.codebuddy/logs` 与 `.workbuddy/logs`，并识别
+`[11/1/2026, 10:45:03 PM.483]` 这类原生 en-US 时间戳；只补目录不补时间解析，仍会全部静默丢失。
+核验时按 session/message ID 比对原生日志与数据库，不以 Relay 累计值替代逐请求日志。本次同一批
+113 个 message ID 的两种上报数值并不相同，积分又没有数值字段，不能把 Token 合计当作积分账单。
 
 ### R2 缓存字段以真实记录为准，不要凭印象
 
@@ -187,6 +194,32 @@ Claude Code 与 MiMo 整源不在面板上，ZCode 只剩 79 条，Codex/WorkBud
 
 同一套路适用于其他「按比例判异常」的检查：先问一句**分母里有没有结构上不该有值的行**。
 
+### R13 Antigravity ACP transcript：只采专属子树，探针只认精确层级
+
+T3 Code 托管的 Antigravity（ACP 协议）把会话 transcript 写在固定层级：
+
+```
+~/.t3/userdata/providers/antigravity/<account>/antigravity-acp/brain/<session>/.system_generated/logs/transcript_full.jsonl
+```
+
+- 只采 `providers/antigravity/` 这一棵子树。T3 自己托管的 Codex / Claude 记录**不由这个
+  adapter 采**：它们与既有 adapter 的数据重叠，再采一遍就是双计。
+- 记录分两类：`type: "USER_INPUT"` 是用户行，没有用量；`type: "PLANNER_RESPONSE"` 是模型行，
+  带 `model` / `input_tokens` / `cache_read_tokens` / `output_tokens`（`thinking` / `content` /
+  `tool_calls` 视情况出现）。只有模型行产出 usage，模型名取该行自身的 `model` 字段（同 R5，
+  不依赖旁路推断）。
+- 语义注册为 `inputTokenSemantics: "delta"` + `usageMeasurement: "increment"`：`input_tokens`
+  是本次请求未被缓存覆盖的部分，`cache_read_tokens` 是独立计数，**cache_read 大于 input
+  是常态**，按 gross 的直觉去「修」反而会把面板改错。
+- transcript 里没有 cache creation、没有耗时字段：`cache_creation` 补 0，TTFT / tok/s 留空，
+  不许从别的文件拼一个速度出来。
+- T3 的权限模式、思考模式**不是** serviceTier，不写 `usage_events.service_tier`。
+- 成本按 API reference 单价估算，不是订阅账单的实际扣费，读成本面板时要记得这层差别。
+- `~/.t3` 根目录里 auth、cache、sqlite-wal 等几乎一直在写，**上层目录 mtime 不能当活动信号**：
+  会把「T3 在写状态」误判成「有模型调用没入库」。体检探针只 stat 精确层级下的
+  `transcript_full.jsonl`（`scripts/audit-usage.mjs` 的 `newestAntigravityTranscript`），
+  目录缺失时返回 null，交给 `source_silent` 判定。
+
 ## 三、接入新来源的检查清单
 
 - [ ] 在 `packages/event-schema/src/sources.ts` 注册 `usage_source` 与 vendor/adapter 映射
@@ -212,6 +245,7 @@ Claude Code 与 MiMo 整源不在面板上，ZCode 只剩 79 条，Codex/WorkBud
 | 某模型完全不出现，别的模型正常 | 该请求是否换了 scope／类型（R8，压缩请求记在 `session` 下） |
 | 某来源偶发整条缺失，且不报错 | 解析器是否要求多字段全非空（R9）；是否还有第二条用量路径没读（R10） |
 | 某来源整段历史空白，近期却正常 | 按业务键比对日志与库（R11）；`event_log_gap` 检查项 |
+| T3 / Antigravity 没有数据，或断流告警不准 | 是否只采 `providers/antigravity` 子树并精确到 `.system_generated/logs/transcript_full.jsonl`（R13）；探针不能用受 auth/cache 写入影响的上层 mtime |
 
 ## 五、位置备忘
 

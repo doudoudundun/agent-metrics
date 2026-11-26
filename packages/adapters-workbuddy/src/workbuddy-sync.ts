@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
+import { createReadStream, existsSync } from "node:fs";
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { createInterface } from "node:readline";
 import {
   appendJsonLine,
   loadEventLedger,
@@ -14,7 +15,8 @@ import type { NormalizedEventV2 } from "@agent-metrics/event-schema";
 import {
   createWorkbuddyParseState,
   normalizeWorkbuddyRecord,
-  normalizeWorkbuddySessionHeader
+  normalizeWorkbuddySessionHeader,
+  workbuddySessionIdentityMarker
 } from "./workbuddy.js";
 import { createWorkbuddyTimingReader, type WorkbuddyTimingIndex } from "./workbuddy-timing.js";
 
@@ -38,6 +40,7 @@ function readTimings(homePath: string): Promise<{
 }
 
 const SESSION_LOG_NAME = /^(.+)\.jsonl$/u;
+const SESSION_LEDGER_MARKER = "workbuddy:session-ledger-v1";
 
 type FileCursor = {
   size: number;
@@ -151,8 +154,9 @@ export async function syncWorkbuddySessions(input: {
     eventLogPath: input.eventLogPath,
     prefix: "workbuddy:"
   });
-  const cliLogMessageIds = await loadCliLogMessageIds(input.cliLogLedgerPath);
   const baselineEventCount = seenEventIds.size;
+  const sessionLedgerUpgraded = await upgradeSessionLedger(input.eventLogPath, seenEventIds);
+  const cliLogMessageIds = await loadCliLogMessageIds(input.cliLogLedgerPath);
   let cursorChanged = false;
 
   for (const root of roots) {
@@ -181,7 +185,7 @@ export async function syncWorkbuddySessions(input: {
         continue;
       }
 
-      if (fileContents.length === previous.size && previous.size > 0 && !timingChanged) {
+      if (fileContents.length === previous.size && previous.size > 0 && !timingChanged && !sessionLedgerUpgraded) {
         continue;
       }
 
@@ -309,7 +313,7 @@ async function syncSessionLog(input: {
   }
 
   const resolvedWorkspace = workspacePath ?? ".";
-  const parseState = createWorkbuddyParseState(input.timings);
+  const parseState = createWorkbuddyParseState(input.timings, input.seenEventIds);
   const pending: NormalizedEventV2[] = [];
   let countedByCliLog = 0;
   for (const record of records) {
@@ -328,11 +332,8 @@ async function syncSessionLog(input: {
     }
   }
 
-  // A transcript cloned by WorkBuddy Switch contributes no new event once its
-  // records were counted under the original session. Leaving it without a
-  // session header keeps the cloned copy out of the session list. A session
-  // whose only remaining events are usage rows already counted by the CLI log
-  // is a real session, so it still needs its header.
+  // A transcript whose only new usage was already counted by the CLI log is
+  // still a real session and needs a header.
   if (pending.length === 0 && countedByCliLog === 0) {
     return;
   }
@@ -399,13 +400,83 @@ function parseRecords(text: string): Record<string, unknown>[] {
 }
 
 function ledgerKeys(event: NormalizedEventV2): { key: string; timingKey: string | null } {
-  const key = event.source_record_id ?? event.event_id;
-  // A timing-only replay keeps the same event identity and token accounting.
-  // The canonical projector accepts only a null -> known timing enrichment.
-  const timingKey = event.type === "token.usage.recorded" && (event.decode_duration_ms ?? 0) > 0
+  const key = sessionLedgerKey(event.source_record_id ?? event.event_id, event.session_id);
+  // Only matched model telemetry has a first-token observation; transcript-only
+  // duration estimates must not prevent later replay of precise timing.
+  const timingKey = event.type === "token.usage.recorded" && (event.first_token_latency_ms ?? 0) > 0
     ? `${key}:timing-v1`
     : null;
   return { key, timingKey };
+}
+
+/**
+ * Old WorkBuddy ledgers used session-less keys to suppress cloned transcripts.
+ * Recover the sessions actually present in the event log once, so a rescan of
+ * an existing session stays idempotent while new copies keep their own timeline.
+ */
+async function upgradeSessionLedger(eventLogPath: string, seenEventIds: Set<string>): Promise<boolean> {
+  if (seenEventIds.has(SESSION_LEDGER_MARKER)) return false;
+  if (seenEventIds.size === 0 && !existsSync(eventLogPath)) {
+    seenEventIds.add(SESSION_LEDGER_MARKER);
+    return true;
+  }
+
+  const recovered = new Map<string, { sessionScoped: boolean; precise: boolean }>();
+  let logMissing = false;
+  const stream = createReadStream(eventLogPath, { encoding: "utf8" });
+  const lines = createInterface({ input: stream, crlfDelay: Infinity });
+  try {
+    for await (const line of lines) {
+      let value: unknown;
+      try {
+        value = JSON.parse(line) as unknown;
+      } catch {
+        continue;
+      }
+      if (!isRecord(value) || value.source_adapter !== "workbuddy-jsonl") continue;
+      const sessionId = readString(value.session_id);
+      const sourceRecordId = readString(value.source_record_id) ?? readString(value.event_id);
+      if (sessionId === null || sourceRecordId === null || !sourceRecordId.startsWith("workbuddy:")) continue;
+      const key = sessionLedgerKey(sourceRecordId, sessionId);
+      const candidate = {
+        sessionScoped: sourceRecordId === key && value.type !== "session.started",
+        precise: value.type === "token.usage.recorded" && typeof value.first_token_latency_ms === "number" && value.first_token_latency_ms > 0
+      };
+      const previous = recovered.get(key);
+      if (previous === undefined || (!previous.precise && candidate.precise)) {
+        recovered.set(key, candidate);
+      }
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    logMissing = true;
+  } finally {
+    lines.close();
+    stream.destroy();
+  }
+  for (const [key, identity] of recovered) {
+    seenEventIds.add(key);
+    if (identity.sessionScoped) seenEventIds.add(workbuddySessionIdentityMarker(key));
+    if (identity.precise) seenEventIds.add(`${key}:timing-v1`);
+  }
+  // A rotated log may no longer contain old rows. A pre-upgrade session key
+  // still identifies the local source-record form used for that row.
+  for (const key of [...seenEventIds]) {
+    if (!/^workbuddy:[^:]+:(?:usage|prompt|assistant|tool):/u.test(key)) continue;
+    const baseKey = key.replace(/:timing-v1$/u, "");
+    if (!recovered.has(baseKey)) seenEventIds.add(workbuddySessionIdentityMarker(baseKey));
+  }
+  if (!logMissing) seenEventIds.add(SESSION_LEDGER_MARKER);
+  // A prior session-less ledger may have skipped cloned transcripts entirely.
+  // Revisit even unchanged files once to recover their individual timelines.
+  return true;
+}
+
+function sessionLedgerKey(sourceRecordId: string, sessionId: string): string {
+  const prefix = "workbuddy:";
+  if (!sourceRecordId.startsWith(prefix)) return sourceRecordId;
+  const rest = sourceRecordId.slice(prefix.length);
+  return rest.startsWith(`${sessionId}:`) ? sourceRecordId : `${prefix}${sessionId}:${rest}`;
 }
 
 function isIngested(seenEventIds: Set<string>, event: NormalizedEventV2): boolean {

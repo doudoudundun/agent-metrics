@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { buildApp } from "./app.js";
-import { repairBrokenIngestionCursor } from "./event-log-projector.js";
+import { readTrustedIngestionCursor, repairBrokenIngestionCursor } from "./event-log-projector.js";
 import { resolveDetailRetentionConfig, runDetailRetentionIfNeeded } from "./detail-retention.js";
 import {
   compressEventLogArchive,
@@ -39,17 +39,24 @@ async function main(): Promise<void> {
   // /api/health, so the desktop supervisor sees a readiness timeout. Trimming
   // here means the projector below only ever faces a bounded backlog.
   let archiveToCompress: string | null = null;
+  let committedOffsetAfterRotation: number | null = null;
   if (runtimeConfig.eventLogPath) {
     try {
       const rotationConfig = resolveEventLogRotationConfig(process.env);
+      const trustedCursor = await readTrustedIngestionCursor({
+        db: app.db as never,
+        eventLogPath: runtimeConfig.eventLogPath
+      });
       const rotation = await rotateEventLogIfNeeded({
         eventLogPath: runtimeConfig.eventLogPath,
         maxBytes: rotationConfig.maxBytes,
         retentionDays: rotationConfig.retentionDays,
+        committedOffset: trustedCursor?.committedOffset,
         logger: app.log
       });
       if (rotation.rotated) {
         archiveToCompress = rotation.archivePath;
+        committedOffsetAfterRotation = rotation.committedOffsetAfterRotation;
       }
     } catch (error) {
       app.log.error(error as Error);
@@ -66,7 +73,9 @@ async function main(): Promise<void> {
     try {
       const repaired = await repairBrokenIngestionCursor({
         db: app.db as never,
-        eventLogPath: runtimeConfig.eventLogPath
+        eventLogPath: runtimeConfig.eventLogPath,
+        resetForRotatedLog: archiveToCompress !== null,
+        committedOffsetAfterRotation
       });
       if (repaired.repaired) {
         app.log.info(

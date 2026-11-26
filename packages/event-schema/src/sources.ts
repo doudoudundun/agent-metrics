@@ -9,7 +9,8 @@ export const SourceVendorSchema = z.enum([
   "codex",
   "cursor",
   "mimo",
-  "workbuddy"
+  "workbuddy",
+  "antigravity"
 ]);
 
 export const SourceAdapterSchema = z.enum([
@@ -26,7 +27,8 @@ export const SourceAdapterSchema = z.enum([
   "codex-logs",
   "mimo-db",
   "workbuddy-jsonl",
-  "codebuddy-cli-log"
+  "codebuddy-cli-log",
+  "antigravity-acp"
 ]);
 
 export const UsageSourceSchema = z.enum([
@@ -41,7 +43,8 @@ export const UsageSourceSchema = z.enum([
   "codex-rollout",
   "codex-logs",
   "workbuddy-usage",
-  "codebuddy-log"
+  "codebuddy-log",
+  "antigravity-acp"
 ]);
 
 export type SourceVendor = z.infer<typeof SourceVendorSchema>;

@@ -12,7 +12,8 @@ export const SOURCE_LABELS: Record<ConcreteSourceVendor, string> = {
   mimo: "MiMo",
   zcode: "ZCode",
   dsh: "DSH",
-  workbuddy: "WorkBuddy"
+  workbuddy: "WorkBuddy",
+  antigravity: "Antigravity"
 };
 
 export function formatSourceLabel(vendor: ConcreteSourceVendor): string {

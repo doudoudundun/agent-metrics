@@ -27,6 +27,8 @@ export type AgentMetricsPaths = {
   codexLedgerPath: string;
   mimoCursorPath: string;
   mimoLedgerPath: string;
+  antigravityCursorPath: string;
+  antigravityLedgerPath: string;
 };
 
 export function getAgentMetricsPaths(repoRoot: string): AgentMetricsPaths {
@@ -182,6 +184,20 @@ export function getAgentMetricsPaths(repoRoot: string): AgentMetricsPaths {
       "sources",
       "state",
       "mimo-ledger.json"
+    ),
+    antigravityCursorPath: buildAgentMetricsPath(
+      repoRoot,
+      "data",
+      "sources",
+      "state",
+      "antigravity-cursor.json"
+    ),
+    antigravityLedgerPath: buildAgentMetricsPath(
+      repoRoot,
+      "data",
+      "sources",
+      "state",
+      "antigravity-ledger.json"
     )
   };
 }

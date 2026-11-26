@@ -14,7 +14,8 @@ type StoredEventRow = {
   payload_json: string;
 };
 
-type FingerprintRow = { semantic_fingerprint: string };
+type ExistingEventRow = { semantic_fingerprint: string; payload_json: string };
+type UsageTierRow = { service_tier: string | null };
 
 export type ProjectionResult = {
   eventId: string;
@@ -117,13 +118,16 @@ function projectOne(
   const parsed = NormalizedEventV2Schema.parse(rawEvent);
   const fingerprint = semanticFingerprint(parsed);
   const existing = db
-    .prepare<FingerprintRow>("SELECT semantic_fingerprint FROM normalized_events WHERE event_id = ?")
+    .prepare<ExistingEventRow>("SELECT semantic_fingerprint, payload_json FROM normalized_events WHERE event_id = ?")
     .all(parsed.event_id);
-  const conflict = existing.some((row) => row.semantic_fingerprint !== fingerprint);
+  const serviceTierEnrichment = existing.length === 1 && existing[0].semantic_fingerprint !== fingerprint
+    ? prepareServiceTierEnrichment(db, existing[0], parsed)
+    : null;
+  const conflict = existing.some((row) => row.semantic_fingerprint !== fingerprint) && !serviceTierEnrichment;
 
   if (conflict && parsed.type === "token.usage.recorded" && parsed.source_vendor === "workbuddy") {
     const reconciled =
-      reconcileWorkbuddyTiming(db, parsed) ??
+      reconcileWorkbuddyUsageEnrichment(db, parsed) ??
       reconcileUsageCredit(db, parsed) ??
       reconcileUsageCache(db, parsed);
     if (reconciled !== null) {
@@ -165,6 +169,19 @@ function projectOne(
     ) VALUES (?, ?, ?, ?, ?)`
   ).run(parsed.event_id, parsed.adapter_instance_id, parsed.source_adapter, fingerprint, observedAt);
 
+  if (serviceTierEnrichment) {
+    db.prepare(
+      `UPDATE normalized_events
+       SET semantic_fingerprint = ?, payload_json = ?
+       WHERE event_id = ? AND semantic_fingerprint = ?`
+    ).run(fingerprint, serviceTierEnrichment.payloadJson, parsed.event_id, existing[0].semantic_fingerprint);
+    db.prepare(
+      `UPDATE usage_events
+       SET service_tier = ?, semantic_fingerprint = ?
+       WHERE event_id = ? AND (service_tier IS NULL OR service_tier = ?)`
+    ).run(serviceTierEnrichment.serviceTier, fingerprint, parsed.event_id, serviceTierEnrichment.serviceTier);
+  }
+
   if (conflict) {
     if (parsed.type === "token.usage.recorded") {
       healUsageModelId(db, parsed);
@@ -204,9 +221,8 @@ function projectOne(
   };
 }
 
-/** Timing evidence may arrive after the transcript. Enrich only an otherwise
- * identical WorkBuddy event; never change usage or overwrite known timing. */
-function reconcileWorkbuddyTiming(
+/** Timing, billing and cache evidence may arrive after a WorkBuddy transcript. */
+function reconcileWorkbuddyUsageEnrichment(
   db: SqliteDatabaseLike,
   incoming: Extract<NormalizedEventV2, { type: "token.usage.recorded" }>
 ): string | null {
@@ -215,29 +231,71 @@ function reconcileWorkbuddyTiming(
     "SELECT payload_json, semantic_fingerprint FROM normalized_events WHERE event_id = ?"
   ).get(incoming.event_id);
   if (row === undefined) return null;
-  const stored = NormalizedEventV2Schema.parse(JSON.parse(row.payload_json));
-  if (stored.type !== "token.usage.recorded") return null;
-  const withoutTiming = (value: typeof incoming) => ({
-    ...value, first_token_latency_ms: null, decode_duration_ms: null
-  });
-  if (semanticFingerprint(withoutTiming(stored)) !== semanticFingerprint(withoutTiming(incoming))) return null;
-  const keys = ["first_token_latency_ms", "decode_duration_ms"] as const;
-  for (const key of keys) {
-    const previous = stored[key] ?? null;
-    const next = incoming[key] ?? null;
-    if (previous !== null && next !== null && previous !== next) return null;
+  let stored: NormalizedEventV2;
+  try {
+    stored = NormalizedEventV2Schema.parse(JSON.parse(row.payload_json));
+  } catch {
+    return null;
   }
+  if (stored.type !== "token.usage.recorded" || row.semantic_fingerprint !== semanticFingerprint(stored)) return null;
+  const withoutEnrichment = (value: typeof incoming) => {
+    const { service_tier: _tier, credit: _credit, ...rest } = value;
+    return { ...rest, first_token_latency_ms: null, decode_duration_ms: null,
+      cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
+  };
+  if (semanticFingerprint(withoutEnrichment(stored)) !== semanticFingerprint(withoutEnrichment(incoming))) return null;
+  const storedTier = stored.service_tier ?? null;
+  const incomingTier = incoming.service_tier ?? null;
+  if (storedTier !== null && incomingTier !== null && storedTier !== incomingTier) return null;
+  const storedCredit = stored.credit ?? null;
+  const incomingCredit = incoming.credit ?? null;
+  if (storedCredit !== null && incomingCredit !== null && storedCredit !== incomingCredit) return null;
+  for (const field of ["cache_read_input_tokens", "cache_creation_input_tokens"] as const) {
+    if (stored[field] > 0 && incoming[field] > 0 && stored[field] !== incoming[field]) return null;
+  }
+  const projected = db.prepare<UsageTierRow>("SELECT service_tier FROM usage_events WHERE event_id = ?").get(incoming.event_id);
+  if (projected?.service_tier !== null && projected?.service_tier !== undefined && projected.service_tier !== (storedTier ?? incomingTier)) return null;
+  const storedFirst = stored.first_token_latency_ms ?? null;
+  const incomingFirst = incoming.first_token_latency_ms ?? null;
+  const storedDecode = stored.decode_duration_ms ?? null;
+  const incomingDecode = incoming.decode_duration_ms ?? null;
+  // A transcript-only decode is estimated. A later log record carrying TTFT
+  // makes both timings authoritative; stale transcript replay must not undo it.
+  const promotesToPrecise = storedFirst === null && incomingFirst !== null;
+  const staleEstimate = storedFirst !== null && incomingFirst === null;
+  if (storedFirst !== null && incomingFirst !== null && storedFirst !== incomingFirst) return null;
+  if (!promotesToPrecise && !staleEstimate && storedDecode !== null && incomingDecode !== null && storedDecode !== incomingDecode) return null;
   const merged = { ...stored,
-    first_token_latency_ms: stored.first_token_latency_ms ?? incoming.first_token_latency_ms ?? null,
-    decode_duration_ms: stored.decode_duration_ms ?? incoming.decode_duration_ms ?? null
+    first_token_latency_ms: storedFirst ?? incomingFirst,
+    decode_duration_ms: promotesToPrecise ? incomingDecode ?? storedDecode : storedDecode ?? incomingDecode,
+    cache_read_input_tokens: stored.cache_read_input_tokens || incoming.cache_read_input_tokens,
+    cache_creation_input_tokens: stored.cache_creation_input_tokens || incoming.cache_creation_input_tokens,
+    ...((storedTier ?? incomingTier) === null ? {} : { service_tier: storedTier ?? incomingTier }),
+    ...((storedCredit ?? incomingCredit) === null ? {} : { credit: storedCredit ?? incomingCredit })
   };
   const fingerprint = semanticFingerprint(merged);
   if (fingerprint !== row.semantic_fingerprint) {
+    let displayed: number;
+    try {
+      displayed = displayedInputTokens({
+        inputTokenSemantics: merged.input_token_semantics,
+        inputTokens: merged.input_tokens,
+        outputTokens: merged.output_tokens,
+        cacheCreationInputTokens: merged.cache_creation_input_tokens,
+        cacheReadInputTokens: merged.cache_read_input_tokens,
+        usageMeasurement: merged.usage_measurement
+      });
+    } catch {
+      return null;
+    }
     db.prepare(`UPDATE normalized_events SET payload_json = ?, semantic_fingerprint = ? WHERE event_id = ?`)
       .run(JSON.stringify(merged), fingerprint, incoming.event_id);
     db.prepare(`UPDATE usage_events SET first_token_latency_ms = ?, decode_duration_ms = ?,
-      semantic_fingerprint = ? WHERE event_id = ?`)
-      .run(merged.first_token_latency_ms, merged.decode_duration_ms, fingerprint, incoming.event_id);
+      service_tier = ?, credit = ?, cache_read_input_tokens = ?, cache_creation_input_tokens = ?,
+      displayed_input_tokens = ?, semantic_fingerprint = ? WHERE event_id = ?`)
+      .run(merged.first_token_latency_ms, merged.decode_duration_ms, storedTier ?? incomingTier,
+        storedCredit ?? incomingCredit, merged.cache_read_input_tokens, merged.cache_creation_input_tokens,
+        displayed, fingerprint, incoming.event_id);
     db.prepare("UPDATE event_observations SET semantic_fingerprint = ? WHERE event_id = ?")
       .run(fingerprint, incoming.event_id);
   }
@@ -348,6 +406,52 @@ function withoutCache<
 >(value: T): Omit<T, "cache_read_input_tokens" | "cache_creation_input_tokens"> {
   const { cache_read_input_tokens: _read, cache_creation_input_tokens: _write, ...rest } = value;
   return rest;
+}
+
+function prepareServiceTierEnrichment(
+  db: SqliteDatabaseLike,
+  existing: ExistingEventRow,
+  incoming: NormalizedEventV2
+): { payloadJson: string; serviceTier: string } | null {
+  if (incoming.type !== "token.usage.recorded" || typeof incoming.service_tier !== "string") {
+    return null;
+  }
+
+  let stored: Extract<NormalizedEventV2, { type: "token.usage.recorded" }>;
+  try {
+    const parsed = NormalizedEventV2Schema.parse(JSON.parse(existing.payload_json));
+    if (parsed.type !== "token.usage.recorded") {
+      return null;
+    }
+    stored = parsed;
+  } catch {
+    return null;
+  }
+
+  if (
+    existing.semantic_fingerprint !== semanticFingerprint(stored) ||
+    (stored.service_tier !== undefined && stored.service_tier !== null)
+  ) {
+    return null;
+  }
+
+  const { service_tier: _storedTier, ...storedWithoutTier } = stored;
+  const { service_tier: _incomingTier, ...incomingWithoutTier } = incoming;
+  if (semanticFingerprint(storedWithoutTier) !== semanticFingerprint(incomingWithoutTier)) {
+    return null;
+  }
+
+  const projectedUsage = db
+    .prepare<UsageTierRow>("SELECT service_tier FROM usage_events WHERE event_id = ?")
+    .get(incoming.event_id);
+  if (projectedUsage && projectedUsage.service_tier !== null && projectedUsage.service_tier !== incoming.service_tier) {
+    return null;
+  }
+
+  return {
+    payloadJson: JSON.stringify({ ...stored, service_tier: incoming.service_tier }),
+    serviceTier: incoming.service_tier
+  };
 }
 
 function ensureSourceRegistry(

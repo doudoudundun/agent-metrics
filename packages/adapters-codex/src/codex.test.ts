@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { NormalizedEventV2Schema } from "@agent-metrics/event-schema";
 import { extractCodexEventsFromRollout } from "./codex.js";
+import { codexTurnMetadataKey } from "./turn-metadata.js";
 
 describe("extractCodexEventsFromRollout", () => {
   it("maps legacy custom_tool_call rows into normalized tool events", () => {
@@ -851,7 +852,7 @@ describe("extractCodexEventsFromRollout", () => {
         message_id: "usage_30321",
         model: "gpt-5.4",
         input_tokens: 15928,
-        output_tokens: 239,
+        output_tokens: 202,
         cache_read_input_tokens: 3456,
         cache_creation_input_tokens: 0,
         usage_source: "codex-rollout",
@@ -896,7 +897,7 @@ describe("extractCodexEventsFromRollout", () => {
               cache_write_input_tokens: 0,
               output_tokens: 60,
               reasoning_output_tokens: 20,
-              total_tokens: 1280
+              total_tokens: 1260
             }
           }
         })
@@ -911,7 +912,7 @@ describe("extractCodexEventsFromRollout", () => {
           message_id: "usage_resp_abc",
           model: "gpt-6.1-sol",
           input_tokens: 1200,
-          output_tokens: 80,
+          output_tokens: 60,
           cache_read_input_tokens: 400,
           cache_creation_input_tokens: 0,
           usage_source: "codex-rollout",
@@ -933,7 +934,7 @@ describe("extractCodexEventsFromRollout", () => {
       cache_write_input_tokens: 0,
       output_tokens: 60,
       reasoning_output_tokens: 20,
-      total_tokens: 1280
+      total_tokens: 1260
     };
     const events = extractCodexEventsFromRollout({
       filePath: `C:/Users/test/.codex/sessions/2026/10/28/rollout-2026-10-28T10-00-00-${sessionId}.jsonl`,
@@ -968,9 +969,145 @@ describe("extractCodexEventsFromRollout", () => {
     expect(usageEvents).toHaveLength(1);
     expect(usageEvents[0]).toEqual(
       expect.objectContaining({
-        source_record_id: `codex:session:${sessionId}:usage:1280`
+        source_record_id: `codex:session:${sessionId}:usage:1260`
       })
     );
+  });
+
+  it("uses each turn_context model and tier without carrying a previous turn's tier", () => {
+    const tokenCount = (timestamp: string, totalTokens: number) =>
+      JSON.stringify({
+        timestamp,
+        type: "event_msg",
+        payload: {
+          type: "token_count",
+          info: {
+            total_token_usage: { total_tokens: totalTokens },
+            last_token_usage: {
+              input_tokens: 10,
+              cached_input_tokens: 0,
+              output_tokens: 2,
+              total_tokens: 12
+            }
+          }
+        }
+      });
+    const taskStarted = (timestamp: string, turnId: string) =>
+      JSON.stringify({ timestamp, type: "event_msg", payload: { type: "task_started", turn_id: turnId } });
+    const turnContext = (timestamp: string, payload: Record<string, unknown>) =>
+      JSON.stringify({ timestamp, type: "turn_context", payload });
+    const events = extractCodexEventsFromRollout({
+      filePath: "C:/Users/test/.codex/sessions/2026/05/27/rollout-2026-05-27T10-00-00-019e5dc9-b10c-7371-8edd-066e8db7e50d.jsonl",
+      sessionModels: { "019e5dc9-b10c-7371-8edd-066e8db7e50d": "gpt-session-latest" },
+      contents: [
+        JSON.stringify({
+          timestamp: "2026-05-27T10:00:00.000Z",
+          type: "session_meta",
+          payload: { id: "019e5dc9-b10c-7371-8edd-066e8db7e50d", timestamp: "2026-05-27T10:00:00.000Z" }
+        }),
+        turnContext("2026-05-27T10:00:00.900Z", {
+          model: "gpt-turn-one",
+          service_tier: "priority",
+          turn_id: "turn-one"
+        }),
+        taskStarted("2026-05-27T10:00:01.000Z", "turn-one"),
+        tokenCount("2026-05-27T10:00:02.000Z", 100),
+        taskStarted("2026-05-27T10:00:03.000Z", "turn-two"),
+        turnContext("2026-05-27T10:00:03.100Z", {
+          model: "gpt-turn-two",
+          speed: "fast",
+          turn_id: "turn-two"
+        }),
+        tokenCount("2026-05-27T10:00:04.000Z", 200),
+        taskStarted("2026-05-27T10:00:05.000Z", "turn-three"),
+        turnContext("2026-05-27T10:00:05.100Z", { turn_id: "turn-three" }),
+        tokenCount("2026-05-27T10:00:06.000Z", 300)
+      ].join("\n")
+    });
+
+    expect(
+      events
+        .filter((event) => event.type === "token.usage.recorded")
+        .map((event) => ({ model: event.model, service_tier: event.service_tier ?? null }))
+    ).toEqual([
+      { model: "gpt-turn-one", service_tier: "priority" },
+      { model: "gpt-turn-two", service_tier: "fast" },
+      { model: "gpt-session-latest", service_tier: null }
+    ]);
+  });
+
+  it("uses exact turn-input fallback only when explicit rollout tier is absent", () => {
+    const tokenCount = (timestamp: string, totalTokens: number, explicitTier?: string) =>
+      JSON.stringify({
+        timestamp,
+        type: "event_msg",
+        payload: {
+          type: "token_count",
+          info: {
+            total_token_usage: { total_tokens: totalTokens },
+            last_token_usage: {
+              input_tokens: 10,
+              cached_input_tokens: 0,
+              output_tokens: 2,
+              total_tokens: 12
+            },
+            ...(explicitTier ? { service_tier: explicitTier } : {})
+          }
+        }
+      });
+    const taskStarted = (timestamp: string, turnId: string) =>
+      JSON.stringify({ timestamp, type: "event_msg", payload: { type: "task_started", turn_id: turnId } });
+    const turnContext = (timestamp: string, turnId: string, model: string, serviceTier?: string) =>
+      JSON.stringify({
+        timestamp,
+        type: "turn_context",
+        payload: {
+          turn_id: turnId,
+          model,
+          ...(serviceTier ? { service_tier: serviceTier } : {})
+        }
+      });
+    const id = "019e5dc9-b10c-7371-8edd-066e8db7e50d";
+    const metadata = new Map([
+      [codexTurnMetadataKey(id, "turn-fallback"), { model: "gpt-fallback", serviceTier: "priority" }],
+      [codexTurnMetadataKey(id, "turn-explicit-context"), { model: "gpt-explicit", serviceTier: "priority" }],
+      [codexTurnMetadataKey(id, "turn-explicit-usage"), { model: "gpt-usage", serviceTier: "default" }],
+      [codexTurnMetadataKey(id, "turn-model-mismatch"), { model: "gpt-other", serviceTier: "priority" }]
+    ]);
+    const events = extractCodexEventsFromRollout({
+      filePath: `C:/Users/test/.codex/sessions/2026/05/27/rollout-2026-05-27T10-00-00-${id}.jsonl`,
+      turnInputMetadata: metadata,
+      contents: [
+        JSON.stringify({
+          timestamp: "2026-05-27T10:00:00.000Z",
+          type: "session_meta",
+          payload: { id, timestamp: "2026-05-27T10:00:00.000Z" }
+        }),
+        taskStarted("2026-05-27T10:00:01.000Z", "turn-fallback"),
+        turnContext("2026-05-27T10:00:01.100Z", "turn-fallback", "gpt-fallback"),
+        tokenCount("2026-05-27T10:00:02.000Z", 100),
+        taskStarted("2026-05-27T10:00:03.000Z", "turn-explicit-context"),
+        turnContext("2026-05-27T10:00:03.100Z", "turn-explicit-context", "gpt-explicit", "default"),
+        tokenCount("2026-05-27T10:00:04.000Z", 200),
+        taskStarted("2026-05-27T10:00:05.000Z", "turn-explicit-usage"),
+        turnContext("2026-05-27T10:00:05.100Z", "turn-explicit-usage", "gpt-usage"),
+        tokenCount("2026-05-27T10:00:06.000Z", 300, "fast"),
+        taskStarted("2026-05-27T10:00:07.000Z", "turn-model-mismatch"),
+        turnContext("2026-05-27T10:00:07.100Z", "turn-model-mismatch", "gpt-context"),
+        tokenCount("2026-05-27T10:00:08.000Z", 400)
+      ].join("\n")
+    });
+
+    expect(
+      events
+        .filter((event) => event.type === "token.usage.recorded")
+        .map((event) => ({ model: event.model, service_tier: event.service_tier ?? null }))
+    ).toEqual([
+      { model: "gpt-fallback", service_tier: "priority" },
+      { model: "gpt-explicit", service_tier: "default" },
+      { model: "gpt-usage", service_tier: "fast" },
+      { model: "gpt-context", service_tier: null }
+    ]);
   });
 
   it("tags usage with the persisted service tier and resets it when the tier changes", () => {
@@ -1082,7 +1219,12 @@ describe("extractCodexEventsFromRollout", () => {
   });
 
   it("estimates decode duration from the gap between consecutive token_count events", () => {
-    const tokenCount = (timestamp: string, totalTokens: number, output: number) =>
+    const tokenCount = (
+      timestamp: string,
+      totalTokens: number,
+      output: number,
+      reasoning: number
+    ) =>
       JSON.stringify({
         timestamp,
         type: "event_msg",
@@ -1093,14 +1235,14 @@ describe("extractCodexEventsFromRollout", () => {
               input_tokens: 1000,
               cached_input_tokens: 0,
               output_tokens: output,
-              reasoning_output_tokens: 0,
+              reasoning_output_tokens: reasoning,
               total_tokens: totalTokens
             },
             last_token_usage: {
               input_tokens: 1000,
               cached_input_tokens: 0,
               output_tokens: output,
-              reasoning_output_tokens: 0,
+              reasoning_output_tokens: reasoning,
               total_tokens: totalTokens
             }
           }
@@ -1119,20 +1261,219 @@ describe("extractCodexEventsFromRollout", () => {
             cwd: "D:/projects/dev"
           }
         }),
-        tokenCount("2026-05-27T10:00:12.000Z", 1100, 100),
-        tokenCount("2026-05-27T10:00:20.500Z", 1300, 200)
+        // Reasoning is a subset of output_tokens, and total_tokens is input + output.
+        tokenCount("2026-05-27T10:00:12.000Z", 1100, 100, 25),
+        tokenCount("2026-05-27T10:00:20.500Z", 1300, 200, 40)
       ].join("\n")
     });
 
     const usageEvents = events.filter((event) => event.type === "token.usage.recorded");
     expect(usageEvents).toHaveLength(2);
+    expect(usageEvents.map((event) => event.output_tokens)).toEqual([100, 200]);
     // First usage event has no predecessor, so no estimate.
     expect(usageEvents[0]).toEqual(
       expect.objectContaining({ decode_duration_ms: null, first_token_latency_ms: null })
     );
     expect(usageEvents[1]).toEqual(
-      expect.objectContaining({ decode_duration_ms: 8500, first_token_latency_ms: null })
+      expect.objectContaining({
+        output_tokens: 200,
+        decode_duration_ms: 8500,
+        first_token_latency_ms: null
+      })
     );
+  });
+
+  it("drops a 9.292-second decode interval that contains a function tool call", () => {
+    const tokenCount = (timestamp: string, totalTokens: number, output: number) =>
+      JSON.stringify({
+        timestamp,
+        type: "event_msg",
+        payload: {
+          type: "token_count",
+          info: {
+            total_token_usage: { total_tokens: totalTokens },
+            last_token_usage: {
+              input_tokens: 1000,
+              cached_input_tokens: 0,
+              output_tokens: output,
+              total_tokens: 1000 + output
+            }
+          }
+        }
+      });
+    const record = (timestamp: string, type: string, payload: unknown) =>
+      JSON.stringify({ timestamp, type, payload });
+    const events = extractCodexEventsFromRollout({
+      filePath: "C:/Users/test/.codex/sessions/2026/10/24/rollout-timing-tool.jsonl",
+      contents: [
+        record("2026-10-24T10:00:00.000Z", "session_meta", {
+          id: "019e5dc9-b10c-7371-8edd-066e8db7e50d",
+          timestamp: "2026-10-24T10:00:00.000Z"
+        }),
+        record("2026-10-24T10:00:00.000Z", "event_msg", {
+          type: "task_started",
+          started_at: Math.floor(Date.parse("2026-10-24T10:00:00.000Z") / 1000)
+        }),
+        tokenCount("2026-10-24T10:00:04.000Z", 1100, 100),
+        record("2026-10-24T10:00:04.100Z", "response_item", {
+          type: "function_call",
+          call_id: "call_timing_1",
+          name: "exec_command",
+          arguments: "{}"
+        }),
+        record("2026-10-24T10:00:13.000Z", "response_item", {
+          type: "function_call_output",
+          call_id: "call_timing_1",
+          output: "Exit code: 0\nWall time: 8.9 seconds"
+        }),
+        tokenCount("2026-10-24T10:00:13.292Z", 1250, 250),
+        tokenCount("2026-10-24T10:00:20.292Z", 1300, 300)
+      ].join("\n")
+    });
+
+    const usageEvents = events.filter((event) => event.type === "token.usage.recorded");
+    expect(usageEvents.map((event) => event.output_tokens)).toEqual([100, 250, 300]);
+    expect(usageEvents.map((event) => event.message_id)).toEqual([
+      "usage_1100",
+      "usage_1250",
+      "usage_1300"
+    ]);
+    expect(usageEvents.map((event) => event.decode_duration_ms)).toEqual([null, null, 7000]);
+    expect(usageEvents.map((event) => event.first_token_latency_ms)).toEqual([4000, null, null]);
+  });
+
+  it("leaves TTFT unknown when a tool or approval wait precedes the first report", () => {
+    const tokenCount = (timestamp: string, totalTokens: number, output: number) =>
+      JSON.stringify({
+        timestamp,
+        type: "event_msg",
+        payload: {
+          type: "token_count",
+          info: {
+            total_token_usage: { total_tokens: totalTokens },
+            last_token_usage: {
+              input_tokens: 1000,
+              cached_input_tokens: 0,
+              output_tokens: output,
+              total_tokens: 1000 + output
+            }
+          }
+        }
+      });
+    const record = (timestamp: string, type: string, payload: unknown) =>
+      JSON.stringify({ timestamp, type, payload });
+    const events = extractCodexEventsFromRollout({
+      filePath: "C:/Users/test/.codex/sessions/2026/10/24/rollout-ttft-wait.jsonl",
+      contents: [
+        record("2026-10-24T10:00:00.000Z", "session_meta", {
+          id: "019e5dc9-b10c-7371-8edd-066e8db7e50d",
+          timestamp: "2026-10-24T10:00:00.000Z"
+        }),
+        record("2026-10-24T10:00:00.000Z", "event_msg", {
+          type: "task_started",
+          started_at: Math.floor(Date.parse("2026-10-24T10:00:00.000Z") / 1000)
+        }),
+        record("2026-10-24T10:00:01.000Z", "response_item", {
+          type: "custom_tool_call",
+          call_id: "call_custom_wait",
+          name: "delegate_task",
+          input: {}
+        }),
+        record("2026-10-24T10:00:08.000Z", "response_item", {
+          type: "custom_tool_call_output",
+          call_id: "call_custom_wait",
+          output: "completed"
+        }),
+        tokenCount("2026-10-24T10:00:10.000Z", 1100, 100),
+        record("2026-10-24T10:00:11.000Z", "event_msg", { type: "waiting_on_approval" }),
+        tokenCount("2026-10-24T10:00:12.000Z", 1200, 200),
+        record("2026-10-24T10:00:13.000Z", "event_msg", { type: "approval_resolved" }),
+        tokenCount("2026-10-24T10:00:14.000Z", 1300, 300),
+        tokenCount("2026-10-24T10:00:21.000Z", 1400, 400)
+      ].join("\n")
+    });
+
+    const usageEvents = events.filter((event) => event.type === "token.usage.recorded");
+    expect(usageEvents.map((event) => event.first_token_latency_ms)).toEqual([
+      null,
+      null,
+      null,
+      null
+    ]);
+    expect(usageEvents.map((event) => event.decode_duration_ms)).toEqual([
+      null,
+      null,
+      null,
+      7000
+    ]);
+    expect(usageEvents.map((event) => event.message_id)).toEqual([
+      "usage_1100",
+      "usage_1200",
+      "usage_1300",
+      "usage_1400"
+    ]);
+  });
+
+  it("starts a fresh decode interval when model or tier changes mid-turn", () => {
+    const tokenCount = (timestamp: string, totalTokens: number, output: number) =>
+      JSON.stringify({
+        timestamp,
+        type: "event_msg",
+        payload: {
+          type: "token_count",
+          info: {
+            total_token_usage: { total_tokens: totalTokens },
+            last_token_usage: {
+              input_tokens: 1000,
+              cached_input_tokens: 0,
+              output_tokens: output,
+              total_tokens: 1000 + output
+            }
+          }
+        }
+      });
+    const record = (timestamp: string, type: string, payload: unknown) =>
+      JSON.stringify({ timestamp, type, payload });
+    const events = extractCodexEventsFromRollout({
+      filePath: "C:/Users/test/.codex/sessions/2026/10/24/rollout-model-change.jsonl",
+      contents: [
+        record("2026-10-24T10:00:00.000Z", "session_meta", {
+          id: "019e5dc9-b10c-7371-8edd-066e8db7e50d",
+          timestamp: "2026-10-24T10:00:00.000Z"
+        }),
+        record("2026-10-24T10:00:00.500Z", "turn_context", {
+          turn_id: "turn-1",
+          model: "gpt-turn-1",
+          service_tier: "default"
+        }),
+        record("2026-10-24T10:00:01.000Z", "event_msg", {
+          type: "task_started",
+          turn_id: "turn-1",
+          started_at: Math.floor(Date.parse("2026-10-24T10:00:01.000Z") / 1000)
+        }),
+        tokenCount("2026-10-24T10:00:04.000Z", 1100, 100),
+        record("2026-10-24T10:00:05.000Z", "turn_context", {
+          turn_id: "turn-1",
+          model: "gpt-turn-2",
+          service_tier: "priority"
+        }),
+        tokenCount("2026-10-24T10:00:12.000Z", 1200, 200),
+        tokenCount("2026-10-24T10:00:19.000Z", 1300, 300)
+      ].join("\n")
+    });
+
+    const usageEvents = events.filter((event) => event.type === "token.usage.recorded");
+    expect(usageEvents.map((event) => event.model)).toEqual([
+      "gpt-turn-1",
+      "gpt-turn-2",
+      "gpt-turn-2"
+    ]);
+    expect(usageEvents.map((event) => event.service_tier ?? null)).toEqual([
+      "default",
+      "priority",
+      "priority"
+    ]);
+    expect(usageEvents.map((event) => event.decode_duration_ms)).toEqual([null, null, 7000]);
   });
 
   it("drops decode estimates across turn boundaries and implausible gaps", () => {

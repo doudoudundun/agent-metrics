@@ -1,12 +1,16 @@
-import { mkdtemp, mkdir, readFile, writeFile, stat } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile, stat, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import Database from "better-sqlite3";
 import { describe, expect, it } from "vitest";
-import { syncCodexRollouts } from "./codex-sync.js";
+import { loadCodexTurnInputMetadata, syncCodexRollouts } from "./codex-sync.js";
 
 describe("syncCodexRollouts", () => {
-  it("syncs turn, tool, edit, and token events and skips unchanged reruns", async () => {
+  it.each([
+    { loggedModel: "gpt-5.4", cachedModel: null },
+    { loggedModel: "gpt-5.4;slug=gpt-5.4", cachedModel: null },
+    { loggedModel: "gpt-5.4", cachedModel: "gpt-5.4;" }
+  ])("syncs events and skips unchanged reruns with $loggedModel / $cachedModel", async ({ loggedModel, cachedModel }) => {
     const root = await mkdtemp(join(tmpdir(), "agent-metrics-codex-"));
     const sessionsRoot = join(root, "sessions");
     const dayRoot = join(sessionsRoot, "2026", "05", "27");
@@ -238,9 +242,17 @@ describe("syncCodexRollouts", () => {
       "INSERT INTO logs (ts, ts_nanos, level, target, feedback_log_body, estimated_bytes) VALUES (?, 0, 'INFO', 'codex_otel.log_only', ?, 0)"
     ).run(
       1779876012,
-      'event.name="codex.sse_event" conversation.id=019e5dc9-b10c-7371-8edd-066e8db7e50d model=gpt-5.4 slug=gpt-5.4'
+      `event.name="codex.sse_event" conversation.id=019e5dc9-b10c-7371-8edd-066e8db7e50d model=${loggedModel} slug=gpt-5.4`
     );
     db.close();
+
+    if (cachedModel) {
+      await writeFile(cursorPath, JSON.stringify({
+        rolloutFiles: {},
+        logsLastId: 1,
+        sessionModels: { "019e5dc9-b10c-7371-8edd-066e8db7e50d": cachedModel }
+      }), "utf8");
+    }
 
     await syncCodexRollouts({
       eventLogPath,
@@ -321,7 +333,8 @@ describe("syncCodexRollouts", () => {
         type: "token.usage.recorded",
         model: "gpt-5.4",
         input_tokens: 15928,
-        output_tokens: 239,
+        // The raw output count already includes reasoning_output_tokens.
+        output_tokens: 202,
         cache_read_input_tokens: 3456,
         cache_creation_input_tokens: 0,
         provider_id: "ai",
@@ -547,5 +560,177 @@ describe("syncCodexRollouts", () => {
         })
       ])
     );
+  });
+
+  it("finds request-tier metadata after unrelated logs push it outside the global tail", async () => {
+    const root = await mkdtemp(join(tmpdir(), "agent-metrics-codex-turn-tier-"));
+    const sessionsRoot = join(root, "sessions");
+    const sessionId = "01a16872-ab22-73f2-a40c-3b2b0a31b97a";
+    const turnId = "01a16872-af46-7bd3-b732-d23247f41c05";
+    const rolloutPath = join(
+      sessionsRoot,
+      "2026",
+      "10",
+      "23",
+      `rollout-2026-10-23T10-00-00-${sessionId}.jsonl`
+    );
+    const eventLogPath = join(root, "events.jsonl");
+    const cursorPath = join(root, "codex-cursor.json");
+    const ledgerPath = join(root, "codex-ledger.json");
+    const logsDbPath = join(root, "logs_2.sqlite");
+    const configPath = join(root, "config.toml");
+    const now = new Date().toISOString();
+
+    await mkdir(join(sessionsRoot, "2026", "10", "23"), { recursive: true });
+    await writeFile(
+      rolloutPath,
+      [
+        JSON.stringify({
+          timestamp: now,
+          type: "session_meta",
+          payload: { id: sessionId, timestamp: now, cwd: "/fixture" }
+        }),
+        JSON.stringify({
+          timestamp: now,
+          type: "event_msg",
+          payload: { type: "task_started", turn_id: turnId }
+        }),
+        JSON.stringify({
+          timestamp: now,
+          type: "turn_context",
+          payload: { turn_id: turnId, model: "gpt-6-astra" }
+        }),
+        JSON.stringify({
+          timestamp: now,
+          type: "event_msg",
+          payload: {
+            type: "token_count",
+            info: {
+              total_token_usage: { total_tokens: 12 },
+              last_token_usage: {
+                input_tokens: 10,
+                cached_input_tokens: 0,
+                output_tokens: 2,
+                total_tokens: 12
+              }
+            }
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const logs = new Database(logsDbPath);
+    logs.exec(`
+      CREATE TABLE logs (
+        id INTEGER PRIMARY KEY,
+        ts INTEGER NOT NULL,
+        ts_nanos INTEGER NOT NULL DEFAULT 0,
+        level TEXT NOT NULL DEFAULT 'INFO',
+        target TEXT NOT NULL,
+        feedback_log_body TEXT,
+        module_path TEXT,
+        file TEXT,
+        line INTEGER,
+        thread_id TEXT,
+        process_uuid TEXT,
+        estimated_bytes INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE INDEX idx_logs_thread_id ON logs(thread_id);
+    `);
+    const tags = JSON.stringify({ service_tier: "priority", "feature.fast_mode": "true" });
+    const feedbackLogBody = [
+      `session_loop{thread_id=${sessionId}}`,
+      `:submission_dispatch{otel.name=${JSON.stringify("op.dispatch.inter_agent_communication")} submission.id=${JSON.stringify("fixture-submission")}}`,
+      `:turn{otel.name=${JSON.stringify("session_task.turn")} thread.id=${sessionId} turn.id=${turnId} model=gpt-6-astra}`,
+      `:session_task.run:run_turn:run_sampling_request{turn_id=${turnId} model=gpt-6-astra cwd=${JSON.stringify("/private/fixture/path")}}`,
+      `:try_run_sampling_request{turn_id=${turnId} model=gpt-6-astra}`,
+      `: model=${JSON.stringify("gpt-6-astra")} tags_json=${tags}`
+    ].join("");
+    logs
+      .prepare(
+        "INSERT INTO logs (ts, target, feedback_log_body, thread_id) VALUES (?, 'feedback_tags', ?, ?)"
+      )
+      .run(Math.floor(Date.now() / 1000), feedbackLogBody, sessionId);
+    const insertNoise = logs.prepare(
+      "INSERT INTO logs (ts, target, feedback_log_body, thread_id) VALUES (?, 'noise', ?, ?)"
+    );
+    const addNoise = logs.transaction(() => {
+      for (let index = 0; index < 5_001; index += 1) {
+        insertNoise.run(Math.floor(Date.now() / 1000), "bounded fixture row", "other-session");
+      }
+    });
+    addNoise();
+    logs.close();
+
+    expect(await loadCodexTurnInputMetadata(logsDbPath)).toEqual(new Map());
+    const sessionMetadata = await loadCodexTurnInputMetadata(logsDbPath, sessionId);
+    expect(sessionMetadata.get(`${sessionId}\0${turnId}`)).toEqual({
+      model: "gpt-6-astra",
+      serviceTier: "priority"
+    });
+
+    await syncCodexRollouts({
+      eventLogPath,
+      cursorPath,
+      ledgerPath,
+      sessionsRoot,
+      logsDbPath,
+      configPath
+    });
+
+    const events = (await readFile(eventLogPath, "utf8"))
+      .trim()
+      .split("\n")
+      .filter((line) => line.length > 0)
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(events.find((event) => event.type === "token.usage.recorded")).toMatchObject({
+      model: "gpt-6-astra",
+      service_tier: "priority"
+    });
+
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it("bounds the indexed session lookup before filtering recent log rows", async () => {
+    const root = await mkdtemp(join(tmpdir(), "agent-metrics-codex-session-bound-"));
+    const logsDbPath = join(root, "logs_2.sqlite");
+    const sessionId = "session-with-more-than-the-scan-window";
+    const turnId = "older-turn";
+    const logs = new Database(logsDbPath);
+    logs.exec(`
+      CREATE TABLE logs (
+        id INTEGER PRIMARY KEY,
+        target TEXT NOT NULL,
+        feedback_log_body TEXT,
+        thread_id TEXT
+      );
+      CREATE INDEX idx_logs_thread_id ON logs(thread_id);
+    `);
+    const tags = JSON.stringify({ service_tier: "priority" });
+    const feedbackLogBody = [
+      `session_loop{thread_id=${sessionId}}`,
+      `:submission_dispatch{otel.name=${JSON.stringify("op.dispatch.inter_agent_communication")} submission.id=${JSON.stringify("fixture-submission")}}`,
+      `:turn{otel.name=${JSON.stringify("session_task.turn")} thread.id=${sessionId} turn.id=${turnId} model=gpt-6-astra}`,
+      `:session_task.run:run_turn:run_sampling_request{turn_id=${turnId} model=gpt-6-astra cwd=${JSON.stringify("/fixture")}}`,
+      `:try_run_sampling_request{turn_id=${turnId} model=gpt-6-astra}`,
+      `: model=${JSON.stringify("gpt-6-astra")} tags_json=${tags}`
+    ].join("");
+    logs.prepare(
+      "INSERT INTO logs (target, feedback_log_body, thread_id) VALUES ('feedback_tags', ?, ?)"
+    ).run(feedbackLogBody, sessionId);
+    const insertNoise = logs.prepare(
+      "INSERT INTO logs (target, feedback_log_body, thread_id) VALUES ('noise', 'bounded fixture row', ?)"
+    );
+    logs.transaction(() => {
+      for (let index = 0; index < 5_000; index += 1) {
+        insertNoise.run(sessionId);
+      }
+    })();
+    logs.close();
+
+    expect(await loadCodexTurnInputMetadata(logsDbPath, sessionId)).toEqual(new Map());
+
+    await rm(root, { recursive: true, force: true });
   });
 });

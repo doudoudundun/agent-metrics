@@ -25,6 +25,7 @@ export const TokensByModelRowSchema = TokenComponentsSchema.extend({
   sourceVendor: SourceVendorSchema,
   serviceTier: z.string().min(1).nullable().optional(),
   serviceTierMultiplier: z.number().positive().optional(),
+  usageMode: z.enum(["fast", "ultrafast", "standard", "unknown"]).optional(),
   costUsd: z.number().nonnegative().nullable(),
   avgOutputTokensPerSecond: z.number().nonnegative().nullable(),
   avgFirstTokenLatencyMs: z.number().nonnegative().nullable(),
@@ -34,7 +35,11 @@ export const TokensByModelRowSchema = TokenComponentsSchema.extend({
    * cacheable input at all, so the dashboard can tell "no caching" apart from
    * "no traffic".
    */
-  cacheHitRate: FiniteRate
+  cacheHitRate: FiniteRate,
+  /** Number of usage rows with a positive decode duration; this is not a request count. */
+  speedSampleCount: NonNegativeInt.optional(),
+  /** Number of usage rows carrying a valid first-token latency; this is not a request count. */
+  ttftSampleCount: NonNegativeInt.optional()
 });
 
 export const SourceBreakdownRowSchema = z.object({

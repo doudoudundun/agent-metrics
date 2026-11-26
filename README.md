@@ -1,6 +1,6 @@
 # Agent Metrics
 
-Local-first metrics dashboard for AI coding agents (Claude Code, Codex, Cursor, OpenCode, ZCode, Kimi Code, DSH, MiMo, WorkBuddy).
+Local-first metrics dashboard for AI coding agents (Claude Code, Codex, Cursor, OpenCode, ZCode, Kimi Code, DSH, MiMo, WorkBuddy, Antigravity).
 
 ## Quick Start
 
@@ -19,7 +19,8 @@ After startup, open Claude Code in any workspace and trigger a few real tools su
 ## How Collection Works
 
 - Claude Code hooks call the local ingress collector in `apps/cli`; other vendors are collected by source adapters (Codex rollouts, Cursor tracking DB, OpenCode/ZCode/MiMo SQLite, Kimi Code wire records, DSH JSONL, WorkBuddy session transcripts under `~/.workbuddy/projects`, plus CodeBuddy CLI transcripts under `~/.codebuddy/projects`, which share the same schema and are reported as WorkBuddy usage).
-- CodeBuddy CLI also writes a per-request text log under `~/.codebuddy/logs/<date>/<workspace>__<hash>.log`, which `packages/adapters-codebuddy-log` parses. It is a separate adapter because a headless CLI run can leave no transcript at all; the transcript adapter covers the rest, and both share a message-id ledger so a request is never counted twice.
+- CodeBuddy CLI and WorkBuddy's bundled CLI also write per-request text logs under `~/.codebuddy/logs/<date>/<workspace>__<hash>.log` and `~/.workbuddy/logs/<date>/<workspace>__<hash>.log`, which `packages/adapters-codebuddy-log` parses (including WorkBuddy's en-US date format). A headless CLI run can leave no transcript; both log roots and the transcript adapter share message-id ledgers to avoid counting the same request twice. A source `logRoot` argument limits collection to that explicit root; otherwise the WorkBuddy and CodeBuddy home overrides also apply to log discovery.
+- Antigravity (the agent workflow T3 Code manages over ACP) is collected by the `antigravity-acp` adapter from session transcripts under `~/.t3/userdata/providers/antigravity/<account>/antigravity-acp/brain/*/.system_generated/logs/transcript_full.jsonl`. Only this Antigravity-specific provider subtree is scanned; T3's own Codex/Claude records stay with their existing adapters so nothing is counted twice. The transcript reports `input_tokens` as the non-cached portion of the request (delta semantics — `cache_read_tokens` is a separate counter that routinely exceeds it) and has no cache-creation or timing fields, so those stay empty rather than estimated. Cost rows are API reference pricing, not subscription billing. Other Antigravity IDE data paths are not collected.
 - Any adapter can silently stop seeing usage without raising an error, so `corepack pnpm audit:usage` checks the invariants that a broken source violates (token semantics, cache coverage, stalled sources, duplicate requests, unpriced rows). See `docs/manual/usage-source-playbook.md` before adding a source.
 - Raw hook envelopes append to `data/hooks/raw/claude-code.jsonl`.
 - `agent-metrics hooks parse --follow` converts raw envelopes into normalized events at `data/events/events.jsonl`.

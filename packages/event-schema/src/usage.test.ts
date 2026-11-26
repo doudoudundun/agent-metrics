@@ -40,4 +40,14 @@ describe("usage source semantics registry", () => {
       .map(([source]) => source);
     expect(snapshots).toEqual(["cursor-composer-context"]);
   });
+
+  it("records Antigravity ACP transcripts as delta input measured per request", () => {
+    // Antigravity's `input_tokens` excludes cached tokens and `cache_read_tokens`
+    // routinely exceeds it, so subtracting the cache read (gross handling) would
+    // produce negative input. Each PLANNER_RESPONSE line is one request.
+    expect(USAGE_SOURCE_SEMANTICS["antigravity-acp"]).toEqual({
+      inputTokenSemantics: "delta",
+      usageMeasurement: "increment"
+    });
+  });
 });

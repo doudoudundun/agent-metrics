@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { appendFile, mkdir, mkdtemp, stat, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
@@ -40,7 +40,7 @@ const scopedAppInput = {
 beforeEach(async () => {
   vi.restoreAllMocks();
   // Isolate every source-path env var from real developer telemetry. The
-  // shared helper redirects all 15 known source env vars (including the five
+  // shared helper redirects all 21 known source env vars (including the five
   // this file previously missed: ZCODE_DB_PATH, ZCODE_MODELS_PATH,
   // KIMICODE_HOME, CURSOR_GLOBAL_STORAGE_DB_PATH, CURSOR_PROJECTS_ROOT) to nonexistent paths
   // under a temp root, and restores them on cleanup. Tests that need a real
@@ -534,8 +534,8 @@ describe("ingestEventLog", () => {
       sourceVendor: "claude-code",
       nextScheduledAt: expect.any(String)
     });
-    // Cursor / Codex / OpenCode / ZCode / Kimi Code / DSH / MiMo / WorkBuddy use
-    // the light refresh loop; coordinator only starts them once.
+    // Cursor / Codex / OpenCode / ZCode / Kimi Code / DSH / MiMo / WorkBuddy /
+    // Antigravity use the light refresh loop; coordinator only starts them once.
     for (const vendor of [
       "cursor",
       "codex",
@@ -544,7 +544,8 @@ describe("ingestEventLog", () => {
       "kimicode",
       "dsh",
       "mimo",
-      "workbuddy"
+      "workbuddy",
+      "antigravity"
     ] as const) {
       expect(states.find((state) => state.sourceVendor === vendor)).toMatchObject({
         sourceVendor: vendor,
@@ -945,9 +946,9 @@ describe("ingestEventLog", () => {
       sessionCount: 1,
       turnCount: 1,
       responseCount: 1,
-      totalTokens: 16167,
+      totalTokens: 16130,
       inputTokens: 12472,
-      outputTokens: 239,
+      outputTokens: 202,
       cacheReadTokens: 3456,
       cacheCreationTokens: 0,
       totalToolCalls: 4,
@@ -960,7 +961,7 @@ describe("ingestEventLog", () => {
           sourceVendor: "codex",
           sessionCount: 1,
           turnCount: 1,
-          totalTokens: 16167,
+          totalTokens: 16130,
           toolCalls: 4
         }
       ],
@@ -968,19 +969,19 @@ describe("ingestEventLog", () => {
         {
           providerHost: "api.psydo.top",
           providerId: "ai",
-          totalTokens: 16167
+          totalTokens: 16130
         }
       ],
       tokensByModel: [
         {
           model: "gpt-5.4",
-          totalTokens: 16167
+          totalTokens: 16130
         }
       ]
     });
     expect(overview.json().tokensByModel[0].sourceVendor).toBe("codex");
-    expect(overview.json().tokensByModel[0].costUsd).toBeCloseTo(0.035629, 6);
-    expect(overview.json().totalCostUsd).toBeCloseTo(0.035629, 6);
+    expect(overview.json().tokensByModel[0].costUsd).toBeCloseTo(0.035074, 6);
+    expect(overview.json().totalCostUsd).toBeCloseTo(0.035074, 6);
     expect(sessions.statusCode).toBe(200);
     expect(sessions.json()).toMatchObject({
       rows: [
@@ -991,7 +992,7 @@ describe("ingestEventLog", () => {
           providerId: "ai",
           providerHost: "api.psydo.top",
           turnCount: 1,
-          totalTokens: 16167,
+          totalTokens: 16130,
           lastModel: "gpt-5.4"
         }
       ]
@@ -1104,6 +1105,152 @@ describe("ingestEventLog", () => {
         }
       ]
     });
+
+    await app.close();
+  });
+
+  it("syncs Antigravity ACP transcripts before overview reads when repoRoot is provided", async () => {
+    const repoRoot = await mkdtemp(join(tmpdir(), "agent-metrics-antigravity-core-"));
+    const paths = getAgentMetricsPaths(repoRoot);
+    const fixture = await createAntigravityFixture(repoRoot);
+    process.env.AGENT_METRICS_ANTIGRAVITY_PROVIDERS_ROOT = fixture.providersRoot;
+
+    const app = buildApp({
+      dbPath,
+      eventLogPath: paths.eventLogPath,
+      repoRoot,
+      ...scopedAppInput
+    });
+
+    const initialSync = app.syncCoordinator.startInitialSync();
+    await waitForSyncRuns(app, initialSync.runs.map((run) => run.runId));
+
+    const overview = await app.inject({
+      method: "GET",
+      url: "/api/overview?mode=calendar&range=day&sourceVendor=antigravity"
+    });
+    const sessions = await app.inject({ method: "GET", url: "/api/sessions?mode=calendar&range=day" });
+    const syncStatus = await app.inject({ method: "GET", url: "/api/sync/status" });
+
+    // Canonical accounting for the fixture (both usage rows are delta-input
+    // increments): displayed input is the raw input, and the total adds output,
+    // cache read, and cache creation on top.
+    //   neon:     3573 + 353 + 33090          = 37016
+    //   hydrogen: 6808 + 617 + 36664          = 44089
+    //   total:    10381 + 970 + 69754         = 81105
+    expect(overview.statusCode).toBe(200);
+    expect(overview.json()).toMatchObject({
+      sessionCount: 1,
+      turnCount: 1,
+      responseCount: 2,
+      totalTokens: 81105,
+      inputTokens: 10381,
+      outputTokens: 970,
+      cacheReadTokens: 69754,
+      cacheCreationTokens: 0,
+      sourceBreakdown: [
+        {
+          sourceVendor: "antigravity",
+          sessionCount: 1,
+          turnCount: 1,
+          totalTokens: 81105,
+          toolCalls: 0
+        }
+      ],
+      providerBreakdown: [
+        {
+          providerHost: null,
+          providerId: "google",
+          totalTokens: 81105
+        }
+      ],
+      tokensByModel: [
+        {
+          model: "gemini-flash-worker-agy",
+          sourceVendor: "antigravity",
+          totalTokens: 44089,
+          inputTokens: 6808,
+          outputTokens: 617,
+          cacheReadTokens: 36664,
+          cacheCreationTokens: 0
+        },
+        {
+          model: "gemini-pro-orchestrator-neon",
+          sourceVendor: "antigravity",
+          totalTokens: 37016,
+          inputTokens: 3573,
+          outputTokens: 353,
+          cacheReadTokens: 33090,
+          cacheCreationTokens: 0
+        }
+      ]
+    });
+    // Antigravity (T3) list cards: hydrogen 1.5/7.5/0.075 and neon 3/15/0.15
+    // per 1M input/output/cache-read tokens.
+    expect(overview.json().tokensByModel[0].costUsd).toBeCloseTo(0.0175893, 6);
+    expect(overview.json().tokensByModel[1].costUsd).toBeCloseTo(0.0209775, 6);
+    expect(overview.json().sourceBreakdown[0].costUsd).toBeCloseTo(0.0385668, 6);
+    expect(overview.json().totalCostUsd).toBeCloseTo(0.0385668, 6);
+
+    expect(sessions.statusCode).toBe(200);
+    expect(sessions.json()).toMatchObject({
+      rows: [
+        {
+          sourceInstanceId: "antigravity:default",
+          sessionId: "session-1",
+          sourceVendor: "antigravity",
+          sourceAdapters: ["antigravity-acp"],
+          providerId: "google",
+          providerHost: null,
+          turnCount: 1,
+          totalTokens: 81105,
+          lastModel: "gemini-flash-worker-agy"
+        }
+      ]
+    });
+
+    expect(syncStatus.statusCode).toBe(200);
+    const antigravityState = syncStatus
+      .json()
+      .adapters.find((adapter: { sourceVendor: string }) => adapter.sourceVendor === "antigravity");
+    expect(antigravityState).toMatchObject({
+      sourceAdapter: "antigravity-acp",
+      sourceInstanceId: "antigravity:default",
+      lastError: null
+    });
+    expect(antigravityState.lastSuccessfulAt).not.toBeNull();
+
+    // Re-running the full manual sync must not double-count the transcript:
+    // the adapter ledger keeps the canonical log append-only and the totals
+    // stay identical.
+    const manualSync = await app.inject({
+      method: "POST",
+      url: "/api/sync",
+      headers: { origin: "http://127.0.0.1" }
+    });
+    expect(manualSync.statusCode).toBe(202);
+    await waitForSyncRuns(app, manualSync.json().runs.map((run: { runId: string }) => run.runId));
+
+    const rerunOverview = await app.inject({
+      method: "GET",
+      url: "/api/overview?mode=calendar&range=day&sourceVendor=antigravity"
+    });
+    expect(rerunOverview.json()).toMatchObject({
+      sessionCount: 1,
+      totalTokens: 81105,
+      inputTokens: 10381,
+      outputTokens: 970,
+      cacheReadTokens: 69754
+    });
+    expect(rerunOverview.json().totalCostUsd).toBeCloseTo(0.0385668, 6);
+
+    const antigravityEvents = (await readFile(paths.eventLogPath, "utf8"))
+      .trim()
+      .split("\n")
+      .filter((line) => line.length > 0)
+      .map((line) => JSON.parse(line) as { source_vendor?: string })
+      .filter((event) => event.source_vendor === "antigravity");
+    expect(antigravityEvents).toHaveLength(6);
 
     await app.close();
   });
@@ -2788,4 +2935,67 @@ async function createCodexFixture(root: string): Promise<{
     logsDbPath,
     configPath
   };
+}
+
+// Mirrors the real Antigravity ACP brain transcript layout
+// (<providersRoot>/<account>/antigravity-acp/brain/<session>/.system_generated/
+// logs/transcript_full.jsonl) as covered by the adapter's own tests. Timestamps
+// stay inside the scopedAppInput calendar day so Today aggregates include them.
+async function createAntigravityFixture(root: string): Promise<{
+  providersRoot: string;
+}> {
+  const providersRoot = join(root, "providers");
+  const transcriptPath = join(
+    providersRoot,
+    "account-a",
+    "antigravity-acp",
+    "brain",
+    "session-1",
+    ".system_generated",
+    "logs",
+    "transcript_full.jsonl"
+  );
+
+  await mkdir(dirname(transcriptPath), { recursive: true });
+  await writeFile(
+    transcriptPath,
+    [
+      JSON.stringify({
+        step_index: 0,
+        source: "USER_EXPLICIT",
+        type: "USER_INPUT",
+        status: "DONE",
+        created_at: "2026-05-27T10:00:00Z",
+        content: "fix the flaky test"
+      }),
+      JSON.stringify({
+        step_index: 1,
+        source: "MODEL",
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        created_at: "2026-05-27T10:00:30Z",
+        model: "gemini-pro-orchestrator-neon",
+        input_tokens: 3573,
+        cache_read_tokens: 33090,
+        output_tokens: 353,
+        thinking: "planning",
+        content: "running the worker"
+      }),
+      JSON.stringify({
+        step_index: 3,
+        source: "MODEL",
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        created_at: "2026-05-27T10:01:00Z",
+        model: "gemini-flash-worker-agy",
+        input_tokens: 6808,
+        cache_read_tokens: 36664,
+        output_tokens: 617,
+        tool_calls: [{ name: "run_tests" }]
+      })
+    ].join("\n") + "\n",
+    "utf8"
+  );
+
+  return { providersRoot };
 }

@@ -1,4 +1,4 @@
-import type { SourceVendor, UsageMeasurement } from "@agent-metrics/event-schema";
+import { normalizeModelId, resolveUsageMode, type SourceVendor, type UsageMeasurement, type UsageMode } from "@agent-metrics/event-schema";
 import {
   estimateCostUsd,
   isAdditiveUsage,
@@ -15,6 +15,7 @@ import {
   TOOL_CALLS_SESSION_JOIN
 } from "./query-support.js";
 import { dropCursorGenerationShadowedByOfficial } from "./cursor-account-usage.js";
+import { excludeCodexToolTiming } from "./codex-timing.js";
 
 type SessionOverviewRow = {
   session_id: string;
@@ -46,6 +47,8 @@ type AssistantResponseOverviewRow = {
  * second time.
  */
 export type TokenUsageOverviewRow = {
+  source_instance_id?: string;
+  session_id?: string;
   model: string | null;
   input_token_semantics: "delta";
   input_tokens: number;
@@ -69,6 +72,7 @@ export type TokenUsageOverviewRow = {
 
 type TokensByModelRow = {
   model: string;
+  usageMode: UsageMode;
   sourceVendor: SourceVendor;
   /**
    * Served speed tier, null for standard traffic. Accelerated tiers are their
@@ -86,10 +90,13 @@ type TokensByModelRow = {
   avgOutputTokensPerSecond: number | null;
   avgFirstTokenLatencyMs: number | null;
   cacheHitRate: number;
+  speedSampleCount: number;
+  ttftSampleCount: number;
 };
 
 type ModelUsageAccumulator = {
   model: string;
+  usageMode: UsageMode;
   sourceVendor: SourceVendor;
   serviceTier: string | null;
   serviceTierMultiplier: number;
@@ -102,6 +109,7 @@ type ModelUsageAccumulator = {
   pricedRows: number;
   decodeMs: number;
   decodedOutputTokens: number;
+  speedSampleCount: number;
   ttftSumMs: number;
   ttftCount: number;
 };
@@ -192,7 +200,10 @@ export function selectTokenUsageRows(
   const rows = db
     .prepare<TokenUsageOverviewRow>(
       `SELECT
+        source_instance_id,
+        session_id,
         model_id AS model,
+        service_tier,
         -- Displayed input tokens are stored already normalized by the vendor's
         -- semantics; the "delta" tag keeps metrics-engine from subtracting
         -- cache reads again (see TokenUsageOverviewRow).
@@ -204,18 +215,17 @@ export function selectTokenUsageRows(
         source_vendor,
         usage_measurement,
         usage_source,
-        service_tier,
         occurred_at AS created_at,
         provider_id,
         provider_host,
         decode_duration_ms,
         first_token_latency_ms
-      FROM usage_events${andWhere(window, "usage_measurement = 'increment'")}
+      FROM additive_usage_events${andWhere(window, "usage_measurement = 'increment'")}
       ORDER BY occurred_at ASC, event_id ASC`
     )
     .all(...window.params);
 
-  return dropCursorGenerationShadowedByOfficial(rows);
+  return excludeCodexToolTiming(db, dropCursorGenerationShadowedByOfficial(rows));
 }
 
 export function selectTokensByModel(
@@ -234,14 +244,16 @@ export function selectTokensByModel(
       continue;
     }
 
-    const model = row.model ?? "unknown";
-    const serviceTier = normalizeServiceTier(row.service_tier);
-    // The tier is part of the group key: fast-mode traffic is the same model
-    // billed at 2x, so it gets its own row (its own tokens, cost and timing)
-    // rather than blending into the standard-priced line.
-    const groupKey = `${row.source_vendor}\0${model}\0${serviceTier ?? ""}`;
+    const model = normalizeModelId(row.model) ?? "unknown";
+    const usageMode = resolveUsageMode(model, row.service_tier);
+    // Older sources spell out the default tier. Treat it as unmarked, while
+    // keeping real service tiers separate for accurate billing and display.
+    const normalizedTier = normalizeServiceTier(row.service_tier);
+    const serviceTier = normalizedTier === "default" || normalizedTier === "normal" ? null : normalizedTier;
+    const groupKey = `${row.source_vendor}\0${model}\0${usageMode}\0${serviceTier ?? ""}`;
     const current = grouped.get(groupKey) ?? {
       model,
+      usageMode,
       sourceVendor: row.source_vendor,
       serviceTier,
       serviceTierMultiplier: serviceTierMultiplier(serviceTier),
@@ -254,6 +266,7 @@ export function selectTokensByModel(
       pricedRows: 0,
       decodeMs: 0,
       decodedOutputTokens: 0,
+      speedSampleCount: 0,
       ttftSumMs: 0,
       ttftCount: 0
     };
@@ -273,12 +286,13 @@ export function selectTokensByModel(
     // price contribute nothing but are tracked so an entirely unpriced model
     // still renders "—" instead of a misleading $0.00.
     const rowCostUsd = estimateCostUsd({
-      model: row.model,
+      model: model === "unknown" ? null : model,
       inputTokens: row.input_tokens,
       outputTokens: row.output_tokens,
       cacheReadTokens: row.cache_read_input_tokens,
       cacheCreationTokens: row.cache_creation_input_tokens,
-      serviceTier: row.service_tier
+      serviceTier: row.service_tier,
+      usageMode
     });
     if (rowCostUsd !== null) {
       current.costUsd += rowCostUsd;
@@ -287,11 +301,20 @@ export function selectTokensByModel(
     // Output tokens per second is a duration-weighted aggregate (total output /
     // total decode time), not an average of per-request rates. Rows without a
     // positive decode duration or without TTFT stay out of that statistic.
-    if (row.decode_duration_ms !== null && row.decode_duration_ms > 0) {
+    if (
+      row.decode_duration_ms !== null &&
+      Number.isFinite(row.decode_duration_ms) &&
+      row.decode_duration_ms > 0
+    ) {
       current.decodeMs += row.decode_duration_ms;
       current.decodedOutputTokens += row.output_tokens;
+      current.speedSampleCount += 1;
     }
-    if (row.first_token_latency_ms !== null) {
+    if (
+      row.first_token_latency_ms !== null &&
+      Number.isFinite(row.first_token_latency_ms) &&
+      row.first_token_latency_ms >= 0
+    ) {
       current.ttftSumMs += row.first_token_latency_ms;
       current.ttftCount += 1;
     }
@@ -307,6 +330,7 @@ export function selectTokensByModel(
 
       return {
         model: current.model,
+        usageMode: current.usageMode,
         sourceVendor: current.sourceVendor,
         serviceTier: current.serviceTier,
         serviceTierMultiplier: current.serviceTierMultiplier,
@@ -319,7 +343,9 @@ export function selectTokensByModel(
         avgOutputTokensPerSecond:
           current.decodeMs > 0 ? (current.decodedOutputTokens * 1000) / current.decodeMs : null,
         avgFirstTokenLatencyMs: current.ttftCount > 0 ? current.ttftSumMs / current.ttftCount : null,
-        cacheHitRate: cacheableInput > 0 ? current.cacheReadTokens / cacheableInput : 0
+        cacheHitRate: cacheableInput > 0 ? current.cacheReadTokens / cacheableInput : 0,
+        speedSampleCount: current.speedSampleCount,
+        ttftSampleCount: current.ttftCount
       };
     })
     .sort(

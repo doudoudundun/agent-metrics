@@ -31,7 +31,11 @@ describe("getAgentMetricsPaths", () => {
       codexCursorPath: "D:/projects/dev/agent-metrics/data/sources/state/codex-cursor.json",
       codexLedgerPath: "D:/projects/dev/agent-metrics/data/sources/state/codex-ledger.json",
       mimoCursorPath: "D:/projects/dev/agent-metrics/data/sources/state/mimo-cursor.json",
-      mimoLedgerPath: "D:/projects/dev/agent-metrics/data/sources/state/mimo-ledger.json"
+      mimoLedgerPath: "D:/projects/dev/agent-metrics/data/sources/state/mimo-ledger.json",
+      antigravityCursorPath:
+        "D:/projects/dev/agent-metrics/data/sources/state/antigravity-cursor.json",
+      antigravityLedgerPath:
+        "D:/projects/dev/agent-metrics/data/sources/state/antigravity-ledger.json"
     });
   });
 
@@ -83,7 +87,11 @@ describe("getAgentMetricsPaths", () => {
       mimoCursorPath:
         "D:\\projects\\dev\\agent-metrics\\data\\sources\\state\\mimo-cursor.json",
       mimoLedgerPath:
-        "D:\\projects\\dev\\agent-metrics\\data\\sources\\state\\mimo-ledger.json"
+        "D:\\projects\\dev\\agent-metrics\\data\\sources\\state\\mimo-ledger.json",
+      antigravityCursorPath:
+        "D:\\projects\\dev\\agent-metrics\\data\\sources\\state\\antigravity-cursor.json",
+      antigravityLedgerPath:
+        "D:\\projects\\dev\\agent-metrics\\data\\sources\\state\\antigravity-ledger.json"
     });
   });
 
@@ -135,7 +143,11 @@ describe("getAgentMetricsPaths", () => {
       mimoCursorPath:
         "\\\\server\\share\\repo\\data\\sources\\state\\mimo-cursor.json",
       mimoLedgerPath:
-        "\\\\server\\share\\repo\\data\\sources\\state\\mimo-ledger.json"
+        "\\\\server\\share\\repo\\data\\sources\\state\\mimo-ledger.json",
+      antigravityCursorPath:
+        "\\\\server\\share\\repo\\data\\sources\\state\\antigravity-cursor.json",
+      antigravityLedgerPath:
+        "\\\\server\\share\\repo\\data\\sources\\state\\antigravity-ledger.json"
     });
   });
 });

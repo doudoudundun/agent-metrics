@@ -1,8 +1,10 @@
 /**
- * Official list prices in USD per 1M tokens (standard on-demand tier), captured
- * 2026-10-09 from: openai.com, platform.claude.com, docs.z.ai,
+ * Official list prices in USD per 1M tokens (standard on-demand tier).
+ * Base catalog captured 2026-10-09 from: openai.com, platform.claude.com, docs.z.ai,
  * api-docs.deepseek.com, platform.minimax.io, mimo.mi.com, platform.kimi.ai,
- * x.ai API docs.
+ * x.ai API docs. Speed-specific OpenAI/Claude/Cursor/Kimi/MiMo rates were
+ * verified again 2026-10-23; their source links appear alongside those entries.
+ * Kimi K3.1 Pro rows use the refreshed upstream USD rate card.
  *
  * WorkBuddy/CodeBuddy coverage added 2026-10-21 from the model table shipped
  * inside the desktop app (`resources/app.asar.unpacked/cli/product.json`, 58
@@ -31,7 +33,19 @@
  * Fast, Grok 4.7 standard vs Fast), and effort suffixes never move the price.
  * Cursor's long-context tiers (Grok 4.7 500k) are absent because the stored
  * usage rows carry no input-length tier to select them.
+ *
+ * Antigravity (T3) coverage added 2026-11-23 from the official-source snapshot
+ * inside T3 Code's own rate table (~/.t3/userdata/usage-model-rates.json,
+ * fetched 2026-11-23; first-party Gemini rows sourced from ai.google.dev,
+ * aistudio.google.com and cloud.google.com). Antigravity sells seat-based
+ * subscription quotas, so these per-token figures are API reference estimates
+ * only, never subscription bills. T3's low/medium/high/xhigh suffixes are
+ * reasoning/thinking levels priced at the base card, and its permission /
+ * interaction modes are control-plane settings with no price at all. The
+ * generic router target `antigravity-default` stays unpriced on purpose.
  */
+
+import { normalizeModelId, resolveUsageMode, type UsageMode } from "@agent-metrics/event-schema";
 
 export type ModelPricing = {
   inputPer1M: number;
@@ -40,17 +54,37 @@ export type ModelPricing = {
   cacheWritePer1M: number;
 };
 
+// Shared rate cards referenced by several Antigravity (T3) rows below, so
+// thinking-tier suffixes and role aliases cannot drift from the base card.
+// Snapshot 2026-11-23: Gemini rows are Google first-party list prices
+// (ai.google.dev / aistudio.google.com / cloud.google.com); Gemini does not
+// bill cache writes on these cards, so cacheWritePer1M stays 0. Carbon is a
+// promotional rate through 2026-11-30; Google lists 4/20/cacheRead 0.20 from
+// 2026-12-01 (single-snapshot convention keeps today's promo card). gpt-oss
+// has no OpenAI first-party API price card, so its row is Groq's hosted
+// reference rate — NOT an OpenAI list price.
+const GEMINI_4_NEON_CARD: ModelPricing = { inputPer1M: 3, outputPer1M: 15, cacheReadPer1M: 0.15, cacheWritePer1M: 0 };
+const GEMINI_4_CARBON_CARD: ModelPricing = { inputPer1M: 2, outputPer1M: 10, cacheReadPer1M: 0.1, cacheWritePer1M: 0 };
+const GEMINI_4_ARGON_CARD: ModelPricing = { inputPer1M: 2, outputPer1M: 10, cacheReadPer1M: 0.1, cacheWritePer1M: 0 };
+const GEMINI_4_HYDROGEN_CARD: ModelPricing = { inputPer1M: 1.5, outputPer1M: 7.5, cacheReadPer1M: 0.075, cacheWritePer1M: 0 };
+const GEMINI_3_X_FLASH_CARD: ModelPricing = { inputPer1M: 0.75, outputPer1M: 3.75, cacheReadPer1M: 0.075, cacheWritePer1M: 0 };
+const GEMINI_3_1_PRO_CARD: ModelPricing = { inputPer1M: 2, outputPer1M: 12, cacheReadPer1M: 0.2, cacheWritePer1M: 0 };
+const GPT_OSS_120B_CARD: ModelPricing = { inputPer1M: 0.15, outputPer1M: 0.6, cacheReadPer1M: 0.075, cacheWritePer1M: 0 };
+
 export const MODEL_PRICING_USD: Record<string, ModelPricing> = {
   "gpt-5.4": { inputPer1M: 2.5, outputPer1M: 15, cacheReadPer1M: 0.25, cacheWritePer1M: 0 },
   "gpt-5.4-mini": { inputPer1M: 0.75, outputPer1M: 4.5, cacheReadPer1M: 0.075, cacheWritePer1M: 0 },
   "gpt-5.5": { inputPer1M: 5, outputPer1M: 30, cacheReadPer1M: 0.5, cacheWritePer1M: 0 },
-  // Latest OpenAI rows use the short-context tier; long-context sessions cost 2x.
+  // OpenAI rows use short-context rates; long-context modifiers are not inferred.
+  // GPT-6.2 rates verified 2026-11-18: https://developers.openai.com/api/docs/pricing
+  "gpt-6.2-astra": { inputPer1M: 8, outputPer1M: 40, cacheReadPer1M: 0.4, cacheWritePer1M: 10 },
+  "gpt-6.2-sol": { inputPer1M: 2, outputPer1M: 10, cacheReadPer1M: 0.1, cacheWritePer1M: 2.5 },
   "gpt-6-astra": { inputPer1M: 10, outputPer1M: 50, cacheReadPer1M: 1, cacheWritePer1M: 12.5 },
   "gpt-6.1-sol": { inputPer1M: 2, outputPer1M: 10, cacheReadPer1M: 0.1, cacheWritePer1M: 2.5 },
   // OpenAI standard API rates, <=272K input and 30-minute cache retention (2026-10-27).
   "gpt-6.1-terra": { inputPer1M: 1, outputPer1M: 5, cacheReadPer1M: 0.05, cacheWritePer1M: 1.25 },
   "gpt-6-luna": { inputPer1M: 0.1, outputPer1M: 0.5, cacheReadPer1M: 0.01, cacheWritePer1M: 0.125 },
-  // Promotional price through at least 2026-11-21.
+  // Promotional price through 2026-11-30 per the OpenAI pricing page.
   "gpt-5.6-sol": { inputPer1M: 4, outputPer1M: 20, cacheReadPer1M: 0.4, cacheWritePer1M: 5 },
   // <=272K context tier (2x above); terra rates confirmed by gradually.ai.
   "gpt-5.6-terra": { inputPer1M: 2, outputPer1M: 12, cacheReadPer1M: 0.2, cacheWritePer1M: 2.5 },
@@ -63,6 +97,7 @@ export const MODEL_PRICING_USD: Record<string, ModelPricing> = {
   "claude-fable-5": { inputPer1M: 10, outputPer1M: 50, cacheReadPer1M: 1, cacheWritePer1M: 12.5 },
   "claude-mythos-5": { inputPer1M: 10, outputPer1M: 50, cacheReadPer1M: 1, cacheWritePer1M: 12.5 },
   "claude-opus-5": { inputPer1M: 5, outputPer1M: 25, cacheReadPer1M: 0.5, cacheWritePer1M: 6.25 },
+  "claude-opus-5-fast": { inputPer1M: 10, outputPer1M: 50, cacheReadPer1M: 1, cacheWritePer1M: 12.5 },
   // Cursor's thinking-effort suffix on Opus 5. Cursor bills every Opus 5 prompt at
   // the base rate regardless of thinking depth (only the separate
   // `claude-opus-5-fast` id costs 2x), so this is the same card as claude-opus-5.
@@ -79,6 +114,10 @@ export const MODEL_PRICING_USD: Record<string, ModelPricing> = {
   // Cursor effort-suffixed variant of sonnet-5-5.
   "claude-sonnet-5-5-high": { inputPer1M: 2, outputPer1M: 10, cacheReadPer1M: 0.1, cacheWritePer1M: 2.5 },
   "claude-opus-5-5": { inputPer1M: 4, outputPer1M: 20, cacheReadPer1M: 0.2, cacheWritePer1M: 5 },
+  "claude-opus-4-8": { inputPer1M: 5, outputPer1M: 25, cacheReadPer1M: 0.5, cacheWritePer1M: 6.25 },
+  // Antigravity/T3 also serves Opus 4.6; platform.claude.com standard card
+  // (5-minute cache-write tier), snapshot 2026-11-23.
+  "claude-opus-4-6": { inputPer1M: 5, outputPer1M: 25, cacheReadPer1M: 0.5, cacheWritePer1M: 6.25 },
   // <=100K prompt tier; over 100K is priced higher.
   "claude-haiku-5-5": { inputPer1M: 0.1, outputPer1M: 0.5, cacheReadPer1M: 0.01, cacheWritePer1M: 0.125 },
   "claude-haiku-4-5-20251001": { inputPer1M: 1, outputPer1M: 5, cacheReadPer1M: 0.1, cacheWritePer1M: 1.25 },
@@ -101,9 +140,64 @@ export const MODEL_PRICING_USD: Record<string, ModelPricing> = {
   "glm-4.6v": { inputPer1M: 0.3, outputPer1M: 0.9, cacheReadPer1M: 0.05, cacheWritePer1M: 0 },
   // Gemini paid standard API rates: Argon promotion through Nov 30, 2026;
   // Flash promotions through Dec 31, 2026. Explicit cache storage fees excluded.
-  "gemini-4-argon": { inputPer1M: 2, outputPer1M: 10, cacheReadPer1M: 0.1, cacheWritePer1M: 0 },
-  "gemini-3.8-flash": { inputPer1M: 0.75, outputPer1M: 3.75, cacheReadPer1M: 0.075, cacheWritePer1M: 0 },
-  "gemini-3.6-flash": { inputPer1M: 0.75, outputPer1M: 3.75, cacheReadPer1M: 0.075, cacheWritePer1M: 0 },
+  "gemini-4-argon": GEMINI_4_ARGON_CARD,
+  "gemini-3.8-flash": GEMINI_3_X_FLASH_CARD,
+  "gemini-3.6-flash": GEMINI_3_X_FLASH_CARD,
+  // Antigravity (T3) base cards from the 2026-11-23 snapshot; see header note.
+  "gemini-4-neon": GEMINI_4_NEON_CARD,
+  "gemini-4-carbon": GEMINI_4_CARBON_CARD,
+  "gemini-4-hydrogen": GEMINI_4_HYDROGEN_CARD,
+  "gemini-3.7-flash": GEMINI_3_X_FLASH_CARD,
+  // T3 reasoning/thinking tiers (low/medium/high/xhigh) reuse the base card.
+  "gemini-4-neon-low": GEMINI_4_NEON_CARD,
+  "gemini-4-neon-medium": GEMINI_4_NEON_CARD,
+  "gemini-4-neon-high": GEMINI_4_NEON_CARD,
+  "gemini-4-neon-xhigh": GEMINI_4_NEON_CARD,
+  "gemini-4-carbon-low": GEMINI_4_CARBON_CARD,
+  "gemini-4-carbon-medium": GEMINI_4_CARBON_CARD,
+  "gemini-4-carbon-high": GEMINI_4_CARBON_CARD,
+  "gemini-4-argon-low": GEMINI_4_ARGON_CARD,
+  "gemini-4-argon-medium": GEMINI_4_ARGON_CARD,
+  "gemini-4-argon-high": GEMINI_4_ARGON_CARD,
+  "gemini-4-hydrogen-low": GEMINI_4_HYDROGEN_CARD,
+  "gemini-4-hydrogen-medium": GEMINI_4_HYDROGEN_CARD,
+  "gemini-4-hydrogen-high": GEMINI_4_HYDROGEN_CARD,
+  "gemini-4-hydrogen-xhigh": GEMINI_4_HYDROGEN_CARD,
+  // T3's tiered-* variants request tiered thinking budgets; same token card.
+  "gemini-4-hydrogen-tiered-low": GEMINI_4_HYDROGEN_CARD,
+  "gemini-4-hydrogen-tiered-medium": GEMINI_4_HYDROGEN_CARD,
+  "gemini-4-hydrogen-tiered-high": GEMINI_4_HYDROGEN_CARD,
+  "gemini-4-hydrogen-tiered-xhigh": GEMINI_4_HYDROGEN_CARD,
+  "gemini-4-hydrogen-orchestrator": GEMINI_4_HYDROGEN_CARD,
+  // Role ids observed in real ACP transcripts: planners report
+  // gemini-pro-orchestrator-neon (served by Neon) and executors report
+  // gemini-flash-worker-agy (served by Hydrogen); the g1-pro route maps to
+  // Argon. The generic `antigravity-default` route is unpriced (null).
+  "gemini-pro-orchestrator-neon": GEMINI_4_NEON_CARD,
+  "gemini-pro-orchestrator-g1-pro": GEMINI_4_ARGON_CARD,
+  "gemini-flash-worker-agy": GEMINI_4_HYDROGEN_CARD,
+  "gemini-3.8-flash-low": GEMINI_3_X_FLASH_CARD,
+  "gemini-3.8-flash-medium": GEMINI_3_X_FLASH_CARD,
+  "gemini-3.8-flash-high": GEMINI_3_X_FLASH_CARD,
+  "gemini-3.7-flash-low": GEMINI_3_X_FLASH_CARD,
+  "gemini-3.7-flash-medium": GEMINI_3_X_FLASH_CARD,
+  "gemini-3.7-flash-high": GEMINI_3_X_FLASH_CARD,
+  "gemini-3.6-flash-low": GEMINI_3_X_FLASH_CARD,
+  "gemini-3.6-flash-medium": GEMINI_3_X_FLASH_CARD,
+  "gemini-3.6-flash-high": GEMINI_3_X_FLASH_CARD,
+  "gemini-3.1-pro": GEMINI_3_1_PRO_CARD,
+  "gemini-3.1-pro-preview": GEMINI_3_1_PRO_CARD,
+  "gemini-3.1-pro-low": GEMINI_3_1_PRO_CARD,
+  "gemini-3.1-pro-medium": GEMINI_3_1_PRO_CARD,
+  "gemini-3.1-pro-high": GEMINI_3_1_PRO_CARD,
+  // Legacy Antigravity alias that served gemini-3.1-pro at the high tier.
+  "gemini-pro-agent": GEMINI_3_1_PRO_CARD,
+  // Antigravity's gpt-oss row uses Groq's hosted reference rate because the
+  // model has no OpenAI first-party API price card; not an OpenAI list price.
+  "gpt-oss-120b": GPT_OSS_120B_CARD,
+  "gpt-oss-120b-low": GPT_OSS_120B_CARD,
+  "gpt-oss-120b-medium": GPT_OSS_120B_CARD,
+  "gpt-oss-120b-high": GPT_OSS_120B_CARD,
   // Mistral Large 4 standard list price; its two-week launch discount has ended.
   "mistral-large-4": { inputPer1M: 1.36, outputPer1M: 4.18, cacheReadPer1M: 0.14, cacheWritePer1M: 0 },
   "deepseek-v4-flash": {
@@ -166,10 +260,10 @@ export const MODEL_PRICING_USD: Record<string, ModelPricing> = {
   // WorkBuddy's current K3 slug; same rate card as kimi-k3.
   "kimi-k3-2": { inputPer1M: 3, outputPer1M: 15, cacheReadPer1M: 0.3, cacheWritePer1M: 3 },
   "kimi-k3-1": { inputPer1M: 3, outputPer1M: 15, cacheReadPer1M: 0.3, cacheWritePer1M: 3 },
-  // Multiple trackers refreshed 2026-10 report $0.95/$4.00 (AICoder's official-linked
-  // crawl says $1.20/$4.80 — official table is JS-rendered and unverifiable here).
+  // Official dynamic price table verified in browser 2026-10-23:
+  // https://platform.kimi.ai/docs/pricing/chat
   "kimi-k2.7-code": { inputPer1M: 0.95, outputPer1M: 4, cacheReadPer1M: 0.19, cacheWritePer1M: 0 },
-  // Highspeed tier is 2x the standard rate per llmabacus (official-synced) and aihubmix.
+  // Official HighSpeed row: input $1.90, output $8, cache read $0.38.
   "kimi-k2.7-code-highspeed": { inputPer1M: 1.9, outputPer1M: 8, cacheReadPer1M: 0.38, cacheWritePer1M: 0 },
   // WorkBuddy's bare K2.7 slug is the same model as kimi-k2.7-code.
   "kimi-k2.7": { inputPer1M: 0.95, outputPer1M: 4, cacheReadPer1M: 0.19, cacheWritePer1M: 0 },
@@ -187,7 +281,8 @@ export const MODEL_PRICING_USD: Record<string, ModelPricing> = {
   // Kimi Code subscription alias — sold per seat with a quota pool, never per
   // token (official: "Kimi API 按量计费…请注意与 Kimi Code 等产品区分"). Since
   // 2026-09-11 the alias serves K2.8 Preview with the model id unchanged, so the
-  // K2.8 Preview rate is the reference estimate.
+  // K2.8 Preview rate is the reference estimate. The alias itself still resolves
+  // to K2.8 Preview as of 2026-10-24; K3.1 Pro ships under its own ids above.
   "kimi-for-coding": { inputPer1M: 1, outputPer1M: 4, cacheReadPer1M: 0.25, cacheWritePer1M: 0 },
   "kimi-for-coding-highspeed": { inputPer1M: 1.9, outputPer1M: 8, cacheReadPer1M: 0.38, cacheWritePer1M: 0 },
   // Cursor's first-party Composer model, sold per token at cursor.com/docs/models
@@ -204,8 +299,15 @@ export const MODEL_PRICING_USD: Record<string, ModelPricing> = {
   // Cursor's Fast speed tier is 2x standard ($4/$12/$1 per Cursor's model page),
   // so `high` + `fast` carries both the effort suffix and the accelerated card.
   "grok-4.7-high-fast": { inputPer1M: 4, outputPer1M: 12, cacheReadPer1M: 1, cacheWritePer1M: 0 },
+  // Additional Cursor routing variants verified 2026-10-23.
+  "grok-4.7-fast": { inputPer1M: 4, outputPer1M: 12, cacheReadPer1M: 1, cacheWritePer1M: 0 },
+  "grok-4.6-fast": { inputPer1M: 4, outputPer1M: 12, cacheReadPer1M: 1, cacheWritePer1M: 0 },
+  "grok-4.6-high-fast": { inputPer1M: 4, outputPer1M: 12, cacheReadPer1M: 1, cacheWritePer1M: 0 },
+  "grok-4.5-fast": { inputPer1M: 4, outputPer1M: 18, cacheReadPer1M: 1, cacheWritePer1M: 0 },
+  "grok-4.5-high-fast": { inputPer1M: 4, outputPer1M: 18, cacheReadPer1M: 1, cacheWritePer1M: 0 },
   // 4.5 and 4.6 share the same $2/$6 card (xAI kept pricing flat across both).
   "grok-4.6": { inputPer1M: 2, outputPer1M: 6, cacheReadPer1M: 0.5, cacheWritePer1M: 0 },
+  "grok-4.6-high": { inputPer1M: 2, outputPer1M: 6, cacheReadPer1M: 0.5, cacheWritePer1M: 0 },
   // Cursor's Grok 4.6 ids carry the effort suffix without the Fast tier; the
   // suffix never moves Cursor's price, so this is the standard $2/$6 card.
   "cursor-grok-4.6-high": { inputPer1M: 2, outputPer1M: 6, cacheReadPer1M: 0.5, cacheWritePer1M: 0 },
@@ -266,13 +368,56 @@ export const MODEL_PRICING_USD: Record<string, ModelPricing> = {
   // absent for the same reason: no per-token list price is published.
 };
 
+// Official sources fetched 2026-10-23. Short-context, default residency,
+// shortest cache-write TTL only; reference estimates, never subscription bills.
+// https://developers.openai.com/api/docs/pricing
+// https://platform.claude.com/docs/en/about-claude/pricing
+// https://cursor.com/docs/models-and-pricing
+export const FAST_MODEL_PRICING_USD: Record<string, ModelPricing> = {
+  "gpt-6.2-astra": { inputPer1M: 16, outputPer1M: 80, cacheReadPer1M: 0.8, cacheWritePer1M: 20 },
+  "gpt-6.2-sol": { inputPer1M: 4, outputPer1M: 20, cacheReadPer1M: 0.2, cacheWritePer1M: 5 },
+  "gpt-6-astra": { inputPer1M: 20, outputPer1M: 100, cacheReadPer1M: 2, cacheWritePer1M: 25 },
+  "gpt-6.1-sol": { inputPer1M: 4, outputPer1M: 20, cacheReadPer1M: 0.2, cacheWritePer1M: 5 },
+  "gpt-6.1-terra": { inputPer1M: 2, outputPer1M: 10, cacheReadPer1M: 0.1, cacheWritePer1M: 2.5 },
+  "gpt-6-sol": { inputPer1M: 4, outputPer1M: 20, cacheReadPer1M: 0.4, cacheWritePer1M: 5 },
+  "gpt-6-luna": { inputPer1M: 0.2, outputPer1M: 1, cacheReadPer1M: 0.02, cacheWritePer1M: 0.25 },
+  "gpt-5.6-sol": { inputPer1M: 8, outputPer1M: 40, cacheReadPer1M: 0.8, cacheWritePer1M: 10 },
+  "gpt-5.6-terra": { inputPer1M: 4, outputPer1M: 24, cacheReadPer1M: 0.4, cacheWritePer1M: 5 },
+  "gpt-5.6-luna": { inputPer1M: 0.4, outputPer1M: 2.4, cacheReadPer1M: 0.04, cacheWritePer1M: 0.5 },
+  "gpt-5.5": { inputPer1M: 12.5, outputPer1M: 75, cacheReadPer1M: 1.25, cacheWritePer1M: 0 },
+  "gpt-5.4": { inputPer1M: 5, outputPer1M: 30, cacheReadPer1M: 0.5, cacheWritePer1M: 0 },
+  "gpt-5.4-mini": { inputPer1M: 1.5, outputPer1M: 9, cacheReadPer1M: 0.15, cacheWritePer1M: 0 },
+  "gpt-5.3-codex": { inputPer1M: 3.5, outputPer1M: 28, cacheReadPer1M: 0.35, cacheWritePer1M: 0 },
+  "claude-opus-5-5": { inputPer1M: 8, outputPer1M: 40, cacheReadPer1M: 0.4, cacheWritePer1M: 10 },
+  "claude-opus-5": { inputPer1M: 10, outputPer1M: 50, cacheReadPer1M: 1, cacheWritePer1M: 12.5 },
+  "claude-opus-5-thinking-high": { inputPer1M: 10, outputPer1M: 50, cacheReadPer1M: 1, cacheWritePer1M: 12.5 },
+  "claude-opus-4-8": { inputPer1M: 10, outputPer1M: 50, cacheReadPer1M: 1, cacheWritePer1M: 12.5 },
+  // T3's model manifest exposes an explicit fastMode flag on the claudeAgent
+  // opus-4-6 profile; Anthropic fast mode doubles the Opus card (same as 4.8).
+  "claude-opus-4-6": { inputPer1M: 10, outputPer1M: 50, cacheReadPer1M: 1, cacheWritePer1M: 12.5 },
+  "grok-4.7": MODEL_PRICING_USD["grok-4.7-fast"]!,
+  "grok-4.7-high": MODEL_PRICING_USD["grok-4.7-fast"]!,
+  "grok-4.6": MODEL_PRICING_USD["grok-4.6-fast"]!,
+  "grok-4.6-high": MODEL_PRICING_USD["grok-4.6-high-fast"]!,
+  "grok-4.5": MODEL_PRICING_USD["grok-4.5-fast"]!,
+  "composer-2.5": MODEL_PRICING_USD["composer-2.5-fast"]!
+};
+
+export const ULTRAFAST_MODEL_PRICING_USD: Record<string, ModelPricing> = {
+  // GPT-6.2 launch rates are 3x through 2027-02-28 Pacific time. List rates are 6x from 2027-03-01.
+  "gpt-6.2-astra": { inputPer1M: 24, outputPer1M: 120, cacheReadPer1M: 1.2, cacheWritePer1M: 30 },
+  "gpt-6.2-sol": { inputPer1M: 6, outputPer1M: 30, cacheReadPer1M: 0.3, cacheWritePer1M: 7.5 },
+  "gpt-6-astra": { inputPer1M: 60, outputPer1M: 300, cacheReadPer1M: 6, cacheWritePer1M: 75 },
+  "gpt-6.1-sol": { inputPer1M: 12, outputPer1M: 60, cacheReadPer1M: 0.6, cacheWritePer1M: 15 }
+};
+
 /**
  * Speed/service-tier multipliers applied on top of the list rate. A "fast mode"
  * is the same model served by a higher-priority inference configuration, so the
  * tokens are identical but the provider bills them at a multiple:
  *
- *   - OpenAI (Codex, API): `fast` (renamed from `priority` on 2026-07-30) is 2x
- *     the standard rate; `ultrafast` is 6x; `flex` (batch-style queue) is ~0.5x.
+ *   - OpenAI (Codex, API): explicit Fast and Ultrafast price cards take precedence.
+ *     `priority` resolves to Fast; `flex` (batch-style queue) is ~0.5x.
  *     learn.chatgpt.com/docs/agent-configuration/speed, codex.danielvaughan.com
  *   - Anthropic (Claude Code `/fast`): Opus 5.5 $8/$40 and Opus 5 / 4.8 $10/$50,
  *     i.e. 2x the standard Opus rates, with prompt-caching rates scaled too.
@@ -339,14 +484,22 @@ export function estimateCostUsd(usage: {
   cacheReadTokens: number;
   cacheCreationTokens: number;
   serviceTier?: string | null;
+  usageMode?: UsageMode;
 }): number | null {
-  const key = usage.model?.trim().toLowerCase();
+  const key = normalizeModelId(usage.model)?.toLowerCase();
   if (!key) {
     return null;
   }
 
   const bareKey = key.includes("/") ? key.slice(key.lastIndexOf("/") + 1) : key;
-  const pricing = MODEL_PRICING_USD[key] ?? MODEL_PRICING_USD[bareKey];
+  const modelKey = bareKey.startsWith("cursor-") ? bareKey.slice(7) : bareKey;
+  const mode = usage.usageMode ?? resolveUsageMode(modelKey, usage.serviceTier);
+  const namedFast = resolveUsageMode(modelKey) === "fast";
+  const pricing = mode === "ultrafast"
+    ? ULTRAFAST_MODEL_PRICING_USD[modelKey.replace(/-ultrafast$/u, "")]
+    : mode === "fast"
+      ? FAST_MODEL_PRICING_USD[modelKey] ?? (namedFast ? MODEL_PRICING_USD[modelKey] : undefined)
+      : MODEL_PRICING_USD[key] ?? MODEL_PRICING_USD[modelKey];
   if (!pricing) {
     return null;
   }
@@ -358,5 +511,7 @@ export function estimateCostUsd(usage: {
       usage.cacheCreationTokens * pricing.cacheWritePer1M) /
     1e6;
 
-  return standardCost * serviceTierMultiplier(usage.serviceTier);
+  // Accelerated cards already include their surcharge, including named speed
+  // variants. Only non-speed tiers (for example flex) need a multiplier here.
+  return standardCost * (mode === "fast" || mode === "ultrafast" ? 1 : serviceTierMultiplier(usage.serviceTier));
 }

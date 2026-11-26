@@ -24,6 +24,7 @@ import {
   SourceVendorSchema,
   SyncStatusResponseSchema,
   TimeScopeSchema,
+  TokensByModelRowSchema,
   TokenTrendResponseSchema,
   ToolsResponseSchema,
   WidgetInteractionSchema,
@@ -73,6 +74,8 @@ describe("common filters and pagination", () => {
     expect(SourceVendorSchema.safeParse("dsh").success).toBe(true);
     expect(SourceVendorSchema.safeParse("mimo").success).toBe(true);
     expect(SourceVendorSchema.safeParse("workbuddy").success).toBe(true);
+    expect(SourceVendorSchema.safeParse("antigravity").success).toBe(true);
+    expect(SourceVendorSchema.safeParse("t3code").success).toBe(false);
     expect(EventTypeSchema.safeParse("tool.called").success).toBe(true);
     expect(EventTypeSchema.safeParse("not.a.type").success).toBe(false);
     expect(
@@ -129,6 +132,30 @@ describe("error and health contracts", () => {
 });
 
 describe("overview / tools / trend / widget", () => {
+  it("keeps timing sample counts optional and accepts a single sample", () => {
+    const oldRow = {
+      model: "gpt-6.1-sol",
+      sourceVendor: "codex",
+      costUsd: null,
+      avgOutputTokensPerSecond: 0,
+      avgFirstTokenLatencyMs: 0,
+      cacheHitRate: 0,
+      ...tokenComponents
+    };
+    expect(TokensByModelRowSchema.safeParse(oldRow).success).toBe(true);
+
+    const oneSample = TokensByModelRowSchema.safeParse({
+      ...oldRow,
+      speedSampleCount: 1,
+      ttftSampleCount: 1
+    });
+    expect(oneSample.success).toBe(true);
+    if (oneSample.success) {
+      expect(oneSample.data).toMatchObject({ speedSampleCount: 1, ttftSampleCount: 1 });
+    }
+    expect(TokensByModelRowSchema.safeParse({ ...oldRow, speedSampleCount: -1 }).success).toBe(false);
+  });
+
   it("parses a valid OverviewResponse", () => {
     const result = OverviewResponseSchema.safeParse({
       ...aggregateMeta,

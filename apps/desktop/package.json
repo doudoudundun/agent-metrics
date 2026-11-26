@@ -15,8 +15,8 @@
     "smoke:package": "node ./scripts/smoke-package.mjs",
     "test": "node ../../scripts/run-tests.mjs run src",
     "package:mac": "corepack pnpm package:mac:arm64",
-    "package:mac:x64": "node ./scripts/clean-release.mjs mac && node ./scripts/stage-runtime.mjs --target-platform=darwin --target-arch=x64 && electron-builder --mac dir --x64 && node ./scripts/verify-package.mjs --target-platform=darwin --target-arch=x64 && node ./scripts/smoke-package.mjs --target-platform=darwin --target-arch=x64",
-    "package:mac:arm64": "node ./scripts/clean-release.mjs mac && node ./scripts/stage-runtime.mjs --target-platform=darwin --target-arch=arm64 && electron-builder --mac dir --arm64 && node ./scripts/verify-package.mjs --target-platform=darwin --target-arch=arm64 && node ./scripts/smoke-package.mjs --target-platform=darwin --target-arch=arm64",
+    "package:mac:x64": "node ./scripts/clean-release.mjs mac-x64 && node ./scripts/stage-runtime.mjs --target-platform=darwin --target-arch=x64 && electron-builder --mac dir --x64 && node ./scripts/verify-package.mjs --target-platform=darwin --target-arch=x64 && node ./scripts/smoke-package.mjs --target-platform=darwin --target-arch=x64",
+    "package:mac:arm64": "node ./scripts/clean-release.mjs mac-arm64 && node ./scripts/stage-runtime.mjs --target-platform=darwin --target-arch=arm64 && electron-builder --mac dir --arm64 && node ./scripts/verify-package.mjs --target-platform=darwin --target-arch=arm64 && node ./scripts/smoke-package.mjs --target-platform=darwin --target-arch=arm64",
     "package:win": "corepack pnpm package:win:x64",
     "package:win:x64": "node ./scripts/clean-release.mjs win-unpacked && node ./scripts/clean-win-distributables.mjs && node ./scripts/stage-runtime.mjs --target-platform=win32 --target-arch=x64 && electron-builder --win nsis zip --x64 && node ./scripts/verify-package.mjs --target-platform=win32 --target-arch=x64 && node ./scripts/smoke-package.mjs --target-platform=win32 --target-arch=x64",
     "package:win:arm64": "node ./scripts/clean-release.mjs win-unpacked && node ./scripts/clean-win-distributables.mjs && node ./scripts/stage-runtime.mjs --target-platform=win32 --target-arch=arm64 && electron-builder --win nsis zip --arm64 && node ./scripts/verify-package.mjs --target-platform=win32 --target-arch=arm64 && node ./scripts/smoke-package.mjs --target-platform=win32 --target-arch=arm64",
@@ -63,7 +63,7 @@
     "@agent-metrics/contracts": "workspace:*"
   },
   "devDependencies": {
-    "electron": "^33.2.1",
+    "electron": "^35.7.5",
     "electron-builder": "^25.1.8",
     "esbuild": "^0.25.9"
   }

@@ -2,6 +2,7 @@ import { appendFile, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/pro
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { createEventId } from "@agent-metrics/event-schema";
 import { isolateSources, type IsolatedSources } from "@agent-metrics/test-utils";
 import { resolveWorkbuddySourcePaths, syncWorkbuddySessions } from "./workbuddy-sync.js";
 
@@ -243,13 +244,14 @@ describe("syncWorkbuddySessions", () => {
     const project = join(homePath, "projects", "demo"); await mkdir(project, { recursive: true });
     const records = buildRecords().map((text) => JSON.parse(text));
     records[4].providerData.traceId = "trace-1";
+    records[4].providerData.stepSeq = 2;
     await writeFile(join(project, `${SESSION_ID}.jsonl`), records.map((r) => JSON.stringify(r)).join("\n") + "\n");
     const input = { homePath, eventLogPath: join(root, "events.jsonl"),
       cursorPath: join(root, "cursor.json"), ledgerPath: join(root, "ledger.json") };
     const events = async () => (await readFile(input.eventLogPath, "utf8")).trim().split("\n").map((l) => JSON.parse(l));
     await syncWorkbuddySessions(input);
     const original = (await events()).find((e) => e.type === "token.usage.recorded");
-    expect(original.decode_duration_ms).toBeNull();
+    expect(original).toMatchObject({ first_token_latency_ms: null, decode_duration_ms: 30679 });
     const dir = join(homePath, "logs", "2026-10-20"); await mkdir(dir, { recursive: true });
     await writeFile(join(dir, "workspace.log"),
       '[2026/10/20 10:38:11.326] [Info] [pid=1] [ModelProvider]  [SseMonitor#req] qua.end: ' + JSON.stringify({
@@ -267,7 +269,7 @@ describe("syncWorkbuddySessions", () => {
     expect(await events()).toHaveLength(7);
   });
 
-  it("counts usage once when WorkBuddy Switch clones a transcript under a new session id", async () => {
+  it("preserves each session timeline when WorkBuddy Switch clones a transcript", async () => {
     const root = await mkdtemp(join(tmpdir(), "agent-metrics-workbuddy-switch-"));
     roots.push(root);
     const homePath = join(root, "workbuddy-home");
@@ -292,14 +294,18 @@ describe("syncWorkbuddySessions", () => {
         .map((line) => JSON.parse(line) as { type: string; session_id: string });
     await syncWorkbuddySessions(input);
 
-    // The cloned copy contributes no second usage row and no second session.
-    expect((await readEvents()).filter((event) => event.type === "token.usage.recorded")).toHaveLength(1);
+    // Both raw timelines survive so aggregate deduplication can use complete
+    // usage evidence without discarding unrelated activity or session history.
+    const firstEvents = await readEvents();
+    expect(firstEvents.filter((event) => event.type === "token.usage.recorded")).toHaveLength(2);
     expect(
-      (await readEvents()).filter((event) => event.type === "session.started").map((event) => event.session_id)
-    ).toEqual([SESSION_ID]);
+      firstEvents.filter((event) => event.type === "session.started").map((event) => event.session_id).sort()
+    ).toEqual([SESSION_ID, clonedSessionId].sort());
+    for (const type of ["prompt.submitted", "tool.called", "tool.succeeded", "assistant.responded"]) {
+      expect(firstEvents.filter((event) => event.type === type)).toHaveLength(2);
+    }
 
-    // Incremental sync writes the same new message into both copies; it must
-    // still be counted once.
+    // Incremental sync retains the new message in both copied timelines.
     const extra = JSON.parse(buildRecords()[4]) as Record<string, unknown> & {
       providerData: Record<string, unknown>;
     };
@@ -312,9 +318,129 @@ describe("syncWorkbuddySessions", () => {
     await syncWorkbuddySessions(input);
 
     const usageEvents = (await readEvents()).filter((event) => event.type === "token.usage.recorded");
-    expect(usageEvents).toHaveLength(2);
-    expect(usageEvents.every((event) => event.session_id === SESSION_ID)).toBe(true);
+    expect(usageEvents).toHaveLength(4);
+    expect(usageEvents.filter((event) => event.session_id === SESSION_ID)).toHaveLength(2);
+    expect(usageEvents.filter((event) => event.session_id === clonedSessionId)).toHaveLength(2);
   });
+
+  it("upgrades session-less ledgers without replaying the old session or dropping a new clone", async () => {
+    const root = await mkdtemp(join(tmpdir(), "agent-metrics-workbuddy-legacy-ledger-"));
+    roots.push(root);
+    const homePath = join(root, "home");
+    const projectDir = join(homePath, "projects", "demo");
+    await mkdir(projectDir, { recursive: true });
+    const sourcePath = join(projectDir, `${SESSION_ID}.jsonl`);
+    await writeFile(sourcePath, buildRecords().join("\n") + "\n");
+    const input = { homePath, codebuddyHomePath: homePath, eventLogPath: join(root, "events.jsonl"),
+      cursorPath: join(root, "cursor.json"), ledgerPath: join(root, "ledger.json") };
+    const events = async () => (await readFile(input.eventLogPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
+    await syncWorkbuddySessions(input);
+    const original = await events();
+    await writeFile(input.ledgerPath, JSON.stringify({ eventIds: original.map((event) => event.source_record_id) }));
+    const clonedSessionId = "ced3c012-ec7b-45e8-a68d-85f7103015a3";
+    const clonedPath = join(projectDir, `${clonedSessionId}.jsonl`);
+    const clonedContents = cloneRecords(clonedSessionId).join("\n") + "\n";
+    await writeFile(clonedPath, clonedContents);
+    // The old cursor had already scanned and skipped the clone; neither file
+    // grows during the upgrade.
+    const cursor = JSON.parse(await readFile(input.cursorPath, "utf8"));
+    cursor.files[clonedPath] = { size: Buffer.byteLength(clonedContents) };
+    await writeFile(input.cursorPath, JSON.stringify(cursor));
+
+    await syncWorkbuddySessions(input);
+    const after = await events();
+    expect(after.slice(0, original.length)).toEqual(original);
+    expect(after.filter((event) => event.session_id === SESSION_ID)).toHaveLength(6);
+    expect(after.filter((event) => event.session_id === clonedSessionId)).toHaveLength(6);
+    const sourceUsage = after.find((event) => event.session_id === SESSION_ID && event.type === "token.usage.recorded");
+    const clonedUsage = after.find((event) => event.session_id === clonedSessionId && event.type === "token.usage.recorded");
+    expect(clonedUsage.source_record_id).toBe(sourceUsage.source_record_id);
+    expect(clonedUsage.event_id).not.toBe(sourceUsage.event_id);
+    await syncWorkbuddySessions(input);
+    expect(await events()).toEqual(after);
+  });
+
+  it("enriches a pre-upgrade session-scoped usage using its original event identity", async () => {
+    const root = await mkdtemp(join(tmpdir(), "agent-metrics-workbuddy-session-ledger-"));
+    roots.push(root);
+    const homePath = join(root, "home");
+    const projectDir = join(homePath, "projects", "demo");
+    await mkdir(projectDir, { recursive: true });
+    const records = buildRecords().map((text) => JSON.parse(text));
+    records[4].providerData.traceId = "trace-1";
+    records[4].providerData.stepSeq = 2;
+    await writeFile(join(projectDir, `${SESSION_ID}.jsonl`), records.map((record) => JSON.stringify(record)).join("\n") + "\n");
+    const input = { homePath, codebuddyHomePath: homePath, eventLogPath: join(root, "events.jsonl"),
+      cursorPath: join(root, "cursor.json"), ledgerPath: join(root, "ledger.json") };
+    const events = async () => (await readFile(input.eventLogPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
+    await syncWorkbuddySessions(input);
+    const original = await events();
+    const usage = original.find((event) => event.type === "token.usage.recorded");
+    usage.source_record_id = `workbuddy:${SESSION_ID}:usage:${usage.message_id}`;
+    usage.event_id = createEventId({ sourceInstanceId: usage.source_instance_id,
+      sourceRecordNamespace: usage.source_record_namespace, eventKind: usage.type,
+      sessionId: usage.session_id, sourceRecordId: usage.source_record_id });
+    await writeFile(input.eventLogPath, original.map((event) => JSON.stringify(event)).join("\n") + "\n");
+    await writeFile(input.ledgerPath, JSON.stringify({ eventIds: original.map((event) => event.source_record_id) }));
+    await appendFile(join(projectDir, `${SESSION_ID}.jsonl`), "\n");
+    await syncWorkbuddySessions(input);
+    expect(await events()).toEqual(original);
+    const logDir = join(homePath, "logs", "2026-10-20");
+    await mkdir(logDir, { recursive: true });
+    await writeFile(join(logDir, "workspace.log"),
+      '[2026/10/20 10:38:11.326] [Info] [pid=1] [ModelProvider]  [SseMonitor#req] qua.end: ' + JSON.stringify({
+        conversation_id: SESSION_ID, conversation_request_id: "req_1", message_id: "asst_msg_1",
+        trace_id: "trace-1", model: "deepseek-v4.1-flash", request_type: "chat", report_source: "agent-cli",
+        finish_flag: "done", http_begin_status_code: "200", http_end_status_code: "200",
+        model_error: "", model_error_code: "", total_cost_ms: "1500", ttft_ms: "500",
+        prompt_tokens: "1000", completion_tokens: "50", total_tokens: "1050"
+      }) + "\n");
+
+    await syncWorkbuddySessions(input);
+    const after = await events();
+    expect(after).toHaveLength(original.length + 1);
+    expect(after.at(-1)).toMatchObject({ event_id: usage.event_id, source_record_id: usage.source_record_id,
+      first_token_latency_ms: 500, decode_duration_ms: 1000 });
+    await syncWorkbuddySessions(input);
+    expect(await events()).toEqual(after);
+  });
+
+  it.each(["session-scoped", "session-less"])(
+    "retains a %s usage identity when its old event log is unavailable", async (identityKind) => {
+    const root = await mkdtemp(join(tmpdir(), "agent-metrics-workbuddy-rotated-ledger-"));
+    roots.push(root);
+    const homePath = join(root, "home");
+    const projectDir = join(homePath, "projects", "demo");
+    const logDir = join(homePath, "logs", "2026-10-20");
+    await mkdir(projectDir, { recursive: true });
+    await mkdir(logDir, { recursive: true });
+    const records = buildRecords().map((text) => JSON.parse(text));
+    records[4].providerData.traceId = "trace-1";
+    records[4].providerData.stepSeq = 2;
+    await writeFile(join(projectDir, `${SESSION_ID}.jsonl`), records.map((record) => JSON.stringify(record)).join("\n") + "\n");
+    await writeFile(join(logDir, "workspace.log"),
+      '[2026/10/20 10:38:11.326] [Info] [pid=1] [ModelProvider]  [SseMonitor#req] qua.end: ' + JSON.stringify({
+        conversation_id: SESSION_ID, conversation_request_id: "req_1", message_id: "asst_msg_1",
+        trace_id: "trace-1", model: "deepseek-v4.1-flash", request_type: "chat", report_source: "agent-cli",
+        finish_flag: "done", http_begin_status_code: "200", http_end_status_code: "200",
+        model_error: "", model_error_code: "", total_cost_ms: "1500", ttft_ms: "500",
+        prompt_tokens: "1000", completion_tokens: "50", total_tokens: "1050"
+      }) + "\n");
+    const sourceRecordId = identityKind === "session-scoped"
+      ? `workbuddy:${SESSION_ID}:usage:asst_msg_1`
+      : "workbuddy:usage:asst_msg_1";
+    const input = { homePath, codebuddyHomePath: homePath, eventLogPath: join(root, "events.jsonl"),
+      cursorPath: join(root, "cursor.json"), ledgerPath: join(root, "ledger.json") };
+    await writeFile(input.ledgerPath, JSON.stringify({ eventIds: [sourceRecordId] }));
+
+    await syncWorkbuddySessions(input);
+    const events = (await readFile(input.eventLogPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
+    const usage = events.find((event) => event.type === "token.usage.recorded");
+    expect(usage).toMatchObject({ source_record_id: sourceRecordId, first_token_latency_ms: 500, decode_duration_ms: 1000 });
+    expect(usage.event_id).toBe(createEventId({ sourceInstanceId: "workbuddy:default", sourceRecordNamespace: "session",
+      eventKind: "token.usage.recorded", sessionId: SESSION_ID, sourceRecordId }));
+    }
+  );
 
   it("collects CodeBuddy CLI transcripts as WorkBuddy usage", async () => {
     const root = await mkdtemp(join(tmpdir(), "agent-metrics-codebuddy-"));

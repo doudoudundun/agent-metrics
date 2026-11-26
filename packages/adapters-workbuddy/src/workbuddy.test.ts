@@ -164,6 +164,166 @@ describe("normalizeWorkbuddyRecord", () => {
     }
   });
 
+  it("derives a step decode window from record timestamps", () => {
+    const state = createWorkbuddyParseState();
+    const base = 1_792_463_851_000;
+
+    normalizeWorkbuddyRecord(
+      {
+        id: "msg_user_1",
+        timestamp: base,
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: "run the tests" }],
+        cwd: WORKSPACE
+      },
+      SESSION_ID,
+      WORKSPACE,
+      state
+    );
+
+    // First step of the turn follows a user message, so it has no usable anchor.
+    const firstStep = normalizeWorkbuddyRecord(
+      {
+        id: "rec_call_1",
+        timestamp: base + 3_000,
+        type: "function_call",
+        callId: "call_1",
+        name: "Bash",
+        arguments: "{\"command\":\"pnpm test\"}",
+        providerData: {
+          model: "deepseek-v4.1-flash",
+          messageId: "asst_msg_1",
+          stepSeq: 1,
+          usage: { requests: 1, inputTokens: 1000, outputTokens: 120 }
+        }
+      },
+      SESSION_ID,
+      WORKSPACE,
+      state
+    );
+    expect(firstStep.at(-1)).toEqual(
+      expect.objectContaining({ type: "token.usage.recorded", decode_duration_ms: null })
+    );
+
+    normalizeWorkbuddyRecord(
+      {
+        id: "rec_result_1",
+        timestamp: base + 4_000,
+        type: "function_call_result",
+        name: "Bash",
+        callId: "call_1",
+        status: "completed",
+        output: { type: "text", text: "ok" }
+      },
+      SESSION_ID,
+      WORKSPACE,
+      state
+    );
+
+    const secondStep = normalizeWorkbuddyRecord(
+      {
+        id: "rec_call_2",
+        timestamp: base + 7_500,
+        type: "function_call",
+        callId: "call_2",
+        name: "Read",
+        arguments: "{\"file_path\":\"README.md\"}",
+        providerData: {
+          model: "deepseek-v4.1-flash",
+          messageId: "asst_msg_2",
+          stepSeq: 2,
+          usage: { requests: 1, inputTokens: 1200, outputTokens: 300 }
+        }
+      },
+      SESSION_ID,
+      WORKSPACE,
+      state
+    );
+    // 7_500 - 4_000: from the tool result that started the request to the record
+    // that closes the step.
+    expect(secondStep.at(-1)).toEqual(
+      expect.objectContaining({ type: "token.usage.recorded", decode_duration_ms: 3_500 })
+    );
+
+    const unstepped = normalizeWorkbuddyRecord(
+      {
+        id: "asst_msg_3",
+        timestamp: base + 9_000,
+        type: "message",
+        role: "assistant",
+        content: [{ type: "output_text", text: "done" }],
+        providerData: {
+          model: "deepseek-v4.1-flash",
+          messageId: "asst_msg_3",
+          usage: { requests: 1, inputTokens: 1300, outputTokens: 40 }
+        }
+      },
+      SESSION_ID,
+      WORKSPACE,
+      state
+    );
+    // Without a step sequence the window cannot be attributed.
+    expect(unstepped.at(-1)).toEqual(
+      expect.objectContaining({ type: "token.usage.recorded", decode_duration_ms: null })
+    );
+  });
+
+  it("does not anchor a new step to a prior tool call or assistant message", () => {
+    const state = createWorkbuddyParseState();
+    const base = 1_792_463_851_000;
+    normalizeWorkbuddyRecord({ id: "call", timestamp: base, type: "function_call", callId: "call",
+      name: "Read", providerData: { stepSeq: 1 } }, SESSION_ID, WORKSPACE, state);
+    const events = normalizeWorkbuddyRecord({ id: "answer", timestamp: base + 1_000, type: "message",
+      role: "assistant", providerData: { stepSeq: 2, messageId: "answer", model: "test",
+        usage: { inputTokens: 10, outputTokens: 5 } } }, SESSION_ID, WORKSPACE, state);
+    expect(events.at(-1)).toMatchObject({ type: "token.usage.recorded", decode_duration_ms: null });
+  });
+
+  it("drops idle gaps that are not generation time", () => {
+    const state = createWorkbuddyParseState();
+    const base = 1_792_463_851_000;
+
+    normalizeWorkbuddyRecord(
+      {
+        id: "rec_result_1",
+        timestamp: base,
+        type: "function_call_result",
+        name: "Read",
+        callId: "call_1",
+        status: "completed",
+        output: { type: "text", text: "ok" }
+      },
+      SESSION_ID,
+      WORKSPACE,
+      state
+    );
+
+    const late = normalizeWorkbuddyRecord(
+      {
+        id: "rec_call_1",
+        timestamp: base + 600_000,
+        type: "function_call",
+        callId: "call_2",
+        name: "Read",
+        arguments: "{\"file_path\":\"README.md\"}",
+        providerData: {
+          model: "deepseek-v4.1-flash",
+          messageId: "asst_msg_1",
+          stepSeq: 1,
+          usage: { requests: 1, inputTokens: 1000, outputTokens: 100 }
+        }
+      },
+      SESSION_ID,
+      WORKSPACE,
+      state
+    );
+
+    expect(late.at(-1)).toEqual(
+      expect.objectContaining({ type: "token.usage.recorded", decode_duration_ms: null })
+    );
+  });
+
   it("marks non-completed tool results as failures and ignores bookkeeping rows", () => {
     const state = createWorkbuddyParseState();
     normalizeWorkbuddyRecord(

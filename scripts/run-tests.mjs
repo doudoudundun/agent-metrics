@@ -64,8 +64,13 @@ function findManagedNodeExecutable() {
 
 function canLoadBetterSqlite(nodeExecutable, cwd) {
   const probe =
-    "try { require('better-sqlite3'); } catch (e) { if (e.message.includes('NODE_MODULE_VERSION')) process.exit(1); }";
-  const result = spawnSync(nodeExecutable, ["-e", probe], { cwd, stdio: "ignore" });
+    "try { const entry = require.resolve('better-sqlite3', { paths: [process.cwd(), process.argv[1]] }); const Database = require(entry); const db = new Database(':memory:'); db.close(); } catch (e) { if (e.code !== 'MODULE_NOT_FOUND') process.exit(1); }";
+  // Root-level repair tests load SQLite through Core, even though the root
+  // package itself has no native dependency. Probe that binding as well.
+  const result = spawnSync(nodeExecutable, ["-e", probe, join(repoRoot, "apps", "core")], {
+    cwd,
+    stdio: "ignore"
+  });
   return result.status === 0;
 }
 

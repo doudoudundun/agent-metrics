@@ -8,6 +8,7 @@ import { initializeLegacySchema } from "./legacy-schema.js";
 import {
   ingestEventLog,
   readProjectionWatermark,
+  sourceInstanceIdForVendor,
   type EventProjectorDatabase
 } from "./event-log-projector.js";
 
@@ -218,6 +219,14 @@ describe("event log projector watermarks", () => {
     ).toBe(0);
 
     (db as unknown as InstanceType<typeof Database>).close();
+  });
+});
+
+describe("sourceInstanceIdForVendor", () => {
+  it("maps antigravity onto its own source instance and keeps the unknown fallback", () => {
+    expect(sourceInstanceIdForVendor("antigravity")).toBe("antigravity:default");
+    expect(sourceInstanceIdForVendor("workbuddy")).toBe("workbuddy:default");
+    expect(sourceInstanceIdForVendor(null)).toBe("unknown:default");
   });
 });
 

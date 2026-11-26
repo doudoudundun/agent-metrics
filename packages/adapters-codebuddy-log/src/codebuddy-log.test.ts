@@ -1,10 +1,10 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { isolateSources, type IsolatedSources } from "@agent-metrics/test-utils";
 import { parseCodebuddyLog } from "./codebuddy-log.js";
-import { syncCodebuddyCliLogs } from "./codebuddy-log-sync.js";
+import { resolveCodebuddyLogRoots, syncCodebuddyCliLogs } from "./codebuddy-log-sync.js";
 
 const SESSION_ID = "01a17b4a-67d4-76a4-a2e5-4f881d0ff417";
 const TURN_ID = "01a17b4a68ad7d248b2e1b97a659c4e7";
@@ -76,6 +76,17 @@ function modelCallLine(options: ModelCallOptions, at = "10:57:36.267"): string {
 }
 
 describe("parseCodebuddyLog", () => {
+  it.each([
+    ["11/1/2026, 10:45:03 PM.483", 22, 483],
+    ["11/1/2026, 12:45:03 AM.007", 0, 7],
+    ["11/1/2026, 12:45:03 PM", 12, 0]
+  ] as const)("reads native WorkBuddy locale timestamps: %s", (stamp, hour, millis) => {
+    const line = quaEndLine({ messageId: "native" }).replace(/^\[[^\]]+\]/u, `[${stamp}]`);
+    const scan = parseCodebuddyLog(line, ".");
+    expect(scan.requests).toHaveLength(1);
+    expect(scan.requests[0]?.timestamp).toBe(new Date(2026, 10, 1, hour, 45, 3, millis).getTime());
+  });
+
   it("pairs each credit line with the request that precedes it", () => {
     const text = [
       workspaceLine(),
@@ -282,6 +293,63 @@ describe("syncCodebuddyCliLogs", () => {
     });
     expect(second.requestsWritten).toBe(0);
     expect((await readEvents(eventLogPath))).toHaveLength(events.length);
+  });
+
+  it("collects headless WorkBuddy logs alongside CodeBuddy without double counting", async () => {
+    const root = await mkdtemp(join(tmpdir(), "agent-metrics-workbuddy-cli-log-"));
+    roots.push(root);
+    const codebuddyHome = join(root, "codebuddy");
+    const workbuddyHome = join(root, "workbuddy");
+    const logRoot = await writeLog(codebuddyHome, quaEndLine({ messageId: "shared" }));
+    const nativeLog = [
+      workspaceLine(),
+      quaEndLine({ messageId: "shared" }),
+      quaEndLine({ messageId: "headless", promptTokens: 25000, completionTokens: 200 }),
+      modelCallLine({ inputTokens: 25000, cachedReadTokens: 24000 })
+    ].join("\n").replace(/\[2026\/10\/27 10:57:36\.\d+\]/gu, "[11/1/2026, 10:45:03 PM.483]");
+    await writeLog(workbuddyHome, nativeLog);
+    process.env.AGENT_METRICS_CODEBUDDY_LOG_ROOT = logRoot;
+    process.env.AGENT_METRICS_WORKBUDDY_HOME = workbuddyHome;
+    const input = {
+      eventLogPath: join(root, "events.jsonl"),
+      cursorPath: join(root, "cursor.json"),
+      ledgerPath: join(root, "ledger.json")
+    };
+
+    const first = await syncCodebuddyCliLogs(input);
+    expect(first.filesScanned).toBe(2);
+    expect(first.requestsWritten).toBe(2);
+    const usage = (await readEvents(input.eventLogPath)).filter((event) => event.type === "token.usage.recorded");
+    expect(usage).toHaveLength(2);
+    expect(usage.find((event) => event.message_id === "headless")).toMatchObject({
+      source_vendor: "workbuddy", input_tokens: 25000, output_tokens: 200,
+      cache_read_input_tokens: 24000, workspace_path: "D:/projects/dev/demo"
+    });
+    expect(usage.every((event) => event.credit === undefined)).toBe(true);
+    expect((await syncCodebuddyCliLogs(input)).requestsWritten).toBe(0);
+    expect((await syncCodebuddyCliLogs({ ...input, logRoot })).filesScanned).toBe(0);
+    expect(resolveCodebuddyLogRoots({ logRoot })).toEqual([logRoot]);
+    process.env.AGENT_METRICS_WORKBUDDY_HOME = codebuddyHome;
+    expect(resolveCodebuddyLogRoots()).toEqual([logRoot]);
+  });
+
+  it("disables the quiet period at zero even when the file timestamp is ahead of the clock", async () => {
+    const root = await mkdtemp(join(tmpdir(), "agent-metrics-codebuddy-log-"));
+    roots.push(root);
+    const logRoot = await writeLog(root, quaEndLine({ messageId: "msg_a" }));
+    const logPath = join(logRoot, "2026-10-27", "d-projects-dev-demo__cc63707d9.log");
+    const future = new Date(Date.now() + 60_000);
+    await utimes(logPath, future, future);
+    const input = {
+      eventLogPath: join(root, "events.jsonl"),
+      cursorPath: join(root, "cursor.json"),
+      ledgerPath: join(root, "ledger.json"),
+      logRoot
+    };
+
+    expect((await syncCodebuddyCliLogs({ ...input, settleMs: 1_000 })).requestsWritten).toBe(0);
+    expect((await syncCodebuddyCliLogs({ ...input, settleMs: 0 })).requestsWritten).toBe(1);
+    expect((await syncCodebuddyCliLogs({ ...input, settleMs: 0 })).requestsWritten).toBe(0);
   });
 
   it("skips requests already collected from a transcript", async () => {

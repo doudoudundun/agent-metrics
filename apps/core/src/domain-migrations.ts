@@ -14,6 +14,8 @@ import { reconcileLegacyMigration } from "./domain-reconciliation.js";
 import {
   createCanonicalSchema,
   createAggregateQueryIndexes,
+  ensureAdditiveUsageSchema,
+  relaxUsageServiceTierConstraint,
   ensureToolAggregateQueryIndex,
   createSessionQueryIndexes,
   createSyncRunSchema
@@ -46,7 +48,10 @@ const USAGE_SERVICE_TIER_VERSION = 8;
 const USAGE_SERVICE_TIER_NAME = "008-add-usage-service-tier";
 const USAGE_CREDIT_VERSION = 9;
 const USAGE_CREDIT_NAME = "009-add-usage-credit";
-const LATEST_VERSION = USAGE_CREDIT_VERSION;
+const WORKBUDDY_USAGE_DEDUP_VERSION = 10;
+const WORKBUDDY_USAGE_DEDUP_NAME = "010-deduplicate-inherited-workbuddy-usage";
+const LEGACY_WORKBUDDY_USAGE_DEDUP_NAME = "009-deduplicate-inherited-workbuddy-usage";
+const LATEST_VERSION = WORKBUDDY_USAGE_DEDUP_VERSION;
 
 const LEGACY_TABLES = [
   "sessions",
@@ -94,6 +99,14 @@ export function runDomainMigrations(db: SqliteDatabaseLike, now: MigrationNow = 
     createCanonicalSchema(db);
   }
 
+  if (!hasMigration(db, USAGE_SERVICE_TIER_NAME)) {
+    db.transaction(() => {
+      if (!columnNames(db, "usage_events").has("service_tier")) {
+        db.exec("ALTER TABLE usage_events ADD COLUMN service_tier TEXT");
+      }
+      insertMigration(db, USAGE_SERVICE_TIER_VERSION, USAGE_SERVICE_TIER_NAME, appliedAt);
+    })();
+  }
   runSessionQueryIndexMigration(db, appliedAt);
   runZcodeVendorSplitMigration(db, appliedAt);
   if (!hasMigration(db, AGGREGATE_QUERY_NAME)) {
@@ -157,18 +170,6 @@ export function runDomainMigrations(db: SqliteDatabaseLike, now: MigrationNow = 
       insertMigration(db, SESSION_START_BACKFILL_VERSION, SESSION_START_BACKFILL_NAME, appliedAt);
     })();
   }
-  if (!hasMigration(db, USAGE_SERVICE_TIER_NAME)) {
-    db.transaction(() => {
-      // Fresh databases already carry the column from createCanonicalSchema; only
-      // upgrade existing tables. Historical rows stay NULL (standard pricing)
-      // because the tier was never captured at ingest time.
-      const columns = columnNames(db, "usage_events");
-      if (!columns.has("service_tier")) {
-        db.exec("ALTER TABLE usage_events ADD COLUMN service_tier TEXT");
-      }
-      insertMigration(db, USAGE_SERVICE_TIER_VERSION, USAGE_SERVICE_TIER_NAME, appliedAt);
-    })();
-  }
   if (!hasMigration(db, USAGE_CREDIT_NAME)) {
     db.transaction(() => {
       // Fresh databases carry the column from createCanonicalSchema; only
@@ -181,6 +182,21 @@ export function runDomainMigrations(db: SqliteDatabaseLike, now: MigrationNow = 
       insertMigration(db, USAGE_CREDIT_VERSION, USAGE_CREDIT_NAME, appliedAt);
     })();
   }
+  if (!hasMigration(db, WORKBUDDY_USAGE_DEDUP_NAME)) {
+    db.transaction(() => {
+      relaxUsageServiceTierConstraint(db);
+      ensureAdditiveUsageSchema(db);
+      if (hasMigration(db, LEGACY_WORKBUDDY_USAGE_DEDUP_NAME)) {
+        db.prepare("UPDATE schema_migrations SET name = ? WHERE name = ?")
+          .run(WORKBUDDY_USAGE_DEDUP_NAME, LEGACY_WORKBUDDY_USAGE_DEDUP_NAME);
+      } else {
+        insertMigration(db, WORKBUDDY_USAGE_DEDUP_VERSION, WORKBUDDY_USAGE_DEDUP_NAME, appliedAt);
+      }
+    })();
+  }
+  // Keep the view and its lookup index self-healing if a database was copied
+  // with a missing auxiliary object after the migration marker was written.
+  ensureAdditiveUsageSchema(db);
 }
 
 function runSessionQueryIndexMigration(db: SqliteDatabaseLike, appliedAt: string): void {
@@ -241,6 +257,12 @@ function runBaselineMigration(db: SqliteDatabaseLike, appliedAt: string): void {
     ensureSchemaMigrations(db);
     validateMigrationVersions(db);
     validateDatabaseShape(db);
+    // A local release used 009 for WorkBuddy dedup before upstream assigned
+    // that version to credits. Reserve 010 while retaining its old name until
+    // the updated migration completes, and preserve the original applied_at.
+    db.prepare(
+      "UPDATE schema_migrations SET version = ? WHERE version = 9 AND name = ?"
+    ).run(WORKBUDDY_USAGE_DEDUP_VERSION, LEGACY_WORKBUDDY_USAGE_DEDUP_NAME);
 
     if (!hasMigration(db, BASELINE_NAME)) {
       insertMigration(db, BASELINE_VERSION, BASELINE_NAME, appliedAt);

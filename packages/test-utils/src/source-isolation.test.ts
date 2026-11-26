@@ -25,16 +25,17 @@ afterEach(() => {
 });
 
 describe("AGENT_METRICS_SOURCE_ENV_VARS", () => {
-  it("lists exactly the 20 known source-path env vars", () => {
+  it("lists exactly the 21 known source-path env vars", () => {
     // Pinned count: spec section 20.1 enumerates Claude discovery roots,
     // OpenCode db/models, ZCode db/models, MiMo db/models, Kimi Code home, DSH
     // home, WorkBuddy home, CodeBuddy home/request-logs, Codex
-    // sessions/logs-db/config, and Cursor tracking-db/workspace-storage/
-    // storage-json/global-storage-db/projects-root. Adding a source requires
-    // adding it here and to the helper.
-    expect(AGENT_METRICS_SOURCE_ENV_VARS).toHaveLength(20);
+    // sessions/logs-db/config, Cursor tracking-db/workspace-storage/
+    // storage-json/global-storage-db/projects-root, and Antigravity
+    // providers-root. Adding a source requires adding it here and to the helper.
+    expect(AGENT_METRICS_SOURCE_ENV_VARS).toHaveLength(21);
     expect([...AGENT_METRICS_SOURCE_ENV_VARS].sort()).toEqual(
       [
+        "AGENT_METRICS_ANTIGRAVITY_PROVIDERS_ROOT",
         "AGENT_METRICS_CLAUDE_DISCOVERY_ROOTS",
         "AGENT_METRICS_CODEX_CONFIG_PATH",
         "AGENT_METRICS_CODEX_LOGS_DB_PATH",
@@ -98,6 +99,18 @@ describe("isolateSources", () => {
     isolated.cleanup();
 
     expect(process.env[probeName]).toBeUndefined();
+  });
+
+  it("redirects the Antigravity providers root under the temp root", async () => {
+    // ~/.t3/userdata/providers/antigravity holds real account telemetry, so the
+    // var must be part of the isolated set, not left pointing at the home dir.
+    const isolated = await isolateSources();
+    activeCleanups.push(isolated.cleanup);
+
+    const redirected = process.env.AGENT_METRICS_ANTIGRAVITY_PROVIDERS_ROOT;
+    expect(redirected).toBeDefined();
+    expect(pathIsInsideRoot(redirected!, isolated.rootDir)).toBe(true);
+    expect(isolated.env.AGENT_METRICS_ANTIGRAVITY_PROVIDERS_ROOT).toBe(redirected);
   });
 
   it("cleanup is idempotent", async () => {

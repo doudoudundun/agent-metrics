@@ -196,6 +196,38 @@ describe("DashboardPage", () => {
     view.unmount();
   });
 
+  it("filters dashboard requests by the Antigravity source chip", async () => {
+    const allBreakdown = [
+      { sourceVendor: "claude-code" as const, sessionCount: 3, turnCount: 24, totalTokens: 45678, toolCalls: 12, costUsd: 12.34, cacheHitRate: 0.09 },
+      { sourceVendor: "antigravity" as const, sessionCount: 2, turnCount: 8, totalTokens: 4200, toolCalls: 5, costUsd: 0.42, cacheHitRate: 0.2 }
+    ];
+    vi.mocked(fetchOverview).mockImplementation(async (_scope, sourceVendor) => ({
+      ...buildReadyOverview(),
+      sourceBreakdown:
+        sourceVendor === "all"
+          ? allBreakdown
+          : allBreakdown.filter((row) => row.sourceVendor === sourceVendor)
+    }));
+
+    const view = render(<DashboardPage />);
+    await screen.findByRole("region", { name: "Overview metrics for Today" });
+
+    const chip = screen.getByRole("button", { name: /Antigravity/ });
+    expect(chip).toHaveTextContent("$0.42");
+
+    fireEvent.click(chip);
+
+    await waitFor(() =>
+      expect(fetchOverview).toHaveBeenCalledWith(
+        { mode: "calendar", range: "day" },
+        "antigravity",
+        expect.any(AbortSignal)
+      )
+    );
+
+    view.unmount();
+  });
+
   it("orders source chips by usage under the current scope", async () => {
     vi.mocked(fetchOverview).mockResolvedValue({
       ...buildReadyOverview(),
@@ -213,7 +245,7 @@ describe("DashboardPage", () => {
 
     expect(readSourceChips()).toEqual({
       primary: ["All sources", "Kimi Code", "MiMo", "Codex", "Claude Code", "Cursor", "Others"],
-      others: ["ZCode", "OpenCode", "DSH", "WorkBuddy"]
+      others: ["ZCode", "OpenCode", "DSH", "WorkBuddy", "Antigravity"]
     });
     expect(screen.getByRole("button", { name: /Kimi Code/ })).toHaveTextContent("$9.00");
     expect(screen.getByRole("button", { name: "All sources" })).not.toHaveTextContent("$");
@@ -452,6 +484,7 @@ describe("DashboardPage", () => {
       "OpenCode",
       "DSH",
       "WorkBuddy",
+      "Antigravity",
       "Export CSV",
       "Export JSON"
     ]);

@@ -1,11 +1,12 @@
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { MANAGED_NODE_VERSION } from "./stage-runtime-config.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const desktopPackage = JSON.parse(readFileSync(join(desktopRoot, "package.json"), "utf8"));
 
 export const TARGET_PLATFORMS = ["win32", "darwin"];
 export const TARGET_ARCHITECTURES = ["x64", "arm64"];
@@ -15,7 +16,7 @@ export function resolveDefaultArtifact(target, root = desktopRoot) {
   if (target.platform === "win32") {
     return join(releaseRoot, "win-unpacked");
   }
-  return join(releaseRoot, "mac");
+  return join(releaseRoot, `mac-${target.arch}`, `${desktopPackage.build.executableName}.app`);
 }
 
 export function parseTargetArgs(argv = process.argv.slice(2), { requireArtifact = false, resolveArtifactDefault = false } = {}) {

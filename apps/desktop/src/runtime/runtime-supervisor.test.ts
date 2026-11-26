@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   CHILD_LOG_GENERATIONS,
   CHILD_SHUTDOWN_TIMEOUT_MS,
+  CORE_READINESS_TIMEOUT_MS,
   FAILURE_WINDOW_MS,
   MAX_CHILD_LOG_BYTES,
   MAX_RESTARTS_PER_WINDOW,
@@ -54,9 +55,30 @@ function createMockChild(pid: number): MockChild {
 
 function createSupervisor(children: MockChild[], options: Record<string, unknown> = {}) {
   const spawned: MockChild[] = [];
-  const spawn = vi.fn(() => {
-    const child = children.shift() ?? createMockChild(10_000 + spawned.length);
-    spawned.push(child);
+  const initialByName: Record<"watcher" | "parser" | "core", MockChild | undefined> = {
+    watcher: children[0],
+    parser: children[1],
+    core: children[2]
+  };
+  const spawnedInitial = new Set<"watcher" | "parser" | "core">();
+  const restartChildren = children.slice(3);
+  const spawn = vi.fn((_command: string, args: readonly string[]) => {
+    const name =
+      args[0] === "/bundle/core/dist/server.js"
+        ? "core"
+        : args[2] === "watch"
+          ? "watcher"
+          : "parser";
+    const initialIndex = name === "watcher" ? 0 : name === "parser" ? 1 : 2;
+    let child: MockChild;
+    if (!spawnedInitial.has(name) && initialByName[name]) {
+      spawnedInitial.add(name);
+      child = initialByName[name]!;
+      spawned[initialIndex] = child;
+    } else {
+      child = restartChildren.shift() ?? createMockChild(10_000 + spawned.length);
+      spawned.push(child);
+    }
     return child;
   });
   // Tests inject a force-kill that delegates to the mock child's `kill`, so the
@@ -174,6 +196,74 @@ describe("runtime supervisor", () => {
     await supervisor.stop();
     expect(spawned[0].kill).toHaveBeenCalledWith("SIGTERM");
     expect(spawned[1].kill).toHaveBeenCalledWith("SIGTERM");
+  });
+
+  it("waits for managed Core health before starting hook processes", async () => {
+    let resolveCoreReadiness!: (ready: boolean) => void;
+    const coreReadiness = new Promise<boolean>((resolve) => {
+      resolveCoreReadiness = resolve;
+    });
+    const readinessCalls: string[] = [];
+    const { supervisor, spawn } = createSupervisor(
+      [createMockChild(101), createMockChild(202), createMockChild(303)],
+      {
+        readinessCheck: (name: "watcher" | "parser" | "core") => {
+          readinessCalls.push(name);
+          return name === "core" ? coreReadiness : true;
+        }
+      }
+    );
+
+    const startPromise = supervisor.start();
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalledTimes(1));
+    expect(readinessCalls).toEqual(["core"]);
+
+    resolveCoreReadiness(true);
+    await startPromise;
+
+    expect(spawn).toHaveBeenCalledTimes(3);
+    expect(readinessCalls).toEqual(["core", "watcher", "parser"]);
+    expect(supervisor.getStatus().state).toBe("ready");
+  });
+
+  it("does not leave hook processes running when Core readiness fails", async () => {
+    vi.useFakeTimers();
+    const { supervisor, spawn, spawned } = createSupervisor(
+      [createMockChild(101), createMockChild(202), createMockChild(303)],
+      { readinessCheck: (name: "watcher" | "parser" | "core") => name !== "core" }
+    );
+
+    const startPromise = supervisor.start();
+    await vi.advanceTimersByTimeAsync(CORE_READINESS_TIMEOUT_MS);
+    await startPromise;
+
+    expect(spawn).toHaveBeenCalledTimes(1);
+    expect(spawned.filter(Boolean)).toHaveLength(1);
+    expect(supervisor.getStatus().children.slice(0, 2)).toMatchObject([
+      { name: "watcher", state: "stopped" },
+      { name: "parser", state: "stopped" }
+    ]);
+  });
+
+  it("resumes hook startup after Core recovers from an automatic restart", async () => {
+    vi.useFakeTimers();
+    let coreReady = false;
+    const readinessCheck = (name: "watcher" | "parser" | "core") =>
+      name !== "core" || coreReady;
+    const { supervisor, spawn } = createSupervisor(
+      [createMockChild(101), createMockChild(202), createMockChild(303)],
+      { readinessCheck }
+    );
+
+    const startPromise = supervisor.start();
+    await vi.advanceTimersByTimeAsync(CORE_READINESS_TIMEOUT_MS);
+    await startPromise;
+    expect(spawn).toHaveBeenCalledTimes(1);
+
+    coreReady = true;
+    await vi.advanceTimersByTimeAsync(RESTART_DELAYS_MS[0]);
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalledTimes(4));
+    expect(supervisor.getStatus().state).toBe("ready");
   });
 
   it("cancels restart timers before intentional shutdown", async () => {
@@ -412,12 +502,14 @@ describe("runtime supervisor", () => {
     const watcher = createMockChild(101);
     const core = createMockChild(303);
     const spawn = vi.fn(() => {
-      // First call → watcher, second → parser (with stderr), third → core.
-      return [watcher, child, core][spawn.mock.calls.length - 1];
+      // Core must become ready before either hook process starts.
+      return [core, watcher, child][spawn.mock.calls.length - 1];
     });
     const supervisor = createRuntimeSupervisor({
       runtimePaths: {
-        dataRoot: "Z:/cannot-write-here/nonexistent-root",
+        // An executable file cannot contain the child log directory, making
+        // the append/rotation failure deterministic on every host OS.
+        dataRoot: process.execPath,
         cliEntrypoint: "/bundle/cli/dist/index.js",
         cliWorkingDirectory: "/bundle/cli",
         coreEntrypoint: "/bundle/core/dist/server.js",

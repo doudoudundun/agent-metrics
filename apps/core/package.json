@@ -12,6 +12,7 @@
     "test": "node ../../scripts/run-tests.mjs run src"
   },
   "dependencies": {
+    "@agent-metrics/adapters-antigravity": "workspace:*",
     "@agent-metrics/adapters-claude": "workspace:*",
     "@agent-metrics/adapters-codex": "workspace:*",
     "@agent-metrics/adapters-codebuddy-log": "workspace:*",

@@ -1,5 +1,7 @@
 import Database from "better-sqlite3";
 import { describe, expect, it } from "vitest";
+import { semanticFingerprint, type NormalizedEventV2 } from "@agent-metrics/event-schema";
+import { projectNormalizedEvents } from "./domain-projection.js";
 
 type MigrationRunner = (db: InstanceType<typeof Database>, now?: Date) => void;
 
@@ -15,6 +17,22 @@ function tableNames(db: InstanceType<typeof Database>): string[] {
     )
     .all()
     .map((row) => row.name);
+}
+
+function restoreUpstream009TierConstraint(db: InstanceType<typeof Database>): void {
+  const sql = db.prepare<{ sql: string }>(
+    "SELECT sql FROM sqlite_master WHERE name = 'usage_events' AND type = 'table'"
+  ).get()!.sql;
+  db.exec(`
+    DROP VIEW additive_usage_events;
+    ALTER TABLE usage_events RENAME TO usage_events_before_constraint;
+  `);
+  db.exec(sql.replace("service_tier TEXT", "service_tier TEXT CHECK (service_tier IN ('standard', 'flex', 'fast', 'priority', 'ultrafast'))"));
+  db.exec(`
+    INSERT INTO usage_events SELECT * FROM usage_events_before_constraint;
+    DROP TABLE usage_events_before_constraint;
+    DELETE FROM schema_migrations WHERE name = '010-deduplicate-inherited-workbuddy-usage';
+  `);
 }
 
 function createLegacySchema(
@@ -171,7 +189,8 @@ describe("runDomainMigrations", () => {
       { version: 6, name: "006-add-usage-timing-columns", applied_at: "2026-07-17T12:00:00.000Z" },
       { version: 7, name: "007-backfill-session-started-at", applied_at: "2026-07-17T12:00:00.000Z" },
       { version: 8, name: "008-add-usage-service-tier", applied_at: "2026-07-17T12:00:00.000Z" },
-      { version: 9, name: "009-add-usage-credit", applied_at: "2026-07-17T12:00:00.000Z" }
+      { version: 9, name: "009-add-usage-credit", applied_at: "2026-07-17T12:00:00.000Z" },
+      { version: 10, name: "010-deduplicate-inherited-workbuddy-usage", applied_at: "2026-07-17T12:00:00.000Z" }
     ]);
 
     db.close();
@@ -269,6 +288,8 @@ describe("runDomainMigrations", () => {
     // Simulate a database created before migration 006: timing columns and
     // marker absent. SQLite >= 3.35 supports DROP COLUMN.
     db.exec(`
+      DROP VIEW additive_usage_events;
+      DROP INDEX idx_usage_events_workbuddy_message;
       ALTER TABLE usage_events DROP COLUMN first_token_latency_ms;
       ALTER TABLE usage_events DROP COLUMN decode_duration_ms;
       DELETE FROM schema_migrations WHERE name = '006-add-usage-timing-columns';
@@ -290,14 +311,154 @@ describe("runDomainMigrations", () => {
     db.close();
   });
 
-  it("adds the usage service tier column when upgrading a pre-008 database", async () => {
+  it("upgrades the local 009 WorkBuddy migration alongside upstream credits without losing usage", async () => {
     const db = new Database(":memory:");
+    createLegacySchema(db);
     const runDomainMigrations = await loadRunner();
-
-    runDomainMigrations(db, new Date("2026-07-17T12:00:00.000Z"));
-    // Simulate a database projected before migration 008: usage rows recorded
-    // before the speed tier existed have no column at all.
+    const originalAppliedAt = "2026-07-17T12:00:00.000Z";
+    runDomainMigrations(db, new Date(originalAppliedAt));
     db.exec(`
+      DROP VIEW additive_usage_events;
+      DELETE FROM schema_migrations WHERE name = '009-add-usage-credit';
+      UPDATE schema_migrations SET version = 9, name = '009-deduplicate-inherited-workbuddy-usage'
+        WHERE name = '010-deduplicate-inherited-workbuddy-usage';
+      ALTER TABLE usage_events DROP COLUMN credit;
+      CREATE VIEW additive_usage_events AS SELECT * FROM usage_events;
+    `);
+    const upgradeAt = new Date("2026-07-18T12:00:00.000Z");
+
+    runDomainMigrations(db, upgradeAt);
+    runDomainMigrations(db, upgradeAt);
+
+    expect(db.prepare("SELECT version, name, applied_at FROM schema_migrations WHERE version >= 9 ORDER BY version").all())
+      .toEqual([
+        { version: 9, name: "009-add-usage-credit", applied_at: upgradeAt.toISOString() },
+        { version: 10, name: "010-deduplicate-inherited-workbuddy-usage", applied_at: originalAppliedAt }
+      ]);
+    expect(db.prepare("SELECT raw_input_tokens, credit FROM usage_events").get())
+      .toEqual({ raw_input_tokens: 120, credit: null });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM additive_usage_events").get()).toEqual({ count: 1 });
+    expect(db.prepare<{ sql: string }>("SELECT sql FROM sqlite_master WHERE name = 'additive_usage_events'").get()?.sql)
+      .toContain("canonical.credit IS usage.credit");
+    db.close();
+  });
+
+  it("upgrades an upstream 009 tier CHECK while preserving credit, extra columns, rowids, indexes, views and triggers", async () => {
+    const db = new Database(":memory:");
+    createLegacySchema(db);
+    const runDomainMigrations = await loadRunner();
+    runDomainMigrations(db);
+    restoreUpstream009TierConstraint(db);
+    db.exec(`
+      ALTER TABLE usage_events ADD COLUMN provider_evidence TEXT;
+      UPDATE usage_events SET rowid = 123, credit = 0.42, service_tier = 'fast', provider_evidence = 'original';
+      CREATE INDEX custom_usage_tier_credit ON usage_events (service_tier, credit);
+      CREATE VIEW credit_usage AS SELECT event_id, credit, service_tier, provider_evidence FROM usage_events;
+      CREATE VIEW credit_usage_summary AS SELECT SUM(credit) AS total_credit FROM credit_usage;
+      CREATE TRIGGER preserve_usage_trigger AFTER UPDATE OF service_tier ON usage_events
+      BEGIN
+        UPDATE usage_events SET provider_evidence = 'tier-updated' WHERE event_id = NEW.event_id;
+      END;
+    `);
+    const before = db.prepare<Record<string, unknown>>("SELECT rowid, * FROM usage_events").get()!;
+    const objectsBefore = db.prepare("SELECT type, name, sql FROM sqlite_master WHERE name LIKE 'credit_usage%' OR name IN ('custom_usage_tier_credit', 'preserve_usage_trigger') ORDER BY name").all();
+    expect(() => db.prepare("UPDATE usage_events SET service_tier = 'provider-burst'").run()).toThrow(/CHECK constraint failed/);
+
+    runDomainMigrations(db);
+
+    expect(db.prepare("SELECT rowid, * FROM usage_events").get()).toEqual(before);
+    expect(db.prepare("SELECT type, name, sql FROM sqlite_master WHERE name LIKE 'credit_usage%' OR name IN ('custom_usage_tier_credit', 'preserve_usage_trigger') ORDER BY name").all()).toEqual(objectsBefore);
+    expect(db.prepare("SELECT * FROM credit_usage_summary").get()).toEqual({ total_credit: 0.42 });
+    const columns = Object.keys(before).filter((column) => column !== "rowid");
+    const insert = db.prepare(`INSERT INTO usage_events (${columns.map((column) => `"${column}"`).join(", ")}) VALUES (${columns.map(() => "?").join(", ")})`);
+    for (const tier of ["default", "provider-burst"]) {
+      const row: Record<string, unknown> = { ...before, event_id: `usage-${tier}`, service_tier: tier };
+      insert.run(...columns.map((column) => row[column]));
+    }
+    db.prepare("UPDATE usage_events SET service_tier = 'normal' WHERE event_id = ?").run(before.event_id);
+    expect(db.prepare("SELECT provider_evidence FROM usage_events WHERE event_id = ?").get(before.event_id))
+      .toEqual({ provider_evidence: "tier-updated" });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM usage_events").get()).toEqual({ count: 3 });
+    expect(db.prepare("SELECT version, name FROM schema_migrations WHERE version >= 9 ORDER BY version").all()).toEqual([
+      { version: 9, name: "009-add-usage-credit" },
+      { version: 10, name: "010-deduplicate-inherited-workbuddy-usage" }
+    ]);
+    expect(db.prepare("PRAGMA integrity_check").get()).toEqual({ integrity_check: "ok" });
+    runDomainMigrations(db);
+    expect(db.prepare("SELECT COUNT(*) AS count FROM usage_events").get()).toEqual({ count: 3 });
+    db.close();
+  });
+
+  it("preserves writes through a view's INSTEAD OF INSERT trigger when upgrading upstream 009", async () => {
+    const db = new Database(":memory:");
+    createLegacySchema(db);
+    const runDomainMigrations = await loadRunner();
+    runDomainMigrations(db);
+    restoreUpstream009TierConstraint(db);
+    const columns = db.prepare<{ name: string }>("PRAGMA table_info(usage_events)").all()
+      .map((column) => column.name);
+    const writtenColumns = new Set(["event_id", "credit", "service_tier"]);
+    db.exec(`
+      CREATE VIEW writable_usage AS SELECT * FROM usage_events;
+      CREATE TRIGGER writable_usage_insert INSTEAD OF INSERT ON writable_usage
+      BEGIN
+        INSERT INTO usage_events (${columns.map((column) => `"${column}"`).join(", ")})
+        SELECT ${columns.map((column) => `${writtenColumns.has(column) ? "NEW" : "seed"}."${column}"`).join(", ")}
+        FROM usage_events AS seed ORDER BY seed.rowid LIMIT 1;
+      END;
+    `);
+    const originalTrigger = db.prepare("SELECT sql FROM sqlite_master WHERE name = 'writable_usage_insert'").get();
+    db.prepare("INSERT INTO writable_usage (event_id, credit, service_tier) VALUES (?, ?, ?)")
+      .run("view-before-upgrade", 0.25, "fast");
+    expect(db.prepare("SELECT credit, service_tier FROM usage_events WHERE event_id = 'view-before-upgrade'").get())
+      .toEqual({ credit: 0.25, service_tier: "fast" });
+
+    runDomainMigrations(db);
+
+    expect(db.prepare("SELECT sql FROM sqlite_master WHERE name = 'writable_usage_insert'").get()).toEqual(originalTrigger);
+    db.prepare("INSERT INTO writable_usage (event_id, credit, service_tier) VALUES (?, ?, ?)")
+      .run("view-after-upgrade", 0.75, "provider-burst");
+    expect(db.prepare("SELECT credit, service_tier FROM usage_events WHERE event_id = 'view-after-upgrade'").get())
+      .toEqual({ credit: 0.75, service_tier: "provider-burst" });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM usage_events").get()).toEqual({ count: 3 });
+    expect(db.prepare("SELECT version, name FROM schema_migrations WHERE version = 10").get())
+      .toEqual({ version: 10, name: "010-deduplicate-inherited-workbuddy-usage" });
+    expect(db.prepare("PRAGMA integrity_check").get()).toEqual({ integrity_check: "ok" });
+    db.close();
+  });
+
+  it("rolls the upstream tier table replacement back when writing migration 010 fails", async () => {
+    const db = new Database(":memory:");
+    createLegacySchema(db);
+    const runDomainMigrations = await loadRunner();
+    runDomainMigrations(db);
+    restoreUpstream009TierConstraint(db);
+    db.exec(`CREATE TRIGGER fail_010_migration BEFORE INSERT ON schema_migrations
+      WHEN NEW.name = '010-deduplicate-inherited-workbuddy-usage'
+      BEGIN SELECT RAISE(ABORT, 'forced 010 migration failure'); END;`);
+    const before = db.prepare("SELECT * FROM usage_events").all();
+    const originalSql = db.prepare("SELECT sql FROM sqlite_master WHERE name = 'usage_events'").get();
+
+    expect(() => runDomainMigrations(db)).toThrow(/forced 010 migration failure/);
+
+    expect(db.prepare("SELECT * FROM usage_events").all()).toEqual(before);
+    expect(db.prepare("SELECT sql FROM sqlite_master WHERE name = 'usage_events'").get()).toEqual(originalSql);
+    expect(tableNames(db)).not.toContain("usage_events_tier_upgrade");
+    expect(db.prepare("SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 10").get()).toEqual({ count: 0 });
+    expect(() => db.prepare("UPDATE usage_events SET service_tier = 'default'").run()).toThrow(/CHECK constraint failed/);
+    db.close();
+  });
+
+  it("adds service_tier when upgrading a pre-008 schema and remains idempotent", async () => {
+    const db = new Database(":memory:");
+    createLegacySchema(db);
+    const runDomainMigrations = await loadRunner();
+    const now = new Date("2026-07-17T12:00:00.000Z");
+
+    runDomainMigrations(db, now);
+    db.exec(`
+      DROP VIEW additive_usage_events;
+      DROP INDEX idx_usage_events_workbuddy_message;
       ALTER TABLE usage_events DROP COLUMN service_tier;
       DELETE FROM schema_migrations WHERE name = '008-add-usage-service-tier';
     `);
@@ -309,10 +470,27 @@ describe("runDomainMigrations", () => {
       .all()
       .map((row) => row.name);
     expect(columns).toContain("service_tier");
+    expect(db.prepare("SELECT raw_input_tokens, service_tier FROM usage_events").get()).toEqual({
+      raw_input_tokens: 120,
+      service_tier: null
+    });
     expect(
-      db.prepare("SELECT version, name FROM schema_migrations WHERE name = ?").get("008-add-usage-service-tier")
+      db.prepare("SELECT version, name FROM schema_migrations WHERE name = '008-add-usage-service-tier'").get()
     ).toEqual({ version: 8, name: "008-add-usage-service-tier" });
 
+    const afterUpgrade = db.prepare(`
+      SELECT
+        (SELECT COUNT(*) FROM schema_migrations) AS migrations,
+        (SELECT COUNT(*) FROM normalized_events) AS events,
+        (SELECT COUNT(*) FROM usage_events) AS usage
+    `).get();
+    runDomainMigrations(db, new Date("2026-07-19T12:00:00.000Z"));
+    expect(db.prepare(`
+      SELECT
+        (SELECT COUNT(*) FROM schema_migrations) AS migrations,
+        (SELECT COUNT(*) FROM normalized_events) AS events,
+        (SELECT COUNT(*) FROM usage_events) AS usage
+    `).get()).toEqual(afterUpgrade);
     db.close();
   });
 
@@ -467,6 +645,97 @@ describe("runDomainMigrations", () => {
     expect(
       db.prepare("SELECT name FROM schema_migrations WHERE name = '001-create-phase2-domain'").get()
     ).toEqual({ name: "001-create-phase2-domain" });
+
+    db.close();
+  });
+
+  it("allows only reconciled service-tier enrichment hashes and still requires diagnostics for other observations", async () => {
+    const db = new Database(":memory:");
+    createLegacySchema(db);
+    const runDomainMigrations = await loadRunner();
+    runDomainMigrations(db, new Date("2026-07-17T12:00:00.000Z"));
+    const { reconcileLegacyMigration } = await import("./domain-reconciliation.js");
+
+    const originalEvent: NormalizedEventV2 = {
+      schema_version: 2,
+      event_id: "tier-reconciliation-event",
+      session_id: "session-1",
+      timestamp: "2026-07-17T10:00:10.000Z",
+      source_vendor: "claude-code",
+      source_adapter: "claude-transcript",
+      source_instance_id: "claude:default",
+      adapter_instance_id: "claude-transcript@claude:default",
+      source_record_namespace: "test",
+      source_record_id: "tier-reconciliation-record",
+      workspace_path: "/workspace",
+      type: "token.usage.recorded",
+      message_id: "tier-reconciliation-message",
+      model: "gpt-6-luna",
+      input_tokens: 100,
+      input_token_semantics: "delta",
+      usage_measurement: "session-context-snapshot",
+      output_tokens: 10,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 0,
+      server_tool_use: "{}",
+      usage_source: "claude-transcript",
+      provider_id: "unknown"
+    };
+    const [originalResult] = projectNormalizedEvents(db as never, [originalEvent]);
+    const enrichedEvent: NormalizedEventV2 = {
+      ...originalEvent,
+      source_adapter: "claude-hook",
+      adapter_instance_id: "claude-hook@claude:default",
+      service_tier: "fast"
+    };
+    const [enrichedResult] = projectNormalizedEvents(db as never, [enrichedEvent]);
+
+    expect(enrichedResult.conflict).toBe(false);
+    const observationHashes = db
+      .prepare<{ semantic_fingerprint: string }>(
+        "SELECT semantic_fingerprint FROM event_observations WHERE event_id = ? ORDER BY semantic_fingerprint"
+      )
+      .all(originalEvent.event_id)
+      .map((row) => row.semantic_fingerprint);
+    expect(observationHashes).toEqual(
+      [originalResult.semanticFingerprint, enrichedResult.semanticFingerprint].sort()
+    );
+    expect(() => reconcileLegacyMigration(db as never)).not.toThrow();
+
+    db.prepare("UPDATE normalized_events SET semantic_fingerprint = 'tampered' WHERE event_id = ?")
+      .run(originalEvent.event_id);
+    expect(() => reconcileLegacyMigration(db as never)).toThrow(/RECONCILIATION_FAILED/);
+    db.prepare("UPDATE normalized_events SET semantic_fingerprint = ? WHERE event_id = ?")
+      .run(enrichedResult.semanticFingerprint, originalEvent.event_id);
+
+    const knownTierConflictFingerprint = semanticFingerprint({ ...enrichedEvent, service_tier: "standard" });
+    db.prepare(
+      `INSERT INTO event_observations
+        (event_id, adapter_instance_id, source_adapter, semantic_fingerprint, observed_at)
+       VALUES (?, ?, ?, ?, ?)`
+    ).run(
+      originalEvent.event_id,
+      "other-adapter@claude:default",
+      "claude-history",
+      knownTierConflictFingerprint,
+      "2026-07-17T12:00:00.000Z"
+    );
+    expect(() => reconcileLegacyMigration(db as never)).toThrow(/RECONCILIATION_FAILED/);
+
+    db.prepare(
+      `INSERT INTO event_diagnostics (
+         diagnostic_code, source_instance_id, event_id, evidence_fingerprint,
+         first_seen_at, last_seen_at, occurrence_count, summary, resolution_state
+       ) VALUES ('IDENTITY_CONFLICT', ?, ?, ?, ?, ?, 1, ?, 'open')`
+    ).run(
+      originalEvent.source_instance_id,
+      originalEvent.event_id,
+      knownTierConflictFingerprint,
+      "2026-07-17T12:00:00.000Z",
+      "2026-07-17T12:00:00.000Z",
+      "A conflicting observation has an explicit diagnostic."
+    );
+    expect(() => reconcileLegacyMigration(db as never)).not.toThrow();
 
     db.close();
   });

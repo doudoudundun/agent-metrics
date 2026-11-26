@@ -1,6 +1,6 @@
 import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import { existsSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, win32, posix } from "node:path";
 
 const DEFAULT_MANAGED_NODE_VERSION = "22.22.3";
 const COMPATIBILITY_CHECK_SCRIPT =
@@ -108,8 +108,9 @@ function resolveManagedNodePath(input: {
     return null;
   }
 
+  const pathModule = input.platform === "win32" ? win32 : posix;
   for (const searchRoot of [input.cliWorkingDirectory, input.coreWorkingDirectory]) {
-    let currentDir = resolve(searchRoot);
+    let currentDir = pathModule.resolve(searchRoot);
 
     while (true) {
       const candidate = buildManagedNodeCandidate(currentDir, managedFolder, input.platform);
@@ -118,7 +119,7 @@ function resolveManagedNodePath(input: {
         return candidate;
       }
 
-      const parentDir = dirname(currentDir);
+      const parentDir = pathModule.dirname(currentDir);
 
       if (parentDir === currentDir) {
         break;
@@ -157,10 +158,10 @@ function buildManagedNodeCandidate(
   platform: NodeJS.Platform
 ): string {
   if (platform === "win32") {
-    return join(rootDir, ".runtime", managedFolder, "node.exe");
+    return win32.join(rootDir, ".runtime", managedFolder, "node.exe");
   }
 
-  return join(rootDir, ".runtime", managedFolder, "bin", "node");
+  return posix.join(rootDir, ".runtime", managedFolder, "bin", "node");
 }
 
 function supportsCoreRuntime(

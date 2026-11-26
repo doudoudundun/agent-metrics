@@ -8,7 +8,7 @@ export const RESTART_DELAYS_MS = [1_000, 2_000, 5_000, 10_000, 30_000] as const;
 export const FAILURE_WINDOW_MS = 10 * 60_000;
 export const STABLE_RUN_RESET_MS = 5 * 60_000;
 export const READINESS_TIMEOUT_MS = 15_000;
-/** Core may run a one-shot Phase-2 SQLite backfill on first open (can exceed 15s). */
+/** Core may stream-trim an oversized event log before listening; allow three minutes. */
 export const CORE_READINESS_TIMEOUT_MS = 180_000;
 export const CHILD_SHUTDOWN_TIMEOUT_MS = 5_000;
 export const MAX_RESTARTS_PER_WINDOW = 5;
@@ -564,7 +564,17 @@ export function createRuntimeSupervisor({
       }
       try {
         const replacement = launchChild(name, true);
-        void waitForReady(replacement).then(() => refreshState());
+        void waitForReady(replacement).then((ready) => {
+          if (ready && name === "core") {
+            // If startup was gated on Core, resume the hook processes when an
+            // automatic Core restart eventually succeeds.
+            void runLifecycleOperation(() =>
+              stopping ? Promise.resolve(getStatus()) : startInternal()
+            );
+            return;
+          }
+          refreshState();
+        });
       } catch (error) {
         record.tracker.errorSummary = sanitizeErrorSummary(error);
         record.tracker.consecutiveFailures += 1;
@@ -596,11 +606,28 @@ export function createRuntimeSupervisor({
     } else if (!externalHealthy && coreTracker.ownership === "external") {
       coreTracker.ownership = "none";
     }
-    const pending: ManagedChild[] = [];
-    for (const name of ["watcher", "parser", "core"] as const) {
-      if (name === "core" && coreTracker.ownership === "external") {
-        continue;
+    if (coreTracker.ownership !== "external") {
+      let coreRecord = children.get("core");
+      if (!coreRecord || coreRecord.exited) {
+        try {
+          coreRecord = launchChild("core", false);
+        } catch (error) {
+          coreTracker.ownership = "managed";
+          coreTracker.errorSummary = sanitizeErrorSummary(error);
+          coreTracker.consecutiveFailures += 1;
+          refreshState();
+          return getStatus();
+        }
       }
+
+      if (coreRecord.state !== "ready" && !(await waitForReady(coreRecord))) {
+        refreshState();
+        return getStatus();
+      }
+    }
+
+    const pending: ManagedChild[] = [];
+    for (const name of ["watcher", "parser"] as const) {
       const existing = children.get(name);
       if (existing && !existing.exited) {
         continue;

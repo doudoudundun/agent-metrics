@@ -1,3 +1,4 @@
+import { semanticFingerprint } from "@agent-metrics/event-schema";
 import {
   LEGACY_EVENT_TABLES,
   USAGE_REGISTRY,
@@ -21,6 +22,13 @@ type UsageFoldRow = {
   source_instance_id: string;
   session_id: string;
 };
+type CanonicalIdentityRow = {
+  event_type: string;
+  type: string;
+  semantic_fingerprint: string;
+  payload_json: string;
+};
+type ObservationFingerprintRow = { semantic_fingerprint: string };
 
 /**
  * Spec section 10.1 step 7: run reconciliation before writing the Phase 2
@@ -283,7 +291,7 @@ function reconcileIdentityConflicts(db: SqliteDatabaseLike): void {
        WHERE diagnostic_code = 'IDENTITY_CONFLICT' AND event_id = ?`,
       conflict.event_id
     );
-    if (diagnostics === 0) {
+    if (diagnostics === 0 && !isAuthorizedServiceTierEnrichment(db, conflict.event_id)) {
       throw new DomainMigrationError(
         "RECONCILIATION_FAILED",
         "event_id has multiple semantic fingerprints without IDENTITY_CONFLICT diagnostic",
@@ -291,6 +299,66 @@ function reconcileIdentityConflicts(db: SqliteDatabaseLike): void {
       );
     }
   }
+}
+
+function isAuthorizedServiceTierEnrichment(db: SqliteDatabaseLike, eventId: string): boolean {
+  const canonical = db
+    .prepare<CanonicalIdentityRow>(
+      `SELECT event_type, type, semantic_fingerprint, payload_json
+       FROM normalized_events WHERE event_id = ?`
+    )
+    .get(eventId);
+  if (
+    !canonical ||
+    canonical.event_type !== "token.usage.recorded" ||
+    canonical.type !== "token.usage.recorded"
+  ) {
+    return false;
+  }
+
+  let payload: unknown;
+  try {
+    payload = JSON.parse(canonical.payload_json);
+  } catch {
+    return false;
+  }
+  if (
+    !isRecord(payload) ||
+    payload.type !== "token.usage.recorded" ||
+    payload.event_id !== eventId ||
+    typeof payload.service_tier !== "string" ||
+    payload.service_tier.trim().length === 0
+  ) {
+    return false;
+  }
+
+  const payloadFingerprint = semanticFingerprint(payload);
+  // The normalized payload is the authority. Never excuse divergent observations
+  // when its own stored fingerprint does not match the exact canonical payload.
+  if (payloadFingerprint !== canonical.semantic_fingerprint) {
+    return false;
+  }
+
+  const withoutServiceTier = { ...payload };
+  delete withoutServiceTier.service_tier;
+  const compatibleFingerprints = new Set([
+    payloadFingerprint,
+    semanticFingerprint(withoutServiceTier),
+    semanticFingerprint({ ...payload, service_tier: null })
+  ]);
+  const observations = db
+    .prepare<ObservationFingerprintRow>(
+      "SELECT semantic_fingerprint FROM event_observations WHERE event_id = ?"
+    )
+    .all(eventId)
+    .map((row) => row.semantic_fingerprint);
+
+  return observations.length > 0 &&
+    observations.every((fingerprint) => compatibleFingerprints.has(fingerprint));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function scalarCount(db: SqliteDatabaseLike, sql: string, ...params: unknown[]): number {

@@ -9,12 +9,12 @@ import { resolveTimeScope, type ResolvedTimeScope } from "./time-scope.js";
 
 type UsageRow = {
   modelId: string | null;
+  serviceTier: string | null;
   displayedInputTokens: number;
   outputTokens: number;
   cacheReadTokens: number;
   cacheCreationTokens: number;
   usageSource: string | null;
-  serviceTier: string | null;
   occurredAt: string;
 };
 
@@ -149,14 +149,14 @@ export function selectWidgetSnapshot(
       .prepare<UsageRow>(
         `SELECT
          model_id AS modelId,
+         service_tier AS serviceTier,
          displayed_input_tokens AS displayedInputTokens,
          output_tokens AS outputTokens,
          cache_read_input_tokens AS cacheReadTokens,
          cache_creation_input_tokens AS cacheCreationTokens,
          usage_source AS usageSource,
-         service_tier AS serviceTier,
          occurred_at AS occurredAt
-       FROM usage_events
+       FROM additive_usage_events
        WHERE occurred_at >= ? AND occurred_at < ?
          AND usage_measurement = 'increment'`
       )
@@ -179,11 +179,11 @@ export function selectWidgetSnapshot(
   const totalCostUsd = usageRows.reduce<number | null>((total, row) => {
     const cost = estimateCostUsd({
       model: row.modelId ?? null,
+      serviceTier: row.serviceTier,
       inputTokens: safeCount(row.displayedInputTokens),
       outputTokens: safeCount(row.outputTokens),
       cacheReadTokens: safeCount(row.cacheReadTokens),
-      cacheCreationTokens: safeCount(row.cacheCreationTokens),
-      serviceTier: row.serviceTier
+      cacheCreationTokens: safeCount(row.cacheCreationTokens)
     });
     if (cost === null) {
       return total;
@@ -415,7 +415,7 @@ function toSessionRows(
          ),
          0
        ) AS totalTokens
-       FROM usage_events AS usage
+       FROM additive_usage_events AS usage
        INNER JOIN page
          ON page.source_instance_id = usage.source_instance_id
         AND page.session_id = usage.session_id

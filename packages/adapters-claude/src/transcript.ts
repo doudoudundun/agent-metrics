@@ -5,7 +5,6 @@ import {
   type AnyEvent,
   type EventNormalizationOptions,
   type NormalizedEventV2,
-  type ServiceTier,
   type SourceAdapter,
   type SourceVendor
 } from "@agent-metrics/event-schema";
@@ -39,17 +38,12 @@ export type ClaudeTranscriptObservation =
       timestamp: string;
       messageId: string;
       model: string | null;
+      serviceTier?: string | null;
       inputTokens: number;
       outputTokens: number;
       cacheCreationInputTokens: number;
       cacheReadInputTokens: number;
       serverToolUse: string;
-      /**
-       * Speed tier the API reports in `usage.speed`. `"fast"` is Claude's fast
-       * mode (2x Opus rates); `"standard"`/absent stays null so the cost layer
-       * bills the normal card.
-       */
-      serviceTier: ServiceTier | null;
       providerId: string | null;
       providerBaseUrl: string | null;
       providerHost: string | null;
@@ -229,6 +223,14 @@ export function extractClaudeTranscriptObservations(record: unknown): ClaudeTran
   const usage = asRecord(message.usage);
   const usageCounts = usage === null ? null : normalizeUsageCounts(usage);
   if (messageId !== undefined && usageCounts !== null) {
+    const speed = normalizeOptionalString(usage?.speed) ?? normalizeOptionalString(message.speed);
+    const rawServiceTier =
+      normalizeOptionalString(usage?.service_tier) ?? normalizeOptionalString(message.service_tier);
+    // Anthropic's Priority Tier is a separate commitment from Fast mode. Keep
+    // it distinct so the shared classifier does not mistake "priority" for fast.
+    const serviceTier = speed !== undefined
+      ? (speed.toLowerCase() === "standard" ? null : speed)
+      : (rawServiceTier?.toLowerCase() === "priority" ? "claude-priority" : rawServiceTier ?? null);
     observations.push({
       kind: "token_usage_recorded",
       sessionId,
@@ -241,7 +243,7 @@ export function extractClaudeTranscriptObservations(record: unknown): ClaudeTran
       cacheCreationInputTokens: usageCounts.cacheCreationInputTokens,
       cacheReadInputTokens: usageCounts.cacheReadInputTokens,
       serverToolUse: usageCounts.serverToolUse,
-      serviceTier: usageCounts.serviceTier,
+      serviceTier,
       providerId: providerMetadata.providerId,
       providerBaseUrl: providerMetadata.providerBaseUrl,
       providerHost: providerMetadata.providerHost
@@ -622,7 +624,6 @@ function normalizeUsageCounts(usage: Record<string, unknown>):
       cacheCreationInputTokens: number;
       cacheReadInputTokens: number;
       serverToolUse: string;
-      serviceTier: ServiceTier | null;
     }
   | null {
   const inputTokens = normalizeNonNegativeInteger(usage.input_tokens);
@@ -644,17 +645,6 @@ function normalizeUsageCounts(usage: Record<string, unknown>):
     outputTokens,
     cacheCreationInputTokens,
     cacheReadInputTokens,
-    serverToolUse: serializeCompactJson(usage.server_tool_use),
-    serviceTier: normalizeSpeedTier(usage.speed)
+    serverToolUse: serializeCompactJson(usage.server_tool_use)
   };
-}
-
-/**
- * Claude's `usage.speed` is "fast" only when fast mode actually served the
- * request (Opus 4.6 silently falls back and reports "standard"), so the reported
- * value — not the toggle — decides the billing tier.
- */
-function normalizeSpeedTier(value: unknown): ServiceTier | null {
-  const speed = normalizeOptionalString(value)?.toLowerCase();
-  return speed === "fast" ? "fast" : null;
 }
