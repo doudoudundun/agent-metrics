@@ -1,5 +1,6 @@
 import { normalizeWorkspacePath, toNormalizedEventV2 } from "@agent-metrics/event-schema";
 import type { AnyEvent, NormalizedEventV2, SourceAdapter, SourceVendor, UsageSource } from "@agent-metrics/event-schema";
+import { matchAntigravityTiming, type AntigravityTimingIndex } from "./antigravity-timing.js";
 
 const ANTIGRAVITY_SOURCE_VENDOR: SourceVendor = "antigravity";
 const ANTIGRAVITY_SOURCE_ADAPTER: SourceAdapter = "antigravity-acp";
@@ -10,6 +11,8 @@ export type AntigravityEventContext = {
   sessionId: string;
   /** Already-normalized workspace path; the transcript has none, so this is the normalized default. */
   workspacePath?: string;
+  /** Optional per-step timing telemetry loaded from sibling `conversations/<session>.db`. */
+  timings?: AntigravityTimingIndex;
 };
 
 /**
@@ -113,6 +116,12 @@ function normalizePlannerResponse(record: Record<string, unknown>, context: Anti
   const outputTokens = readNonNegativeInt(record.output_tokens) ?? 0;
   const cacheReadTokens = readNonNegativeInt(record.cache_read_tokens) ?? 0;
   if (inputTokens > 0 || outputTokens > 0 || cacheReadTokens > 0) {
+    const timing = matchAntigravityTiming(context.timings, {
+      stepIndex,
+      inputTokens,
+      outputTokens,
+      cacheReadTokens
+    });
     events.push({
       event_id: `antigravity:${context.sessionId}:step:${stepIndex}:${model}:usage`,
       ...base,
@@ -125,8 +134,8 @@ function normalizePlannerResponse(record: Record<string, unknown>, context: Anti
       cache_read_input_tokens: cacheReadTokens,
       server_tool_use: "{}",
       usage_source: ANTIGRAVITY_USAGE_SOURCE,
-      first_token_latency_ms: null,
-      decode_duration_ms: null,
+      first_token_latency_ms: timing?.firstTokenLatencyMs ?? null,
+      decode_duration_ms: timing?.decodeDurationMs ?? null,
       provider_id: providerId,
       provider_base_url: null,
       provider_host: null

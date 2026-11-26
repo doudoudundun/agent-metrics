@@ -11,7 +11,8 @@
   },
   "dependencies": {
     "@agent-metrics/event-schema": "workspace:*",
-    "@agent-metrics/shared-utils": "workspace:*"
+    "@agent-metrics/shared-utils": "workspace:*",
+    "better-sqlite3": "^11.10.0"
   },
   "devDependencies": {
     "@agent-metrics/test-utils": "workspace:*"

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import Database from "better-sqlite3";
 import { semanticFingerprint, toNormalizedEventV2, type NormalizedEventV2 } from "@agent-metrics/event-schema";
+import { selectTokensByModel } from "./aggregate-queries.js";
+import type { MetricsDatabase } from "./core-types.js";
 import { runDomainMigrations, type SqliteDatabaseLike } from "./domain-migrations.js";
 import { projectNormalizedEvents } from "./domain-projection.js";
 
@@ -663,6 +665,86 @@ describe("canonical V2 projection", () => {
     expect(
       db.prepare("SELECT started_at FROM domain_sessions WHERE session_id = ?").get("session-1")
     ).toEqual({ started_at: "2026-07-17T09:59:00.000Z" });
+
+    db.close();
+  });
+
+  it("backfills Antigravity timing without conflicts or duplicates and ignores stale null replays", () => {
+    const db = createDb();
+    runDomainMigrations(db);
+
+    const initial = toNormalizedEventV2(
+      {
+        event_id: "antigravity:session-ag:step:1:gemini-4-hydrogen-high:usage",
+        session_id: "session-ag",
+        timestamp: "2026-11-25T10:00:00.000Z",
+        source_vendor: "antigravity",
+        source_adapter: "antigravity-acp",
+        workspace_path: ".",
+        type: "token.usage.recorded",
+        message_id: "antigravity:session-ag:step:1:gemini-4-hydrogen-high",
+        model: "gemini-4-hydrogen-high",
+        input_tokens: 1000,
+        output_tokens: 200,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 4000,
+        server_tool_use: "{}",
+        usage_source: "antigravity-acp",
+        provider_id: "google",
+        first_token_latency_ms: null,
+        decode_duration_ms: null
+      },
+      { sourceRecordId: "antigravity:session-ag:step:1:gemini-4-hydrogen-high:usage" }
+    );
+    const enriched = {
+      ...initial,
+      first_token_latency_ms: 2500,
+      decode_duration_ms: 1000
+    } as NormalizedEventV2;
+
+    projectNormalizedEvents(db, [initial]);
+    expect(projectNormalizedEvents(db, [enriched, initial]).map((r) => r.conflict)).toEqual([
+      false,
+      false
+    ]);
+
+    expect(db.prepare("SELECT count(*) AS count, sum(output_tokens) AS tokens FROM usage_events").get())
+      .toEqual({ count: 1, tokens: 200 });
+    expect(db.prepare("SELECT count(*) AS count FROM event_diagnostics").get()).toEqual({ count: 0 });
+    expect(
+      db.prepare("SELECT first_token_latency_ms, decode_duration_ms, semantic_fingerprint FROM usage_events").get()
+    ).toEqual({
+      first_token_latency_ms: 2500,
+      decode_duration_ms: 1000,
+      semantic_fingerprint: semanticFingerprint(enriched)
+    });
+    expect(db.prepare("SELECT semantic_fingerprint FROM event_observations").get()).toEqual({
+      semantic_fingerprint: semanticFingerprint(enriched)
+    });
+
+    const models = selectTokensByModel(db as unknown as MetricsDatabase);
+    expect(models).toHaveLength(1);
+    expect(models[0]).toMatchObject({
+      sourceVendor: "antigravity",
+      model: "gemini-4-hydrogen-high",
+      avgOutputTokensPerSecond: 200,
+      avgFirstTokenLatencyMs: 2500,
+      speedSampleCount: 1,
+      ttftSampleCount: 1
+    });
+
+    // Token mismatches and conflicting non-null timings must still record IDENTITY_CONFLICT.
+    for (const change of [
+      { output_tokens: 201 },
+      { first_token_latency_ms: 3000 },
+      { decode_duration_ms: 1200 }
+    ]) {
+      expect(projectNormalizedEvents(db, [{ ...enriched, ...change } as NormalizedEventV2])[0].conflict).toBe(true);
+    }
+    expect(db.prepare("SELECT first_token_latency_ms, decode_duration_ms FROM usage_events").get()).toEqual({
+      first_token_latency_ms: 2500,
+      decode_duration_ms: 1000
+    });
 
     db.close();
   });

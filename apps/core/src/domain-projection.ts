@@ -136,6 +136,19 @@ function projectOne(
     }
   }
 
+  if (conflict && parsed.type === "token.usage.recorded" && parsed.source_vendor === "antigravity") {
+    const reconciled = reconcileAntigravityUsageTiming(db, parsed);
+    if (reconciled !== null) {
+      return {
+        eventId: parsed.event_id,
+        semanticFingerprint: reconciled,
+        projected: false,
+        idempotent: true,
+        conflict: false
+      };
+    }
+  }
+
   ensureSourceRegistry(db, parsed, observedAt);
   db.prepare(
     `INSERT OR IGNORE INTO normalized_events (
@@ -296,6 +309,66 @@ function reconcileWorkbuddyUsageEnrichment(
       .run(merged.first_token_latency_ms, merged.decode_duration_ms, storedTier ?? incomingTier,
         storedCredit ?? incomingCredit, merged.cache_read_input_tokens, merged.cache_creation_input_tokens,
         displayed, fingerprint, incoming.event_id);
+    db.prepare("UPDATE event_observations SET semantic_fingerprint = ? WHERE event_id = ?")
+      .run(fingerprint, incoming.event_id);
+  }
+  return fingerprint;
+}
+
+/** Sibling Antigravity DB telemetry may arrive after transcript ingestion. */
+function reconcileAntigravityUsageTiming(
+  db: SqliteDatabaseLike,
+  incoming: Extract<NormalizedEventV2, { type: "token.usage.recorded" }>
+): string | null {
+  if (incoming.source_adapter !== "antigravity-acp" || incoming.usage_source !== "antigravity-acp") {
+    return null;
+  }
+  const row = db.prepare<{ payload_json: string; semantic_fingerprint: string }>(
+    "SELECT payload_json, semantic_fingerprint FROM normalized_events WHERE event_id = ?"
+  ).get(incoming.event_id);
+  if (row === undefined) {
+    return null;
+  }
+  let stored: NormalizedEventV2;
+  try {
+    stored = NormalizedEventV2Schema.parse(JSON.parse(row.payload_json));
+  } catch {
+    return null;
+  }
+  if (stored.type !== "token.usage.recorded" || row.semantic_fingerprint !== semanticFingerprint(stored)) {
+    return null;
+  }
+  const withoutTiming = (value: typeof incoming) => ({
+    ...value,
+    first_token_latency_ms: null,
+    decode_duration_ms: null
+  });
+  if (semanticFingerprint(withoutTiming(stored)) !== semanticFingerprint(withoutTiming(incoming))) {
+    return null;
+  }
+  const storedFirst = stored.first_token_latency_ms ?? null;
+  const incomingFirst = incoming.first_token_latency_ms ?? null;
+  const storedDecode = stored.decode_duration_ms ?? null;
+  const incomingDecode = incoming.decode_duration_ms ?? null;
+  if (storedFirst !== null && incomingFirst !== null && storedFirst !== incomingFirst) {
+    return null;
+  }
+  if (storedDecode !== null && incomingDecode !== null && storedDecode !== incomingDecode) {
+    return null;
+  }
+
+  const merged = {
+    ...stored,
+    first_token_latency_ms: storedFirst ?? incomingFirst,
+    decode_duration_ms: storedDecode ?? incomingDecode
+  };
+  const fingerprint = semanticFingerprint(merged);
+  if (fingerprint !== row.semantic_fingerprint) {
+    db.prepare("UPDATE normalized_events SET payload_json = ?, semantic_fingerprint = ? WHERE event_id = ?")
+      .run(JSON.stringify(merged), fingerprint, incoming.event_id);
+    db.prepare(
+      "UPDATE usage_events SET first_token_latency_ms = ?, decode_duration_ms = ?, semantic_fingerprint = ? WHERE event_id = ?"
+    ).run(merged.first_token_latency_ms, merged.decode_duration_ms, fingerprint, incoming.event_id);
     db.prepare("UPDATE event_observations SET semantic_fingerprint = ? WHERE event_id = ?")
       .run(fingerprint, incoming.event_id);
   }

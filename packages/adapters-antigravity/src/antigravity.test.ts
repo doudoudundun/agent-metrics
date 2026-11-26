@@ -91,6 +91,58 @@ describe("normalizeAntigravityTranscriptRecord", () => {
     });
   });
 
+  it("attaches timing telemetry only when step_index and all token counts match", () => {
+    const timings = new Map([
+      [
+        1,
+        {
+          inputTokens: 3573,
+          outputTokens: 353,
+          cacheReadTokens: 33090,
+          firstTokenLatencyMs: 2450,
+          decodeDurationMs: 1800
+        }
+      ],
+      [
+        2,
+        {
+          inputTokens: 100,
+          outputTokens: 0,
+          cacheReadTokens: 50,
+          firstTokenLatencyMs: 900,
+          decodeDurationMs: 500
+        }
+      ]
+    ]);
+
+    const matched = normalizeAntigravityTranscriptRecord(plannerResponse(), {
+      ...CONTEXT,
+      timings
+    });
+    expect(matched[1]).toMatchObject({
+      first_token_latency_ms: 2450,
+      decode_duration_ms: 1800
+    });
+
+    const tokenMismatch = normalizeAntigravityTranscriptRecord(
+      plannerResponse({ output_tokens: 999 }),
+      { ...CONTEXT, timings }
+    );
+    expect(tokenMismatch[1]).toMatchObject({
+      first_token_latency_ms: null,
+      decode_duration_ms: null
+    });
+
+    const zeroOutput = normalizeAntigravityTranscriptRecord(
+      plannerResponse({ step_index: 2, input_tokens: 100, output_tokens: 0, cache_read_tokens: 50 }),
+      { ...CONTEXT, timings }
+    );
+    expect(zeroOutput[1]).toMatchObject({
+      first_token_latency_ms: 900,
+      decode_duration_ms: null
+    });
+  });
+
   it("counts no response characters when the planner row has no content", () => {
     const events = normalizeAntigravityTranscriptRecord(
       plannerResponse({ content: undefined }),

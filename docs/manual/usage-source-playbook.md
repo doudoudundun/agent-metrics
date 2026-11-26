@@ -211,8 +211,7 @@ T3 Code 托管的 Antigravity（ACP 协议）把会话 transcript 写在固定�
 - 语义注册为 `inputTokenSemantics: "delta"` + `usageMeasurement: "increment"`：`input_tokens`
   是本次请求未被缓存覆盖的部分，`cache_read_tokens` 是独立计数，**cache_read 大于 input
   是常态**，按 gross 的直觉去「修」反而会把面板改错。
-- transcript 里没有 cache creation、没有耗时字段：`cache_creation` 补 0，TTFT / tok/s 留空，
-  不许从别的文件拼一个速度出来。
+- transcript 里没有 cache creation 和耗时字段：`cache_creation` 补 0；同级的 `conversations/<session>.db`（`gen_metadata` protobuf）记录了 `time_to_first_token` 与 `streaming_duration`，仅在 `step_index` 和三项 token 计数（`input` / `output` / `cache_read`）完全一致时写入 `first_token_latency_ms` / `decode_duration_ms`，库缺失或校验不一致时留空，不许用其它记录猜速度。
 - T3 的权限模式、思考模式**不是** serviceTier，不写 `usage_events.service_tier`。
 - 成本按 API reference 单价估算，不是订阅账单的实际扣费，读成本面板时要记得这层差别。
 - `~/.t3` 根目录里 auth、cache、sqlite-wal 等几乎一直在写，**上层目录 mtime 不能当活动信号**：

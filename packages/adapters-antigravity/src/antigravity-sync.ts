@@ -1,25 +1,34 @@
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
+import { createReadStream, existsSync } from "node:fs";
 import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { createInterface } from "node:readline";
 import {
   appendJsonLine,
-  loadEventLedgerWithFallback,
+  loadEventLedger,
   persistEventLedger
 } from "@agent-metrics/shared-utils";
 import type { NormalizedEventV2 } from "@agent-metrics/event-schema";
 import { normalizeAntigravitySessionStarted, normalizeAntigravityTranscriptRecord } from "./antigravity.js";
+import {
+  loadAntigravitySessionTimings,
+  readAntigravityTimingDbSignature,
+  type AntigravityTimingIndex
+} from "./antigravity-timing.js";
 
 const ANTIGRAVITY_LEDGER_PREFIX = "antigravity:";
+const TIMING_LEDGER_SUFFIX = ":timing-v1";
 const ACP_DIR_NAME = "antigravity-acp";
 const BRAIN_DIR_NAME = "brain";
+const CONVERSATIONS_DIR_NAME = "conversations";
 const TRANSCRIPT_PARENT_DIRS = [".system_generated", "logs"];
 const TRANSCRIPT_FILE_NAME = "transcript_full.jsonl";
 
 type TranscriptFileSignature = {
   size: number;
   mtimeMs: number;
+  timingDbSignature?: string;
 };
 
 type AntigravityCursorState = {
@@ -29,6 +38,7 @@ type AntigravityCursorState = {
 
 type DiscoveredTranscript = {
   transcriptPath: string;
+  conversationDbPath: string;
   sessionId: string;
 };
 
@@ -51,10 +61,13 @@ export function resolveAntigravitySourcePaths(input: { providersRoot?: string } 
  * Sync Antigravity ACP brain transcripts into the domain event log.
  *
  * Only `<account>/antigravity-acp/brain/<session>/.system_generated/logs/
- * transcript_full.jsonl` is discovered; sibling state/auth/cache/chunk stores
- * cover the same sessions and would double-count. The cursor keys each file on
- * size+mtimeMs and re-reads the whole transcript on any change — stable
- * session/step/model-scoped ids plus the ledger keep that re-read append-only.
+ * transcript_full.jsonl` is discovered for usage counts; sibling state/auth/
+ * cache/chunk stores cover the same sessions and would double-count. Per-step
+ * TTFT and streaming duration are optionally enriched from the sibling
+ * `<account>/antigravity-acp/conversations/<session>.db` (`gen_metadata`)
+ * matched by `step_index` and exact token counts. The cursor keys each file on
+ * transcript size+mtimeMs plus the DB signature so stable ids and `:timing-v1`
+ * ledger entries keep rescan and late timing backfill append-only.
  */
 export async function syncAntigravityAcpSessions(input: {
   eventLogPath: string;
@@ -73,10 +86,9 @@ export async function syncAntigravityAcpSessions(input: {
   }
 
   const cursorState = await loadCursorState(input.cursorPath);
-  const seenEventIds = await loadEventLedgerWithFallback({
+  const seenEventIds = await loadAntigravityLedger({
     ledgerPath: input.ledgerPath,
-    eventLogPath: input.eventLogPath,
-    prefix: ANTIGRAVITY_LEDGER_PREFIX
+    eventLogPath: input.eventLogPath
   });
   const baselineEventCount = seenEventIds.size;
   let cursorChanged = false;
@@ -86,17 +98,27 @@ export async function syncAntigravityAcpSessions(input: {
     if (signature === null) {
       continue;
     }
+    const timingDbSignature = await readAntigravityTimingDbSignature(transcript.conversationDbPath);
 
     const previous = cursorState.files[transcript.transcriptPath];
     if (
       previous !== undefined &&
       previous.size === signature.size &&
-      previous.mtimeMs === signature.mtimeMs
+      previous.mtimeMs === signature.mtimeMs &&
+      previous.timingDbSignature === timingDbSignature
     ) {
       continue;
     }
 
-    const events = await readTranscriptEvents(transcript.transcriptPath, transcript.sessionId);
+    const timings =
+      timingDbSignature.length > 0
+        ? loadAntigravitySessionTimings(transcript.conversationDbPath)
+        : undefined;
+    const events = await readTranscriptEvents(
+      transcript.transcriptPath,
+      transcript.sessionId,
+      timings
+    );
     let sessionStartedEmitted = cursorState.sessions[transcript.sessionId] === true;
     for (const event of events) {
       if (!sessionStartedEmitted) {
@@ -115,7 +137,7 @@ export async function syncAntigravityAcpSessions(input: {
       await appendIfNew(input.eventLogPath, seenEventIds, event);
     }
 
-    cursorState.files[transcript.transcriptPath] = signature;
+    cursorState.files[transcript.transcriptPath] = { ...signature, timingDbSignature };
     cursorChanged = true;
   }
 
@@ -130,21 +152,27 @@ export async function syncAntigravityAcpSessions(input: {
 
 /**
  * Enumerate `providersRoot/<account>/antigravity-acp/brain/<session>/
- * .system_generated/logs/transcript_full.jsonl` across every account. Only the
- * exact transcript path is considered a source; everything else in the brain
- * tree (statev2, auth, cache, chunks) is deliberately untouched.
+ * .system_generated/logs/transcript_full.jsonl` across every account alongside
+ * its optional sibling `conversations/<session>.db` path. Everything else in
+ * the brain tree (statev2, auth, cache, chunks) is deliberately untouched.
  */
 async function discoverAntigravityTranscripts(providersRoot: string): Promise<DiscoveredTranscript[]> {
   const transcripts: DiscoveredTranscript[] = [];
   for (const account of await listDirectories(providersRoot)) {
-    const brainRoot = join(providersRoot, account, ACP_DIR_NAME, BRAIN_DIR_NAME);
+    const acpRoot = join(providersRoot, account, ACP_DIR_NAME);
+    const brainRoot = join(acpRoot, BRAIN_DIR_NAME);
     if (!existsSync(brainRoot)) {
       continue;
     }
+    const conversationsRoot = join(acpRoot, CONVERSATIONS_DIR_NAME);
     for (const session of await listDirectories(brainRoot)) {
       const transcriptPath = join(brainRoot, session, ...TRANSCRIPT_PARENT_DIRS, TRANSCRIPT_FILE_NAME);
       if (existsSync(transcriptPath)) {
-        transcripts.push({ transcriptPath, sessionId: session });
+        transcripts.push({
+          transcriptPath,
+          conversationDbPath: join(conversationsRoot, `${session}.db`),
+          sessionId: session
+        });
       }
     }
   }
@@ -174,7 +202,8 @@ async function readFileSignature(filePath: string): Promise<TranscriptFileSignat
 
 async function readTranscriptEvents(
   transcriptPath: string,
-  sessionId: string
+  sessionId: string,
+  timings: AntigravityTimingIndex | undefined
 ): Promise<NormalizedEventV2[]> {
   let contents: string;
   try {
@@ -197,9 +226,82 @@ async function readTranscriptEvents(
       // signature changes again.
       continue;
     }
-    events.push(...normalizeAntigravityTranscriptRecord(parsed, { sessionId }));
+    events.push(...normalizeAntigravityTranscriptRecord(parsed, { sessionId, timings }));
   }
   return events;
+}
+
+async function loadAntigravityLedger(input: {
+  ledgerPath: string;
+  eventLogPath: string;
+}): Promise<Set<string>> {
+  const existing = await loadEventLedger(input.ledgerPath);
+  if (existing.size > 0) {
+    return existing;
+  }
+
+  const rebuilt = new Set<string>();
+  if (!existsSync(input.eventLogPath)) {
+    return rebuilt;
+  }
+
+  const stream = createReadStream(input.eventLogPath, { encoding: "utf8" });
+  const lines = createInterface({ input: stream, crlfDelay: Infinity });
+  try {
+    for await (const line of lines) {
+      if (line.length === 0) {
+        continue;
+      }
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(line) as unknown;
+      } catch {
+        continue;
+      }
+      if (!isRecord(parsed)) {
+        continue;
+      }
+      const sourceRecordId =
+        typeof parsed.source_record_id === "string" && parsed.source_record_id.length > 0
+          ? parsed.source_record_id
+          : null;
+      const eventId =
+        typeof parsed.event_id === "string" && parsed.event_id.length > 0 ? parsed.event_id : null;
+      const key = sourceRecordId ?? eventId;
+      if (key === null || !key.startsWith(ANTIGRAVITY_LEDGER_PREFIX)) {
+        continue;
+      }
+      rebuilt.add(key);
+      if (
+        parsed.type === "token.usage.recorded" &&
+        ((typeof parsed.first_token_latency_ms === "number" && parsed.first_token_latency_ms > 0) ||
+          (typeof parsed.decode_duration_ms === "number" && parsed.decode_duration_ms > 0))
+      ) {
+        rebuilt.add(`${key}${TIMING_LEDGER_SUFFIX}`);
+      }
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw error;
+    }
+  } finally {
+    lines.close();
+    stream.destroy();
+  }
+
+  if (rebuilt.size > 0) {
+    await persistEventLedger(input.ledgerPath, rebuilt);
+  }
+  return rebuilt;
+}
+
+function timingLedgerKeyForEvent(event: NormalizedEventV2, baseKey: string): string | null {
+  if (event.type !== "token.usage.recorded") {
+    return null;
+  }
+  const hasTiming =
+    (event.first_token_latency_ms ?? 0) > 0 || (event.decode_duration_ms ?? 0) > 0;
+  return hasTiming ? `${baseKey}${TIMING_LEDGER_SUFFIX}` : null;
 }
 
 async function appendIfNew(
@@ -207,12 +309,16 @@ async function appendIfNew(
   seenEventIds: Set<string>,
   event: NormalizedEventV2
 ): Promise<void> {
-  const ledgerKey = event.source_record_id ?? event.event_id;
-  if (seenEventIds.has(ledgerKey)) {
+  const key = event.source_record_id ?? event.event_id;
+  const timingKey = timingLedgerKeyForEvent(event, key);
+  if (seenEventIds.has(key) && (timingKey === null || seenEventIds.has(timingKey))) {
     return;
   }
   await appendJsonLine(eventLogPath, event);
-  seenEventIds.add(ledgerKey);
+  seenEventIds.add(key);
+  if (timingKey !== null) {
+    seenEventIds.add(timingKey);
+  }
 }
 
 async function loadCursorState(cursorPath: string): Promise<AntigravityCursorState> {
@@ -233,7 +339,11 @@ async function loadCursorState(cursorPath: string): Promise<AntigravityCursorSta
               if (size === null || mtimeMs === null) {
                 return [];
               }
-              return [[key, { size, mtimeMs }]] as Array<[string, TranscriptFileSignature]>;
+              const timingDbSignature =
+                typeof value.timingDbSignature === "string" ? value.timingDbSignature : undefined;
+              return [[key, { size, mtimeMs, ...(timingDbSignature !== undefined ? { timingDbSignature } : {}) }]] as Array<
+                [string, TranscriptFileSignature]
+              >;
             })
           )
         : {},

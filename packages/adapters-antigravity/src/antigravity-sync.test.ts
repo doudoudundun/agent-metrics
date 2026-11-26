@@ -1,7 +1,8 @@
 import { existsSync } from "node:fs";
-import { appendFile, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { isolateSources, type IsolatedSources } from "@agent-metrics/test-utils";
 import {
@@ -407,7 +408,164 @@ describe("syncAntigravityAcpSessions", () => {
     await syncAntigravityAcpSessions(input);
     expect(await readEvents(input.eventLogPath)).toHaveLength(4);
   });
+
+  it("enriches timing from sibling conversations DB, supports late backfill, legacy cursors, and lost ledgers", async () => {
+    const providersRoot = join(root, "providers");
+    const transcriptPath = await writeTranscript(providersRoot, "account-a", "session-timing", [
+      userInput(0, "2026-11-23T14:49:14Z", "measure speed"),
+      plannerResponse(
+        1,
+        "2026-11-23T14:49:40Z",
+        "gemini-4-hydrogen-high",
+        { input_tokens: 1000, cache_read_tokens: 5000, output_tokens: 250 }
+      )
+    ]);
+
+    const input = syncInput({ providersRoot });
+    await syncAntigravityAcpSessions(input);
+
+    let events = await readEvents(input.eventLogPath);
+    expect(events).toHaveLength(4);
+    expect(events.filter((e) => e.type === "token.usage.recorded")[0]).toMatchObject({
+      first_token_latency_ms: null,
+      decode_duration_ms: null
+    });
+
+    // Simulate a legacy cursor without timingDbSignature as well as a newly written DB.
+    const transcriptStat = await stat(transcriptPath);
+    await writeFile(
+      input.cursorPath,
+      JSON.stringify({
+        files: {
+          [transcriptPath]: { size: transcriptStat.size, mtimeMs: transcriptStat.mtimeMs }
+        },
+        sessions: { "session-timing": true }
+      })
+    );
+
+    const dbPath = join(
+      providersRoot,
+      "account-a",
+      "antigravity-acp",
+      "conversations",
+      "session-timing.db"
+    );
+    await writeTimingDb(dbPath, [
+      {
+        stepIndex: 1,
+        inputTokens: 1000,
+        outputTokens: 250,
+        cacheReadTokens: 5000,
+        ttftSeconds: 2,
+        ttftNanos: 500_000_000,
+        streamSeconds: 1,
+        streamNanos: 250_000_000
+      }
+    ]);
+
+    await syncAntigravityAcpSessions(input);
+    events = await readEvents(input.eventLogPath);
+    // Only the usage record is re-emitted with timing; session/prompt/assistant stay skipped.
+    expect(events).toHaveLength(5);
+    expect(events[4]).toMatchObject({
+      type: "token.usage.recorded",
+      model: "gemini-4-hydrogen-high",
+      first_token_latency_ms: 2500,
+      decode_duration_ms: 1250
+    });
+
+    // Subsequent sync emits nothing.
+    await syncAntigravityAcpSessions(input);
+    expect(await readEvents(input.eventLogPath)).toHaveLength(5);
+
+    // Lost ledger + lost cursor must rebuild `:timing-v1` keys and emit 0 duplicates.
+    await rm(input.ledgerPath, { force: true });
+    await rm(input.cursorPath, { force: true });
+    await syncAntigravityAcpSessions(input);
+    expect(await readEvents(input.eventLogPath)).toHaveLength(5);
+  });
+
+  it("keeps syncing transcripts cleanly when the sibling conversations DB is corrupt", async () => {
+    const providersRoot = join(root, "providers");
+    await writeTranscript(providersRoot, "account-a", "session-corrupt", [
+      userInput(0, "2026-11-23T14:49:14Z", "corrupt db"),
+      plannerResponse(
+        1,
+        "2026-11-23T14:49:40Z",
+        "gemini-4-neon-high",
+        { input_tokens: 10, cache_read_tokens: 0, output_tokens: 5 }
+      )
+    ]);
+    const dbPath = join(
+      providersRoot,
+      "account-a",
+      "antigravity-acp",
+      "conversations",
+      "session-corrupt.db"
+    );
+    await mkdir(dirname(dbPath), { recursive: true });
+    await writeFile(dbPath, "corrupt-sqlite-bytes");
+
+    const input = syncInput({ providersRoot });
+    await syncAntigravityAcpSessions(input);
+
+    const events = await readEvents(input.eventLogPath);
+    expect(events).toHaveLength(4);
+    expect(events.find((e) => e.type === "token.usage.recorded")).toMatchObject({
+      first_token_latency_ms: null,
+      decode_duration_ms: null
+    });
+  });
 });
+
+async function writeTimingDb(
+  dbPath: string,
+  entries: Array<{
+    stepIndex: number;
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadTokens: number;
+    ttftSeconds: number;
+    ttftNanos: number;
+    streamSeconds: number;
+    streamNanos: number;
+  }>
+): Promise<void> {
+  const varint = (value: number): number[] => {
+    let n = value;
+    const out: number[] = [];
+    while (n >= 0x80) {
+      out.push((n & 0x7f) | 0x80);
+      n >>>= 7;
+    }
+    out.push(n);
+    return out;
+  };
+  const fieldVarint = (fn: number, val: number): number[] => [...varint((fn << 3) | 0), ...varint(val)];
+  const fieldBytes = (fn: number, payload: number[]): number[] => [
+    ...varint((fn << 3) | 2),
+    ...varint(payload.length),
+    ...payload
+  ];
+
+  await mkdir(dirname(dbPath), { recursive: true });
+  const db = new Database(dbPath);
+  db.exec("CREATE TABLE gen_metadata (idx INTEGER PRIMARY KEY, data BLOB, size INTEGER NOT NULL DEFAULT 0)");
+  const insert = db.prepare("INSERT INTO gen_metadata (idx, data, size) VALUES (?, ?, 0)");
+  entries.forEach((entry, index) => {
+    const usage = [
+      ...fieldVarint(2, entry.inputTokens),
+      ...fieldVarint(3, entry.outputTokens),
+      ...fieldVarint(5, entry.cacheReadTokens)
+    ];
+    const ttft = [...fieldVarint(1, entry.ttftSeconds), ...fieldVarint(2, entry.ttftNanos)];
+    const stream = [...fieldVarint(1, entry.streamSeconds), ...fieldVarint(2, entry.streamNanos)];
+    const chat = [...fieldBytes(4, usage), ...fieldBytes(11, ttft), ...fieldBytes(12, stream)];
+    const payload = [...fieldBytes(2, varint(entry.stepIndex)), ...fieldBytes(1, chat)];
+    insert.run(index, Buffer.from(payload));
+  });
+  db.close();
+}
 
 describe("resolveAntigravitySourcePaths", () => {
   let isolated: IsolatedSources | null = null;

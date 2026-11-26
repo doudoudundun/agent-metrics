@@ -172,6 +172,9 @@ importers:
       '@agent-metrics/shared-utils':
         specifier: workspace:*
         version: link:../shared-utils
+      better-sqlite3:
+        specifier: ^11.10.0
+        version: 11.10.0
     devDependencies:
       '@agent-metrics/test-utils':
         specifier: workspace:*
