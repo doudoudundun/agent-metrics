@@ -1,0 +1,56 @@
+{
+  "installedAt": "2026-10-24T00:40:39.064147+08:00",
+  "appPath": "/Users/chengzi/Code/GitHub/agent-metrics/apps/desktop/release/mac-arm64/AgentMetrics.app",
+  "oldAppPath": "/Users/chengzi/Code/GitHub/agent-metrics/apps/desktop/release/.before-speed-fix-20261024-004039/AgentMetrics.app",
+  "appAsarSha256": "881ba44ee131455e674300bbd0faeede502a7bc243ea7d5794f57b6f698463c8",
+  "nativeSmoke": "passed",
+  "coreSmoke": "passed",
+  "dashboardSmoke": "passed",
+  "dataBackup": "/Users/chengzi/Library/Application Support/Agent Metrics/agent-metrics-data/data/backups/before-speed-fix-20261024-003931",
+  "postLaunchCodexSync": {
+    "status": "ready",
+    "lastSuccessfulAt": "2026-10-23T16:42:55.403Z",
+    "lastError": null,
+    "consecutiveFailures": 0
+  },
+  "modelTimingSamples": [
+    {
+      "model": "gpt-6-luna",
+      "usageMode": "standard",
+      "speedSampleCount": 324,
+      "ttftSampleCount": 18
+    },
+    {
+      "model": "gpt-6.1-sol",
+      "usageMode": "standard",
+      "speedSampleCount": 336,
+      "ttftSampleCount": 15
+    },
+    {
+      "model": "gpt-6.1-sol",
+      "usageMode": "fast",
+      "speedSampleCount": 64,
+      "ttftSampleCount": 3
+    },
+    {
+      "model": "gpt-6-astra",
+      "usageMode": "fast",
+      "speedSampleCount": 62,
+      "ttftSampleCount": 5
+    },
+    {
+      "model": "gpt-6-astra",
+      "usageMode": "standard",
+      "speedSampleCount": 19,
+      "ttftSampleCount": 1
+    },
+    {
+      "model": "gpt-6-luna",
+      "usageMode": "fast",
+      "speedSampleCount": 0,
+      "ttftSampleCount": 0
+    }
+  ],
+  "tokenBaselineRowsUnchanged": 346222,
+  "liveScreenshot": "/Users/chengzi/.codex/visualizations/2026/10/23/01a16872-ab22-73f2-a40c-3b2b0a31b97a/speed-fixed-live-20261024.png"
+}

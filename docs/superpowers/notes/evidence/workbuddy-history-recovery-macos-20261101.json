@@ -1,0 +1,532 @@
+{
+  "recordedAt": "2026-11-01T15:27:06.642640+00:00",
+  "scope": "WorkBuddy retained native-log recovery and macOS arm64 package restart",
+  "recovery": {
+    "completedAt": "2026-11-01T15:23:45.665Z",
+    "dbPath": "/Users/chengzi/Library/Application Support/Agent Metrics/agent-metrics-data/data/sqlite/metrics.sqlite",
+    "eventLogPath": "/Users/chengzi/Library/Application Support/Agent Metrics/agent-metrics-data/data/events/events.jsonl",
+    "backupRoot": "/Users/chengzi/Library/Application Support/Agent Metrics/agent-metrics-data/backups/workbuddy-history-20261101-232048",
+    "roots": [
+      "/Users/chengzi/.codebuddy/logs",
+      "/Users/chengzi/.workbuddy/logs"
+    ],
+    "before": {
+      "requests": 11367,
+      "sessions": 49,
+      "input": 1460435714,
+      "output": 7071908,
+      "cacheRead": 1438035087,
+      "cacheWrite": 921041
+    },
+    "after": {
+      "requests": 12325,
+      "sessions": 70,
+      "input": 1570347349,
+      "output": 7703895,
+      "cacheRead": 1546527503,
+      "cacheWrite": 921041
+    },
+    "first": {
+      "filesScanned": 48,
+      "requestsWritten": 958,
+      "requestsSkippedAsDuplicate": 520
+    },
+    "second": {
+      "filesScanned": 0,
+      "requestsWritten": 0,
+      "requestsSkippedAsDuplicate": 0
+    },
+    "target": {
+      "requests": 113,
+      "input": 18271722,
+      "output": 72814,
+      "cacheRead": 18123520
+    },
+    "newRequests": 958,
+    "addedEventBytes": 1026512,
+    "integrity": "ok",
+    "idempotent": true,
+    "runtimeCore": "/Users/chengzi/Code/GitHub/agent-metrics/apps/desktop/release/mac-arm64/AgentMetrics.app/Contents/Resources/runtime/core"
+  },
+  "historicalAudit": {
+    "generatedAt": "2026-11-01T15:23:21.359Z",
+    "dbBaseline": {
+      "path": "/Users/chengzi/Library/Application Support/Agent Metrics/agent-metrics-data/backups/workbuddy-history-20261101-232048/data/sqlite/metrics.sqlite",
+      "readAt": "2026-11-01T15:23:20.819Z",
+      "workbuddyRows": 11367,
+      "distinctSessionMessageKeys": 11367,
+      "duplicateRowsBeyondFirstPerKey": 0,
+      "usageSourceCounts": {
+        "workbuddy-usage": 11367
+      },
+      "transcriptUsageRows": 11367,
+      "transcriptMessageSums": {
+        "rawInput": 1460435714,
+        "displayedInput": 22400627,
+        "output": 7071908,
+        "cacheRead": 1438035087,
+        "cacheCreation": 921041,
+        "credit": 0
+      },
+      "uniqueUsageSums": {
+        "rawInput": 1460435714,
+        "displayedInput": 22400627,
+        "output": 7071908,
+        "cacheRead": 1438035087,
+        "cacheCreation": 921041,
+        "credit": 0
+      }
+    },
+    "scannedLogs": {
+      "roots": {
+        "workbuddy": {
+          "root": "/Users/chengzi/.workbuddy/logs",
+          "dateDirectories": 4,
+          "firstDateWithLogs": "2026-10-29",
+          "lastDateWithLogs": "2026-11-01",
+          "daysWithLogs": 4,
+          "files": 48,
+          "bytes": 124001851,
+          "quaEndLines": 1482,
+          "parserRequestRows": 1478,
+          "uniqueSessionMessageKeysBeforeCrossFileDedup": 1478
+        },
+        "codebuddy": {
+          "root": "/Users/chengzi/.codebuddy/logs",
+          "dateDirectories": 4,
+          "firstDateWithLogs": "2026-10-05",
+          "lastDateWithLogs": "2026-10-31",
+          "daysWithLogs": 4,
+          "files": 6,
+          "bytes": 398219,
+          "quaEndLines": 0,
+          "parserRequestRows": 0,
+          "uniqueSessionMessageKeysBeforeCrossFileDedup": 0
+        }
+      },
+      "all": {
+        "files": 54,
+        "bytes": 124400070,
+        "quaEndLines": 1482,
+        "classifications": {
+          "plausible": 1478,
+          "zero_token": 4
+        },
+        "parserRequestRows": 1478,
+        "parserSessionCount": 0,
+        "parserPerFileUniqueKeys": 1478,
+        "parserKeyMisses": 0
+      },
+      "daily": [
+        {
+          "root": "workbuddy",
+          "date": "2026-10-29",
+          "files": 9,
+          "bytes": 21240931,
+          "quaEndLines": 84,
+          "parserRequests": 83,
+          "parserUniqueSessionMessageKeys": 83,
+          "classifications": {
+            "plausible": 83,
+            "zero_token": 1
+          }
+        },
+        {
+          "root": "workbuddy",
+          "date": "2026-10-30",
+          "files": 11,
+          "bytes": 21531271,
+          "quaEndLines": 164,
+          "parserRequests": 162,
+          "parserUniqueSessionMessageKeys": 162,
+          "classifications": {
+            "plausible": 162,
+            "zero_token": 2
+          }
+        },
+        {
+          "root": "workbuddy",
+          "date": "2026-10-31",
+          "files": 17,
+          "bytes": 41258382,
+          "quaEndLines": 325,
+          "parserRequests": 325,
+          "parserUniqueSessionMessageKeys": 325,
+          "classifications": {
+            "plausible": 325
+          }
+        },
+        {
+          "root": "workbuddy",
+          "date": "2026-11-01",
+          "files": 11,
+          "bytes": 39971267,
+          "quaEndLines": 909,
+          "parserRequests": 908,
+          "parserUniqueSessionMessageKeys": 908,
+          "classifications": {
+            "plausible": 908,
+            "zero_token": 1
+          }
+        },
+        {
+          "root": "codebuddy",
+          "date": "2026-10-05",
+          "files": 2,
+          "bytes": 250859,
+          "quaEndLines": 0,
+          "parserRequests": 0,
+          "parserUniqueSessionMessageKeys": 0,
+          "classifications": {}
+        },
+        {
+          "root": "codebuddy",
+          "date": "2026-10-23",
+          "files": 1,
+          "bytes": 37984,
+          "quaEndLines": 0,
+          "parserRequests": 0,
+          "parserUniqueSessionMessageKeys": 0,
+          "classifications": {}
+        },
+        {
+          "root": "codebuddy",
+          "date": "2026-10-27",
+          "files": 2,
+          "bytes": 72855,
+          "quaEndLines": 0,
+          "parserRequests": 0,
+          "parserUniqueSessionMessageKeys": 0,
+          "classifications": {}
+        },
+        {
+          "root": "codebuddy",
+          "date": "2026-10-31",
+          "files": 1,
+          "bytes": 36521,
+          "quaEndLines": 0,
+          "parserRequests": 0,
+          "parserUniqueSessionMessageKeys": 0,
+          "classifications": {}
+        }
+      ]
+    },
+    "parsedCandidates": {
+      "uniqueSessionMessageKeys": 1478,
+      "duplicateOccurrencesCollapsed": 0,
+      "keysWithConflictingValues": 0,
+      "totalSums": {
+        "input": 173565193,
+        "output": 948246,
+        "cacheRead": 170699008,
+        "cacheCreation": 0,
+        "credit": 0,
+        "credited": 0
+      },
+      "statusVsDatabase": {
+        "exactSessionMessageAlreadyInDatabase": {
+          "requests": 520,
+          "sums": {
+            "input": 63653558,
+            "output": 316259,
+            "cacheRead": 62206592,
+            "cacheCreation": 0,
+            "credit": 0,
+            "credited": 0
+          },
+          "byRoot": {
+            "workbuddy": {
+              "requests": 520,
+              "sums": {
+                "input": 63653558,
+                "output": 316259,
+                "cacheRead": 62206592,
+                "cacheCreation": 0,
+                "credit": 0,
+                "credited": 0
+              }
+            },
+            "codebuddy": {
+              "requests": 0,
+              "sums": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheCreation": 0,
+                "credit": 0,
+                "credited": 0
+              }
+            }
+          }
+        },
+        "sameMessageDifferentSessionPotentialDuplicate": {
+          "requests": 0,
+          "sums": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheCreation": 0,
+            "credit": 0,
+            "credited": 0
+          },
+          "byRoot": {
+            "workbuddy": {
+              "requests": 0,
+              "sums": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheCreation": 0,
+                "credit": 0,
+                "credited": 0
+              }
+            },
+            "codebuddy": {
+              "requests": 0,
+              "sums": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheCreation": 0,
+                "credit": 0,
+                "credited": 0
+              }
+            }
+          }
+        },
+        "sameSessionDifferentMessagePotentialOverlap": {
+          "requests": 3,
+          "sums": {
+            "input": 159839,
+            "output": 3294,
+            "cacheRead": 126848,
+            "cacheCreation": 0,
+            "credit": 0,
+            "credited": 0
+          },
+          "byRoot": {
+            "workbuddy": {
+              "requests": 3,
+              "sums": {
+                "input": 159839,
+                "output": 3294,
+                "cacheRead": 126848,
+                "cacheCreation": 0,
+                "credit": 0,
+                "credited": 0
+              }
+            },
+            "codebuddy": {
+              "requests": 0,
+              "sums": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheCreation": 0,
+                "credit": 0,
+                "credited": 0
+              }
+            }
+          }
+        },
+        "noTranscriptSessionOrMessageRecoverable": {
+          "requests": 955,
+          "sums": {
+            "input": 109751796,
+            "output": 628693,
+            "cacheRead": 108365568,
+            "cacheCreation": 0,
+            "credit": 0,
+            "credited": 0
+          },
+          "byRoot": {
+            "workbuddy": {
+              "requests": 955,
+              "sums": {
+                "input": 109751796,
+                "output": 628693,
+                "cacheRead": 108365568,
+                "cacheCreation": 0,
+                "credit": 0,
+                "credited": 0
+              }
+            },
+            "codebuddy": {
+              "requests": 0,
+              "sums": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheCreation": 0,
+                "credit": 0,
+                "credited": 0
+              }
+            }
+          }
+        }
+      }
+    },
+    "parseAnomalies": {
+      "rawQuaEndLines": 1482,
+      "classifications": {
+        "plausible": 1478,
+        "zero_token": 4
+      },
+      "plausibleSessionMessageKeysMissingFromParserOutputPerFile": 0,
+      "parserReturnedRequestRowsBeforeGlobalSessionMessageDedup": 1478
+    },
+    "interpretation": {
+      "parserUsed": "parseCodebuddyLog from adapters-codebuddy-log/dist/codebuddy-log.js",
+      "sourceFileScope": "date directories YYYY-MM-DD; direct *.log children only (mirrors adapter discovery; excludes nested diagnostic subdirectories)",
+      "dbComparisonKey": "source_vendor=workbuddy plus session_id + message_id; transcript source identified by usage_source=workbuddy-usage",
+      "ambiguousCandidatesWereNotMerged": true,
+      "baselineSessionMessageKeysFile": "baseline-session-message.jsonl",
+      "parsedSourceSessionMessageKeysFile": "source-session-message.jsonl"
+    }
+  },
+  "postRecovery": {
+    "generatedAt": "2026-11-01T15:24:53.370Z",
+    "dbBaseline": {
+      "path": "/Users/chengzi/Library/Application Support/Agent Metrics/agent-metrics-data/data/sqlite/metrics.sqlite",
+      "readAt": "2026-11-01T15:24:50.111Z",
+      "workbuddyRows": 12325,
+      "usageSourceCounts": {
+        "codebuddy-log": 958,
+        "workbuddy-usage": 11367
+      }
+    },
+    "frozenInput": {
+      "sourceManifest": "/tmp/agent-metrics-workbuddy-history-20261101/source-session-message.jsonl",
+      "sourceRows": 1478,
+      "uniqueSessionMessageKeys": 1478,
+      "sourceDuplicateKeys": 0,
+      "baselineFile": "/tmp/agent-metrics-workbuddy-history-20261101/baseline-session-message.jsonl",
+      "recoveryReport": "/tmp/agent-metrics-workbuddy-history-20261101/recovery.json",
+      "expectedNewRowsFromBaselineClassification": 958,
+      "recoveryReportedNewRequests": 958
+    },
+    "currentCoverage": {
+      "sourceKeysCovered": 1478,
+      "missingSourceKeys": 0,
+      "sourceKeysWithDuplicateDbRows": 0,
+      "sourceDuplicateKeys": 0,
+      "measurementMismatches": 0,
+      "mismatchCountsByField": {},
+      "mismatchRows": [],
+      "newExpectedRowsCovered": 958,
+      "newExpectedRowsObserved": 958,
+      "newExpectedRowsUsageSourceCounts": {
+        "codebuddy-log": 958
+      }
+    },
+    "newRowsComparedToFrozenSource": {
+      "sourceSums": {
+        "input": 109911635,
+        "output": 631987,
+        "cacheRead": 108492416,
+        "cacheCreation": 0,
+        "credit": 0
+      },
+      "databaseSums": {
+        "input": 109911635,
+        "output": 631987,
+        "cacheRead": 108492416,
+        "cacheCreation": 0,
+        "credit": 0
+      },
+      "delta": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheCreation": 0,
+        "credit": 0
+      }
+    },
+    "classificationCounts": {
+      "exact_session_message_in_baseline": 520,
+      "no_baseline_session_or_message_recoverable": 955,
+      "same_session_different_message_potential_overlap": 3
+    },
+    "details": {
+      "missingKeys": [],
+      "duplicateDbKeys": [],
+      "sourceDuplicateKeys": []
+    }
+  },
+  "packageSmoke": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "hostPlatform": "darwin",
+    "hostArch": "arm64",
+    "timestamp": "2026-11-01T15:21:50.453Z",
+    "artifact": "/Users/chengzi/Code/GitHub/agent-metrics/apps/desktop/release/mac-arm64/AgentMetrics.app",
+    "checks": {
+      "verifyPackage": "passed",
+      "coreHealth": "passed",
+      "dashboardLoad": "passed",
+      "nativeMainWidget": "skipped"
+    },
+    "node": {
+      "host": "v24.14.0",
+      "bundled": "22.22.3",
+      "bundledCommand": "/Users/chengzi/Code/GitHub/agent-metrics/apps/desktop/release/mac-arm64/AgentMetrics.app/Contents/Resources/runtime/.runtime/node-v22.22.3-darwin-arm64/bin/node"
+    },
+    "nativeSkipReason": "AGENT_METRICS_RUN_NATIVE_SMOKE is not set; native Main/Widget smoke requires a matching desktop host."
+  },
+  "liveSyncWorkbuddy": [
+    {
+      "adapterInstanceId": "workbuddy-jsonl@workbuddy:default",
+      "sourceInstanceId": "workbuddy:default",
+      "sourceAdapter": "workbuddy-jsonl",
+      "sourceVendor": "workbuddy",
+      "status": "ready",
+      "activeRunId": null,
+      "pendingRunId": null,
+      "lastStartedAt": "2026-11-01T15:24:38.937Z",
+      "lastCompletedAt": "2026-11-01T15:25:12.429Z",
+      "lastSuccessfulAt": "2026-11-01T15:25:12.429Z",
+      "nextScheduledAt": null,
+      "lastError": null,
+      "consecutiveFailures": 0
+    },
+    {
+      "adapterInstanceId": "codebuddy-cli-log@workbuddy:default",
+      "sourceInstanceId": "workbuddy:default",
+      "sourceAdapter": "codebuddy-cli-log",
+      "sourceVendor": "workbuddy",
+      "status": "ready",
+      "activeRunId": null,
+      "pendingRunId": null,
+      "lastStartedAt": "2026-11-01T15:24:38.982Z",
+      "lastCompletedAt": "2026-11-01T15:25:12.429Z",
+      "lastSuccessfulAt": "2026-11-01T15:25:12.429Z",
+      "nextScheduledAt": null,
+      "lastError": null,
+      "consecutiveFailures": 0
+    }
+  ],
+  "desktopObservation": {
+    "status": "Live and up to date after Cmd+R",
+    "todayWorkbuddyTokens": 106913007,
+    "todayWorkbuddyInput": 2225817,
+    "todayWorkbuddyOutput": 616662,
+    "todayWorkbuddyCache": 104070528,
+    "todayWorkbuddySessions": 18,
+    "restoredFilter": "Today + All sources",
+    "limitations": [
+      "initial load showed Core offline before refresh; automatic recovery not established",
+      "floating widget visual behavior not established",
+      "credit numeric fields remain unknown; cost is estimate"
+    ]
+  },
+  "runtime": {
+    "desktopPid": 65561,
+    "corePid": 65570,
+    "coreHealth": {
+      "status": "ok",
+      "apiVersion": 2,
+      "eventSchemaVersion": 2
+    }
+  },
+  "authorization": "User requested historical tracing, repackaging and startup; existing dirty worktree preserved; no commit or push"
+}

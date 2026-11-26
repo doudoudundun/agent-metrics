@@ -1,0 +1,41 @@
+{
+  "date": "2026-10-26",
+  "feature": "WorkBuddy copied or forked conversation usage deduplication",
+  "scope": {
+    "sourceVendor": "workbuddy",
+    "startAt": "2026-01-01T00:00:00.000Z",
+    "endAt": "2026-10-26T01:00:00.000Z"
+  },
+  "runtime": {
+    "app": "apps/desktop/release/mac-arm64/AgentMetrics.app",
+    "backup": "apps/desktop/release/.before-workbuddy-dedup-20261026-011846/AgentMetrics.app",
+    "updatedCoreModules": ["domain-schema", "domain-migrations", "aggregate-queries", "canonical-queries", "session-queries"],
+    "health": "ok",
+    "migrationVersion": 9,
+    "beforeApiTotalTokens": 992526000,
+    "afterApiTotalTokens": 712479483,
+    "rawUsageRows": 7565,
+    "deduplicatedUsageRows": 5597,
+    "excludedRows": 1968,
+    "excludedTokens": 280046517,
+    "apiMatchesCanonicalSql": true,
+    "rawSqlTotalMatchesBeforeApi": true,
+    "trendTotalTokens": 712479483,
+    "sessionTotalTokens": 712479483,
+    "sessionsChecked": 30,
+    "independentGuiAcceptance": false
+  },
+  "validation": {
+    "coreBuild": "passed",
+    "gitDiffCheck": "passed",
+    "testRuntime": "Node.js 24, direct Vitest invocation",
+    "newDedupTests": { "passed": 4, "total": 4 },
+    "workbuddyAdapterTests": { "passed": 7, "total": 7 },
+    "coreTests": {
+      "passed": 232,
+      "total": 235,
+      "failedFile": "apps/core/src/server-runtime.test.ts",
+      "failure": "Three Windows path separator assertions on the POSIX host; source and test files unchanged by this feature"
+    }
+  }
+}

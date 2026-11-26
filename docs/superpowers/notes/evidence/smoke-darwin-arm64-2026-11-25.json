@@ -1,0 +1,20 @@
+{
+  "platform": "darwin",
+  "arch": "arm64",
+  "hostPlatform": "darwin",
+  "hostArch": "arm64",
+  "timestamp": "2026-11-25T16:12:51.059Z",
+  "artifact": "/Users/chengzi/Code/GitHub/agent-metrics/apps/desktop/release/mac-arm64/AgentMetrics.app",
+  "checks": {
+    "verifyPackage": "passed",
+    "coreHealth": "passed",
+    "dashboardLoad": "passed",
+    "nativeMainWidget": "skipped"
+  },
+  "node": {
+    "host": "v24.14.0",
+    "bundled": "22.22.3",
+    "bundledCommand": "/Users/chengzi/Code/GitHub/agent-metrics/apps/desktop/release/mac-arm64/AgentMetrics.app/Contents/Resources/runtime/.runtime/node-v22.22.3-darwin-arm64/bin/node"
+  },
+  "nativeSkipReason": "AGENT_METRICS_RUN_NATIVE_SMOKE is not set; native Main/Widget smoke requires a matching desktop host."
+}

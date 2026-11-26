@@ -1,0 +1,66 @@
+# Fast model usage and pricing
+
+Verified on 2026-10-23 (Asia/Shanghai).
+
+Model Usage keeps its existing list. A model's Fast and Ultrafast usage are separate entries, such as `gpt-6.1-sol (Fast)`, with independent token counts and timing. The underlying model ID stays intact for pricing. At the user's request, usage with no speed metadata, including legacy history, now uses standard grouping and pricing. Explicit unrecognized tier values remain `mode unknown`; model families such as Luna or Flash are not assumed to use a paid Fast service tier. This fallback is an accounting convention, not recovered evidence of historical routing; original metadata remains untouched.
+
+## Official pricing sources
+
+- [OpenAI API pricing](https://developers.openai.com/api/docs/pricing), including the complete [Markdown tables](https://developers.openai.com/api/docs/pricing.md).
+- [OpenAI Fast mode](https://developers.openai.com/api/docs/guides/fast-mode).
+- [ChatGPT/Codex pricing](https://learn.chatgpt.com/docs/pricing): subscription usage and purchased credits have different rules; this application's USD estimates are API reference values, not subscription charges.
+- [Claude pricing](https://platform.claude.com/docs/en/about-claude/pricing) and [Fast mode response metadata](https://platform.claude.com/docs/en/build-with-claude/fast-mode).
+- [Cursor Models & Pricing](https://cursor.com/docs/models-and-pricing).
+- [Kimi dynamic pricing table](https://platform.kimi.ai/docs/pricing/chat), verified in the browser: K2.7 Code HighSpeed is $1.90 input / $8 output / $0.38 cache read per million tokens. Subscription aliases remain reference estimates.
+- [MiMo V2.6 Pro UltraSpeed](https://mimo.mi.com/models/en-US/mimo-v2.6-pro-ultraspeed): $4.35 input / $8.70 output / $0.036 cache read per million tokens (overseas USD list).
+
+`packages/metrics-engine/src/pricing.ts` contains separate verified Fast and Ultrafast rate cards. Fast rates are model specific: GPT-6.1 Sol is $4 input / $20 output per million tokens; GPT-5.5 is $12.50 / $75. Cursor Grok 4.7 Fast is $4 / $12, Grok 4.5 Fast is $4 / $18, and Composer 2.5 Fast is $3 / $15. Claude Opus 5.5 Fast is $8 / $40; Opus 5 and 4.8 Fast are $10 / $50. Cache rates follow each official rate card, with the shortest cache-write TTL used where applicable.
+
+These are current short-context reference estimates. Long-context, longer cache TTL, regional endpoints, negotiated provider prices and subscription credit consumption are not reconstructed. Unverified Fast/Ultrafast combinations return no estimate rather than inheriting a standard price. Existing unrelated model price entries retain their previous provenance; this update is not a claim that every catalog entry was reverified.
+
+## Metadata and history
+
+- Codex: capture turn-local model and explicit service-tier metadata when present; `priority` and `fast` identify Fast, while `ultrafast` remains distinct. Never apply a session's latest speed setting to earlier turns. When rollout tier fields are absent, a bounded read of the local logs SQLite database can supply structured turn-input or inter-agent sampling metadata from `feedback_tags`. Both thread IDs, turn ID and normalized model must match exactly, with a unique tier/model per turn. Inter-agent metadata requires the validated sampling-span chain; ordinary communication text and conflicting snapshots are rejected. Explicit rollout/usage tier fields take precedence. Active rollouts use an indexed, bounded lookup for their own session so unrelated sessions cannot displace their evidence from a global log tail.
+- Claude: the response's `usage.speed` describes actual inference speed. It must take precedence over `usage.service_tier`, which can still be `standard` during Fast inference.
+- Named speed variants, such as Cursor `-fast`, Kimi `-highspeed` and MiMo `-ultraspeed`, remain separate model IDs and use their own rate entries without another multiplier.
+- A bounded inspection of recent local Codex rollouts found model fields but no explicit speed/tier fields. A separate inspection of structured turn-input logs found exact per-turn tier evidence for a limited subset. Unmatched historical records with no tier use the user-authorized standard fallback. These snapshots describe the requested turn configuration, not the service response or billed subscription consumption.
+- Schema migration 008 adds a nullable tier column. An identical event replay may fill previously absent tier metadata without changing token totals; conflicting known tiers or changed token counts remain identity conflicts.
+- The collector retains event-ledger deduplication. Existing recorded events and unchanged history are not automatically rewritten; newly appended usage can use the precise turn metadata fallback. No production history repair was performed during implementation.
+- Reconciliation preserves original observation fingerprints and recognizes only the exact absent/null-to-known-tier compatibility set; different known tiers or changed token fields still require conflict diagnostics.
+
+Price updates are explicit catalog updates supported by source checks and regression tests. No scheduled price scraper or recurring job is installed by this change.
+
+## Follow-up diagnosis on 2026-10-24
+
+- Astra supports Fast according to the official speed documentation and the local model capability cache (`priority`, display name `Fast`). The latest 12 persisted Astra usage records were matched by cumulative usage counter to their original rollout; all belong to thread `01a16935…`, turn `01a1697d-3366…`, model `gpt-6-astra`. The rollout omits tier metadata. Structured local trace context for that exact thread/turn/model records `service_tier=priority` (48 of 48 tier-bearing records for the thread).
+- Those traces use `op.dispatch.inter_agent_communication` and include sampling/WebSocket request spans. The fallback loader accepts only `op.dispatch.turn_input` plus `codex.turn_input`, so it excludes this available context; persisted usage therefore has no tier and uses standard accounting. This confirms missing requested-mode attribution. The response stream logs do not expose actual processed tier, so backend acceptance or downgrade remains unverified.
+- Codex speed is derived from consecutive periodic token-count timestamps, with only gaps over 120 seconds excluded. One Fast sample was verified against SQLite: a 9,292 ms gap with 300 output tokens contained two tool-call/output events, and its stored decode duration was exactly 9,292 ms. Tool time therefore contaminates the estimated speed denominator.
+- TTFT is a turn-start-to-first-periodic-report upper bound. At the inspected snapshot, today's Sol standard and Fast groups each had only two TTFT samples. Neither these estimates nor the mixed standard-fallback groups establish a controlled Fast-versus-standard performance comparison.
+- This initial investigation did not modify source behavior, production records, or the running package. The subsequent user-requested correction is described below; exact response-tier telemetry cannot be recovered from the inspected logs.
+
+## Timing correction on 2026-10-24
+
+- New Codex ingestion breaks timing across observed tool call/output, wait/approval, turn, model and tier boundaries. Active tools and timing anchors survive incremental checkpoints, while old checkpoints discard their unverifiable first anchor. Same-timestamp tool boundaries invalidate pending timing samples without changing token values or event IDs.
+- Historical Codex timing is filtered at query time using tool-call intervals from the same source instance and session. Known overlaps invalidate the speed or first-report latency sample independently. An unpaired tool boundary proves only that boundary, not an indefinitely running tool. Raw events, stored counters, fingerprints and ingestion cursors remain intact.
+- A read-only full-history comparison of 329,043 Codex usage rows excluded 39,866 decode samples and 297 first-report latency samples; the output-token sum stayed 234,226,899 before and after filtering. The filtering pass took approximately 596 ms locally. These are diagnostic snapshot values, not fixed totals.
+- Model Usage displays Codex speed as an estimate, first-report latency as an upper bound, and the valid usage-row sample counts. These counts are not request counts. Request/network overhead can remain in usage-report intervals; this does not introduce provider-side streaming telemetry or establish a controlled Fast-versus-standard benchmark.
+- Independent review passed the timing parser and historical filtering, including all nine checkpoint splits around a same-timestamp tool boundary. It also confirmed that inter-agent metadata accepts only the observed continuous span chain and rejects plain-text spoofing, model conflicts and duplicate tier keys. Codex adapter tests: 72 passed; core timing/aggregation/API/query tests: 48 passed; dashboard unit tests: 118 passed; contracts tests: 24 passed; workspace build and typecheck passed.
+- The macOS arm64 package was rebuilt, passed package/Core/dashboard/native Main/Widget smoke, and replaced the running desktop application on 2026-10-24 at 00:40 Asia/Shanghai. Live desktop inspection confirmed estimates, upper bounds, sample counts and a separate Astra Fast entry. The Codex collector returned ready with no error. The same 346,222 pre-existing records retained their row count and all five token-column sums; the previous application and a SQLite/event-log/state backup remain available. See `docs/superpowers/notes/evidence/speed-fix-macos-2026-10-24.json` for installed paths, hash, backup and screenshot evidence.
+
+## Validation
+
+- A read-only local smoke on 2026-10-23 parsed a 4,178,694-byte rollout. All 179 emitted usage events matched an exact thread/turn/model entry with `priority` in the bounded metadata window. This validates requested Fast-mode attribution for that sample, not all historical data or actual billed service tiers. No production data was changed.
+- Codex adapter: 51 tests; Claude adapter: 40 tests; dashboard: 118 tests; relevant core projection/aggregation/migration/widget tests: 47 tests; Core app tests: 31 tests; pricing and event-schema checks: 32 tests, all passed. Browser layout verification used clearly labeled synthetic data.
+- Workspace build and typecheck passed. The full Core run also exposed three unchanged Windows-path expectations in `server-runtime.test.ts` that fail on macOS. SQLite tests were run with the ABI-compatible system Node 24; the repository's managed Node 22 test wrapper does not match the current local native module.
+- Initial source delivery did not replace the desktop package. Follow-up on 2026-10-23 repackaged and replaced the running macOS arm64 application after package/Core/dashboard and native Main/Widget smoke passed. The real desktop then displayed `gpt-6.1-sol (Fast)` with 866,951 newly collected tokens and a $0.21 reference estimate; older unclassified usage remained `mode unknown`. A database/state recovery backup and the previous application bundle were retained. No historical tier backfill was performed.
+- A subsequent user-authorized accounting change defaults missing tier metadata to standard. The replacement desktop was launched and verified with plain `gpt-6.1-sol`, `gpt-6-luna`, `gpt-6-astra` entries and a separate `gpt-6.1-sol (Fast)` entry. Focused schema/pricing/aggregation/API/UI checks passed (55 tests); package/Core/dashboard/native Main/Widget smoke passed. All five token-column sums and the row count for the same 345,121 pre-existing usage records were unchanged. No stored service tier or raw event was rewritten.
+
+## Kimi K3.1 Pro catalog addition on 2026-10-24
+
+Kimi Code released K3.1 Pro on 2026-10-24 and made `kimi-code/k3.1-pro` the default model in the local client (`~/.kimi-code/config.toml`), with `kimi-code/k3.1-pro-highspeed` as the separate speed variant. Both ids now reach usage records: 24 local `usage.record` rows already carried `kimi-code/k3.1-pro` and previously had no cost estimate.
+
+- The published rate card for these ids is CNY-only (kimi.ai model pricing table, captured 2026-10-24): K3.1 Pro ¥13 input / ¥68 output / ¥1.30 cache read / ¥13 cache write; K3.1 Pro Highspeed ¥26 / ¥136 / ¥1.30 / ¥26. Highspeed is a 2x rate card that keeps the standard cache-read price, matching the existing K2.7 Code Highspeed pattern.
+- `platform.kimi.ai` has not published a USD row for K3.1 yet (its English pricing page still lists only `kimi-k3`, `kimi-k2.7-code`, `kimi-k2.7-code-highspeed`, `kimi-k2.6`). The USD entries are therefore derived at the platform's own 6.6667 CNY/USD ratio, the ratio already implied by the K3 row (¥20/$3, ¥100/$15, ¥2/$0.30): $1.95 / $10.20 / $0.195 / $1.95 and $3.90 / $20.40 / $0.195 / $3.90. These remain reference estimates, not an official USD list price.
+- The `kimi-for-coding` alias still resolves to K2.8 Preview, so its existing reference rate is unchanged; K3.1 Pro traffic is identified by its own model ids.
+- Regression coverage: `pricing.test.ts` asserts the prefixed and bare K3.1 Pro ids, the cache-write/read components, and that the Highspeed id keeps its own rate card instead of inheriting a multiplier. `@agent-metrics/metrics-engine` tests: 31 passed.
+
