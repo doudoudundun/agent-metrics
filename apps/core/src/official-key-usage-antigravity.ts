@@ -1,52 +1,40 @@
-import { execFile } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
-import { promisify } from "node:util";
-import {
-  replaceVendorOfficialKeyUsage,
-  type OfficialKeyUsageSnapshot,
-  type OfficialKeyUsageWindow
-} from "./official-key-usage.js";
 import type { SqliteDatabaseLike } from "./domain-types.js";
+import { replaceVendorOfficialKeyUsage, type OfficialKeyUsageSnapshot } from "./official-key-usage.js";
+import {
+  canRefreshCredentials,
+  EXPIRES_SKEW_MS,
+  readAntigravityAccount,
+  type AntigravityCredentialOptions,
+  type AntigravityCredentials
+} from "./official-key-usage-antigravity-auth.js";
+import {
+  ANTIGRAVITY_KEY_USAGE_VENDOR,
+  parseAntigravityAvailableModels,
+  parseAntigravityManagerQuota,
+  parseAntigravityQuotaSummary
+} from "./official-key-usage-antigravity-quota.js";
+import { parseJsonRecord, readNonEmptyString } from "./official-key-usage-antigravity-values.js";
 
-/**
- * Antigravity quota snapshots harvested from Google Cloud Code Assist's
- * internal quota endpoints (`retrieveUserQuotaSummary`, falling back to
- * `fetchAvailableModels`).
- *
- * Credentials are read from the local Antigravity ACP profile directory
- * (`acp_token.json` or `antigravity-oauth-token`) or, when no profile override
- * is active, from the OS system keyring entry written by the `antigravity` CLI
- * (`service = "gemini"`, `account = "antigravity"`). Credentials are kept in
- * memory for the current run only and never logged or written back.
- */
-
-export const ANTIGRAVITY_KEY_USAGE_VENDOR = "antigravity";
-export const ANTIGRAVITY_KEY_USAGE_SOURCE = "antigravity-quota-api";
-export const ANTIGRAVITY_MANAGER_CACHE_SOURCE = "antigravity-manager-cache";
+export {
+  decodeGoKeyringSecret,
+  readAntigravityCredentials,
+  type AntigravityAuthMethod,
+  type AntigravityCredentials
+} from "./official-key-usage-antigravity-auth.js";
+export {
+  ANTIGRAVITY_KEY_USAGE_SOURCE,
+  ANTIGRAVITY_KEY_USAGE_VENDOR,
+  ANTIGRAVITY_MANAGER_CACHE_SOURCE,
+  parseAntigravityAvailableModels,
+  parseAntigravityManagerQuota,
+  parseAntigravityQuotaSummary
+} from "./official-key-usage-antigravity-quota.js";
 
 const DAILY_ENDPOINT = "https://daily-cloudcode-pa.googleapis.com";
 const PROD_ENDPOINT = "https://cloudcode-pa.googleapis.com";
 const DEFAULT_OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token";
-const ACP_DIR_NAME = "antigravity-acp";
-const ACP_TOKEN_FILE = "acp_token.json";
-const CLI_TOKEN_FILE = "antigravity-oauth-token";
-const MANAGER_ACCOUNTS_INDEX_FILE = "accounts.json";
-const MANAGER_ACCOUNTS_DIR = "accounts";
-const AUTH_STATE_REL_PATH = join("cache", "acp-auth-state.json");
-const KEYRING_SERVICE = "gemini";
-const KEYRING_ACCOUNT = "antigravity";
-const GO_KEYRING_BASE64_PREFIX = "go-keyring-base64:";
-const GO_KEYRING_HEX_PREFIX = "go-keyring-encoded:";
-const EXPIRES_SKEW_MS = 60 * 1000;
 const DEFAULT_TIMEOUT_MS = 10_000;
-const KEYRING_TIMEOUT_MS = 5_000;
 const MAX_RESPONSE_BYTES = 1024 * 1024;
-const FIVE_HOURS_MINUTES = 300;
-const WEEKLY_MINUTES = 10080;
-
-const execFileAsync = promisify(execFile);
 
 type FetchLike = typeof fetch;
 
@@ -55,38 +43,11 @@ type Logger = {
   info?: (message: string) => void;
 };
 
-export type AntigravityAuthMethod = "oauth-personal" | "oauth-business";
-
-export type AntigravityCredentials =
-  | {
-      kind: "acp-token";
-      authMethod: AntigravityAuthMethod;
-      clientId: string;
-      clientSecret: string;
-      refreshToken: string;
-      projectId: string | null;
-    }
-  | {
-      kind: "cli-token";
-      authMethod: AntigravityAuthMethod;
-      accessToken: string;
-      refreshToken: string | null;
-      expiresAt: number | null;
-      clientId: string | null;
-      clientSecret: string | null;
-      projectId: string | null;
-    };
-
-export type CollectAntigravityKeyUsageOptions = {
-  providersRoot?: string;
-  cliHome?: string;
-  managerRoot?: string;
+export type CollectAntigravityKeyUsageOptions = AntigravityCredentialOptions & {
   dailyEndpoint?: string;
   prodEndpoint?: string;
   oauthTokenUrl?: string;
-  readKeyringSecret?: () => Promise<string | null>;
   fetchImpl?: FetchLike;
-  now?: () => Date;
   log?: Logger;
 };
 
@@ -98,344 +59,6 @@ export type CollectAntigravityKeyUsageResult = {
 type ApiPostResult =
   | { ok: true; text: string }
   | { ok: false; status: number | null; message: string };
-
-/**
- * Decodes a secret stored by `go-keyring` (`go-keyring-base64:...` or
- * `go-keyring-encoded:...` hex) or returns plain text as-is.
- */
-export function decodeGoKeyringSecret(rawSecret: string): string {
-  const trimmed = rawSecret.trim();
-  if (trimmed.startsWith(GO_KEYRING_BASE64_PREFIX)) {
-    return Buffer.from(trimmed.slice(GO_KEYRING_BASE64_PREFIX.length), "base64").toString("utf8");
-  }
-  if (trimmed.startsWith(GO_KEYRING_HEX_PREFIX)) {
-    return Buffer.from(trimmed.slice(GO_KEYRING_HEX_PREFIX.length), "hex").toString("utf8");
-  }
-  return trimmed;
-}
-
-/**
- * Maps a `retrieveUserQuotaSummary` response into `OfficialKeyUsageSnapshot`
- * entries — one snapshot per model group (e.g. `Gemini Models`, `Claude and GPT
- * models`), pairing its `5h` bucket as `primary` and `weekly` bucket as
- * `secondary`.
- */
-export function parseAntigravityQuotaSummary(
-  payload: unknown,
-  observedAt: string = new Date().toISOString(),
-  requestedAtMs: number = Date.parse(observedAt)
-): OfficialKeyUsageSnapshot[] {
-  const record = asRecord(payload);
-  if (record === null) {
-    return [];
-  }
-
-  const rawGroups = Array.isArray(record.groups) ? record.groups : [];
-  const hasGroupBuckets = rawGroups.some((group) => {
-    const groupRecord = asRecord(group);
-    return groupRecord !== null && Array.isArray(groupRecord.buckets) && groupRecord.buckets.length > 0;
-  });
-
-  const groups: Array<{ displayName: string | null; buckets: unknown[] }> = hasGroupBuckets
-    ? rawGroups
-        .map((group) => {
-          const groupRecord = asRecord(group);
-          if (groupRecord === null || !Array.isArray(groupRecord.buckets)) {
-            return null;
-          }
-          return {
-            displayName: readNonEmptyString(groupRecord.displayName),
-            buckets: groupRecord.buckets
-          };
-        })
-        .filter((group): group is { displayName: string | null; buckets: unknown[] } => group !== null)
-    : Array.isArray(record.buckets) && record.buckets.length > 0
-      ? [{ displayName: null, buckets: record.buckets }]
-      : [];
-
-  if (groups.length === 0) {
-    return [];
-  }
-
-  const groupedSnapshots = new Map<
-    string,
-    {
-      limitId: string;
-      limitName: string;
-      primary: OfficialKeyUsageWindow | null;
-      secondary: OfficialKeyUsageWindow | null;
-    }
-  >();
-
-  for (const group of groups) {
-    for (const rawBucket of group.buckets) {
-      const bucket = asRecord(rawBucket);
-      if (bucket === null || bucket.disabled === true) {
-        continue;
-      }
-
-      const bucketId = readNonEmptyString(bucket.bucketId);
-      const remainingFraction = readFiniteNumber(bucket.remainingFraction);
-      if (bucketId === null || remainingFraction === null) {
-        continue;
-      }
-
-      const windowKind = readNonEmptyString(bucket.window);
-      const windowMinutes =
-        windowKind === "5h" ? FIVE_HOURS_MINUTES : windowKind === "weekly" ? WEEKLY_MINUTES : 0;
-      const resetsAt = resolveSummaryResetTime({
-        resetTime: bucket.resetTime,
-        remainingFraction,
-        description: readNonEmptyString(bucket.description),
-        windowMinutes,
-        requestedAtMs
-      });
-
-      const windowValue: OfficialKeyUsageWindow = {
-        usedPercent: fractionToUsedPercent(remainingFraction),
-        windowMinutes,
-        resetsAt
-      };
-
-      const identity = resolveBucketGroupIdentity(bucketId, group.displayName);
-      let entry = groupedSnapshots.get(identity.limitId);
-      if (entry === undefined) {
-        entry = {
-          limitId: identity.limitId,
-          limitName: identity.limitName,
-          primary: null,
-          secondary: null
-        };
-        groupedSnapshots.set(identity.limitId, entry);
-      }
-
-      if (windowKind === "5h") {
-        entry.primary = windowValue;
-      } else if (windowKind === "weekly") {
-        entry.secondary = windowValue;
-      } else if (entry.primary === null) {
-        entry.primary = windowValue;
-      } else if (entry.secondary === null) {
-        entry.secondary = windowValue;
-      }
-    }
-  }
-
-  return [...groupedSnapshots.values()]
-    .filter((entry) => entry.primary !== null || entry.secondary !== null)
-    .map((entry) => ({
-      vendor: ANTIGRAVITY_KEY_USAGE_VENDOR,
-      source: ANTIGRAVITY_KEY_USAGE_SOURCE,
-      limitId: entry.limitId,
-      limitName: entry.limitName,
-      primary: entry.primary,
-      secondary: entry.secondary,
-      credits: null,
-      expiresAt: null,
-      observedAt
-    }));
-}
-
-/**
- * Maps an Antigravity Manager `accounts/<id>.json` `quota` object
- * (`quota_groups`) into `OfficialKeyUsageSnapshot` entries marked with
- * `antigravity-manager-cache`.
- */
-export function parseAntigravityManagerQuota(
-  quota: unknown,
-  observedAt: string = new Date().toISOString()
-): OfficialKeyUsageSnapshot[] {
-  const record = asRecord(quota);
-  if (record === null || record.is_forbidden === true) {
-    return [];
-  }
-
-  const rawLastUpdated = readFiniteNumber(record.last_updated);
-  const parsedObservedMs = Date.parse(observedAt);
-  const requestedAtMs =
-    rawLastUpdated !== null && rawLastUpdated > 0
-      ? normalizeEpochMs(rawLastUpdated)
-      : Number.isFinite(parsedObservedMs)
-        ? parsedObservedMs
-        : Date.now();
-
-  const rawGroups = Array.isArray(record.quota_groups) ? record.quota_groups : [];
-  if (rawGroups.length === 0) {
-    return [];
-  }
-
-  const groups = rawGroups
-    .map((group) => {
-      const groupRecord = asRecord(group);
-      if (groupRecord === null || !Array.isArray(groupRecord.buckets)) {
-        return null;
-      }
-      const buckets = groupRecord.buckets
-        .map((rawBucket) => {
-          const bucket = asRecord(rawBucket);
-          if (bucket === null) {
-            return null;
-          }
-          return {
-            bucketId: bucket.bucket_id ?? bucket.bucketId,
-            window: bucket.window,
-            remainingFraction: bucket.remaining_fraction ?? bucket.remainingFraction,
-            resetTime: bucket.reset_time ?? bucket.resetTime,
-            description: bucket.description,
-            disabled: bucket.disabled
-          };
-        })
-        .filter((bucket): bucket is NonNullable<typeof bucket> => bucket !== null);
-      return {
-        displayName: readNonEmptyString(groupRecord.display_name ?? groupRecord.displayName),
-        buckets
-      };
-    })
-    .filter((group): group is NonNullable<typeof group> => group !== null);
-
-  return parseAntigravityQuotaSummary({ groups }, observedAt, requestedAtMs).map((snapshot) => ({
-    ...snapshot,
-    source: ANTIGRAVITY_MANAGER_CACHE_SOURCE
-  }));
-}
-
-/**
- * Fallback parser for `fetchAvailableModels` when `retrieveUserQuotaSummary`
- * returns no buckets (e.g. older accounts). Aggregates by provider family
- * (`Gemini`, `Claude`, `GPT`), keeping the highest `usedPercent` per family.
- */
-export function parseAntigravityAvailableModels(
-  payload: unknown,
-  observedAt: string = new Date().toISOString()
-): OfficialKeyUsageSnapshot[] {
-  const record = asRecord(payload);
-  const models = record === null ? null : asRecord(record.models);
-  if (models === null) {
-    return [];
-  }
-
-  const byFamily = new Map<
-    string,
-    {
-      limitId: string;
-      limitName: string;
-      primary: OfficialKeyUsageWindow | null;
-      secondary: OfficialKeyUsageWindow | null;
-    }
-  >();
-
-  for (const [modelId, rawModel] of Object.entries(models)) {
-    const model = asRecord(rawModel);
-    if (model === null) {
-      continue;
-    }
-
-    const family = resolveModelFamily(modelId, readNonEmptyString(model.modelProvider));
-    if (family === null) {
-      continue;
-    }
-
-    const quotaWindow = parseModelQuotaWindow(model.quotaInfo, 0);
-    const weeklyWindow = parseModelQuotaWindow(model.weeklyQuotaInfo, WEEKLY_MINUTES);
-    if (quotaWindow === null && weeklyWindow === null) {
-      continue;
-    }
-
-    let entry = byFamily.get(family.limitId);
-    if (entry === undefined) {
-      entry = {
-        limitId: family.limitId,
-        limitName: family.limitName,
-        primary: null,
-        secondary: null
-      };
-      byFamily.set(family.limitId, entry);
-    }
-
-    if (
-      quotaWindow !== null &&
-      (entry.primary === null || quotaWindow.usedPercent > entry.primary.usedPercent)
-    ) {
-      entry.primary = quotaWindow;
-    }
-    if (
-      weeklyWindow !== null &&
-      (entry.secondary === null || weeklyWindow.usedPercent > entry.secondary.usedPercent)
-    ) {
-      entry.secondary = weeklyWindow;
-    }
-  }
-
-  return [...byFamily.values()]
-    .filter((entry) => entry.primary !== null || entry.secondary !== null)
-    .map((entry) => ({
-      vendor: ANTIGRAVITY_KEY_USAGE_VENDOR,
-      source: ANTIGRAVITY_KEY_USAGE_SOURCE,
-      limitId: entry.limitId,
-      limitName: entry.limitName,
-      primary: entry.primary,
-      secondary: entry.secondary,
-      credits: null,
-      expiresAt: null,
-      observedAt
-    }));
-}
-
-/**
- * Reads local Antigravity credentials (from Antigravity Manager, profile files
- * under `providersRoot`, standalone `cliHome`, or the OS keyring when no
- * source-isolation override is active). Returns null when no usable credentials
- * are present.
- */
-export async function readAntigravityCredentials(
-  options: {
-    providersRoot?: string;
-    cliHome?: string;
-    managerRoot?: string;
-    readKeyringSecret?: () => Promise<string | null>;
-    now?: () => Date;
-  } = {}
-): Promise<AntigravityCredentials | null> {
-  const paths = resolveCredentialRoots(options);
-  if (paths.managerRoot !== null) {
-    const managerAccount = readAntigravityManagerAccount(paths.managerRoot, paths.providersRoot);
-    if (managerAccount !== null) {
-      return managerAccount.credentials;
-    }
-  }
-
-  const nowMs = options.now?.().getTime() ?? Date.now();
-  const profileCredentials = readProfileCredentials(paths.providersRoot, nowMs);
-  if (profileCredentials !== null) {
-    return profileCredentials;
-  }
-
-  if (paths.cliHome !== null) {
-    const cliTokenPath = join(paths.cliHome, CLI_TOKEN_FILE);
-    if (existsSync(cliTokenPath)) {
-      const raw = readFileUtf8(cliTokenPath);
-      const authMethod =
-        readAuthMethod(join(paths.cliHome, AUTH_STATE_REL_PATH)) ?? "oauth-personal";
-      const parsed = raw === null ? null : parseCliTokenCredentials(raw, authMethod);
-      if (parsed !== null) {
-        return parsed;
-      }
-    }
-  }
-
-  if (!paths.allowSystemKeyring) {
-    return null;
-  }
-
-  const rawSecret = await (options.readKeyringSecret ?? readSystemKeyringSecret)();
-  if (rawSecret === null) {
-    return null;
-  }
-
-  const decoded = decodeGoKeyringSecret(rawSecret);
-  const authMethod = resolveProfileAuthMethod(paths.providersRoot) ?? "oauth-personal";
-  return parseCliTokenCredentials(decoded, authMethod);
-}
 
 /** Global fetch cannot be detached from its binding on every runtime. */
 const defaultFetch: FetchLike = async (input, init) => {
@@ -461,94 +84,36 @@ export async function collectAntigravityKeyUsage(
   const prodEndpoint = stripTrailingSlashes(options.prodEndpoint ?? PROD_ENDPOINT);
   const collectedAt = now();
   const observedAt = collectedAt.toISOString();
-  const paths = resolveCredentialRoots(options);
+  const account = await readAntigravityAccount({ ...options, now });
+  let snapshots: OfficialKeyUsageSnapshot[] = [];
+  if (account.credentials !== null) {
+    snapshots = await collectLiveSnapshotsForCredentials({
+      credentials: account.credentials,
+      oauthTokenUrl,
+      dailyEndpoint,
+      prodEndpoint,
+      fetchImpl,
+      now,
+      observedAt,
+      log: account.source === "manager" ? { warn: () => undefined, info: log.info } : log,
+      retryWithoutProjectOnEmpty: account.source === "manager"
+    });
+  }
 
-  const managerAccount =
-    paths.managerRoot !== null
-      ? readAntigravityManagerAccount(paths.managerRoot, paths.providersRoot)
-      : null;
-  if (managerAccount !== null) {
-    if (managerAccount.credentials !== null) {
-      const liveSnapshots = await collectLiveSnapshotsForCredentials({
-        credentials: managerAccount.credentials,
-        oauthTokenUrl,
-        dailyEndpoint,
-        prodEndpoint,
-        fetchImpl,
-        now,
-        observedAt,
-        log,
-        retryWithoutProjectOnEmpty: true,
-        suppressWarnings: true
-      });
-      if (liveSnapshots.length > 0) {
-        return {
-          snapshotsFound: liveSnapshots.length,
-          snapshotsStored: replaceVendorOfficialKeyUsage(
-            db,
-            ANTIGRAVITY_KEY_USAGE_VENDOR,
-            liveSnapshots,
-            observedAt
-          )
-        };
-      }
-    }
-
-    const cachedSnapshots = parseAntigravityManagerQuota(managerAccount.quota, observedAt);
-    if (cachedSnapshots.length > 0) {
-      return {
-        snapshotsFound: cachedSnapshots.length,
-        snapshotsStored: replaceVendorOfficialKeyUsage(
-          db,
-          ANTIGRAVITY_KEY_USAGE_VENDOR,
-          cachedSnapshots,
-          observedAt
-        )
-      };
-    }
-
-    if (managerAccount.credentials === null) {
+  if (snapshots.length === 0 && account.source === "manager") {
+    snapshots = parseAntigravityManagerQuota(account.quota, observedAt);
+    if (snapshots.length === 0 && account.credentials === null) {
       log.info?.("official key usage skipped for antigravity: active manager account has no token or cache");
     }
-    return { snapshotsFound: 0, snapshotsStored: 0 };
-  }
-
-  const credentials = await readAntigravityCredentials({
-    providersRoot: options.providersRoot,
-    cliHome: options.cliHome,
-    managerRoot: options.managerRoot,
-    readKeyringSecret: options.readKeyringSecret,
-    now
-  });
-  if (credentials === null) {
+  } else if (account.credentials === null) {
     log.info?.("official key usage skipped for antigravity: no local credentials");
-    return { snapshotsFound: 0, snapshotsStored: 0 };
-  }
-
-  const snapshots = await collectLiveSnapshotsForCredentials({
-    credentials,
-    oauthTokenUrl,
-    dailyEndpoint,
-    prodEndpoint,
-    fetchImpl,
-    now,
-    observedAt,
-    log,
-    retryWithoutProjectOnEmpty: false,
-    suppressWarnings: false
-  });
-  if (snapshots.length === 0) {
-    return { snapshotsFound: 0, snapshotsStored: 0 };
   }
 
   return {
     snapshotsFound: snapshots.length,
-    snapshotsStored: replaceVendorOfficialKeyUsage(
-      db,
-      ANTIGRAVITY_KEY_USAGE_VENDOR,
-      snapshots,
-      observedAt
-    )
+    snapshotsStored: snapshots.length === 0
+      ? 0
+      : replaceVendorOfficialKeyUsage(db, ANTIGRAVITY_KEY_USAGE_VENDOR, snapshots, observedAt)
   };
 }
 
@@ -562,18 +127,13 @@ async function collectLiveSnapshotsForCredentials(input: {
   observedAt: string;
   log: Logger;
   retryWithoutProjectOnEmpty: boolean;
-  suppressWarnings: boolean;
 }): Promise<OfficialKeyUsageSnapshot[]> {
-  const effectiveLog: Logger = input.suppressWarnings
-    ? { warn: () => undefined, info: input.log.info }
-    : input.log;
-
   let accessToken = await resolveAccessToken({
     credentials: input.credentials,
     oauthTokenUrl: input.oauthTokenUrl,
     fetchImpl: input.fetchImpl,
     now: input.now,
-    log: effectiveLog
+    log: input.log
   });
   if (accessToken === null) {
     return [];
@@ -585,34 +145,26 @@ async function collectLiveSnapshotsForCredentials(input: {
       : [input.dailyEndpoint, input.prodEndpoint];
   const requestBody = input.credentials.projectId ? { project: input.credentials.projectId } : {};
 
-  let result = await fetchSnapshotsFromEndpoints({
+  const request = {
     endpoints,
-    accessToken,
     requestBody,
     fetchImpl: input.fetchImpl,
     now: input.now,
     observedAt: input.observedAt,
-    log: effectiveLog
-  });
+    log: input.log
+  };
+  let result = await fetchSnapshotsFromEndpoints({ ...request, accessToken });
 
   if (result.unauthorized && canRefreshCredentials(input.credentials)) {
     const refreshed = await refreshOAuthAccessToken({
       oauthTokenUrl: input.oauthTokenUrl,
       credentials: input.credentials,
       fetchImpl: input.fetchImpl,
-      log: effectiveLog
+      log: input.log
     });
     if (refreshed !== null) {
       accessToken = refreshed;
-      result = await fetchSnapshotsFromEndpoints({
-        endpoints,
-        accessToken,
-        requestBody,
-        fetchImpl: input.fetchImpl,
-        now: input.now,
-        observedAt: input.observedAt,
-        log: effectiveLog
-      });
+      result = await fetchSnapshotsFromEndpoints({ ...request, accessToken });
     }
   }
 
@@ -622,15 +174,7 @@ async function collectLiveSnapshotsForCredentials(input: {
     !result.unauthorized &&
     Object.keys(requestBody).length > 0
   ) {
-    result = await fetchSnapshotsFromEndpoints({
-      endpoints,
-      accessToken,
-      requestBody: {},
-      fetchImpl: input.fetchImpl,
-      now: input.now,
-      observedAt: input.observedAt,
-      log: effectiveLog
-    });
+    result = await fetchSnapshotsFromEndpoints({ ...request, accessToken, requestBody: {} });
   }
 
   return result.snapshots;
@@ -672,17 +216,6 @@ async function resolveAccessToken(input: {
     "official key usage skipped for antigravity: saved sign-in has expired"
   );
   return null;
-}
-
-function canRefreshCredentials(credentials: AntigravityCredentials): boolean {
-  if (credentials.kind === "acp-token") {
-    return true;
-  }
-  return (
-    credentials.clientId !== null &&
-    credentials.clientSecret !== null &&
-    credentials.refreshToken !== null
-  );
 }
 
 async function refreshOAuthAccessToken(input: {
@@ -862,518 +395,10 @@ async function postQuotaEndpoint(input: {
   }
 }
 
-type AntigravityManagerAccount = {
-  accountId: string;
-  credentials: AntigravityCredentials | null;
-  quota: Record<string, unknown> | null;
-};
-
-function resolveCredentialRoots(options: {
-  providersRoot?: string;
-  cliHome?: string;
-  managerRoot?: string;
-  readKeyringSecret?: () => Promise<string | null>;
-}): {
-  providersRoot: string;
-  cliHome: string | null;
-  managerRoot: string | null;
-  allowSystemKeyring: boolean;
-} {
-  const providersRoot = options.providersRoot ?? resolveDefaultProvidersRoot();
-  const allowDefaultLocalFallback =
-    options.providersRoot === undefined &&
-    readNonEmptyString(process.env.AGENT_METRICS_ANTIGRAVITY_PROVIDERS_ROOT) === null;
-  const envCliHome = readNonEmptyString(process.env.AGENT_METRICS_ANTIGRAVITY_CLI_HOME);
-  const cliHome =
-    options.cliHome ??
-    envCliHome ??
-    (allowDefaultLocalFallback ? resolveDefaultCliHome() : null);
-  const managerRoot =
-    options.managerRoot ??
-    readNonEmptyString(process.env.AGENT_METRICS_ANTIGRAVITY_MANAGER_ROOT) ??
-    (allowDefaultLocalFallback && options.cliHome === undefined && envCliHome === null
-      ? resolveDefaultManagerRoot()
-      : null);
-  const allowSystemKeyring =
-    options.readKeyringSecret !== undefined ||
-    (allowDefaultLocalFallback && options.cliHome === undefined && envCliHome === null);
-  return { providersRoot, cliHome, managerRoot, allowSystemKeyring };
-}
-
-function readAntigravityManagerAccount(
-  managerRoot: string,
-  providersRoot: string
-): AntigravityManagerAccount | null {
-  const indexPath = join(managerRoot, MANAGER_ACCOUNTS_INDEX_FILE);
-  if (!existsSync(indexPath)) {
-    return null;
-  }
-
-  const indexRaw = readFileUtf8(indexPath);
-  const index = indexRaw === null ? null : parseJsonRecord(indexRaw);
-  if (index === null) {
-    return null;
-  }
-
-  const targetIde = readNonEmptyString(index.current_target_ide);
-  const candidateIds =
-    targetIde === "classic"
-      ? [
-          index.current_classic_account_id,
-          index.current_account_id,
-          index.current_agy_account_id
-        ]
-      : [
-          index.current_agy_account_id,
-          index.current_account_id,
-          index.current_classic_account_id
-        ];
-
-  for (const rawId of candidateIds) {
-    const accountId = readNonEmptyString(rawId);
-    if (
-      accountId === null ||
-      accountId === "." ||
-      accountId === ".." ||
-      /[/\\]/u.test(accountId)
-    ) {
-      continue;
-    }
-
-    const detailPath = join(managerRoot, MANAGER_ACCOUNTS_DIR, `${accountId}.json`);
-    if (!existsSync(detailPath)) {
-      continue;
-    }
-
-    const detailRaw = readFileUtf8(detailPath);
-    const detail = detailRaw === null ? null : parseJsonRecord(detailRaw);
-    if (detail === null) {
-      continue;
-    }
-
-    const authMethod = resolveProfileAuthMethod(providersRoot) ?? "oauth-personal";
-    return {
-      accountId,
-      credentials: parseManagerTokenCredentials(detail.token, authMethod),
-      quota: asRecord(detail.quota)
-    };
-  }
-
-  return null;
-}
-
-function parseManagerTokenCredentials(
-  tokenValue: unknown,
-  authMethod: AntigravityAuthMethod
-): AntigravityCredentials | null {
-  const tokenRecord = asRecord(tokenValue);
-  if (tokenRecord === null) {
-    return null;
-  }
-  const accessToken = readNonEmptyString(tokenRecord.access_token);
-  if (accessToken === null) {
-    return null;
-  }
-  const expirySeconds = readFiniteNumber(tokenRecord.expiry_timestamp);
-  const expiresAtIso = readTimestamp(tokenRecord.expiry);
-  const expiresAt =
-    expirySeconds !== null && expirySeconds > 0
-      ? normalizeEpochMs(expirySeconds)
-      : expiresAtIso !== null
-        ? Date.parse(expiresAtIso)
-        : null;
-
-  return {
-    kind: "cli-token",
-    authMethod,
-    accessToken,
-    refreshToken: readNonEmptyString(tokenRecord.refresh_token),
-    expiresAt: expiresAt !== null && Number.isFinite(expiresAt) ? expiresAt : null,
-    clientId: readNonEmptyString(tokenRecord.client_id),
-    clientSecret: readNonEmptyString(tokenRecord.client_secret),
-    projectId: readNonEmptyString(tokenRecord.project_id)
-  };
-}
-
-function isProfileCredentialsUsable(creds: AntigravityCredentials, nowMs: number): boolean {
-  if (canRefreshCredentials(creds)) {
-    return true;
-  }
-  if (creds.kind === "acp-token") {
-    return true;
-  }
-  return creds.expiresAt === null || creds.expiresAt - nowMs >= EXPIRES_SKEW_MS;
-}
-
-function readFileMtimeMs(filePath: string): number {
-  try {
-    return statSync(filePath).mtimeMs;
-  } catch {
-    return 0;
-  }
-}
-
-function readProfileCredentials(
-  providersRoot: string,
-  nowMs: number = Date.now()
-): AntigravityCredentials | null {
-  if (!existsSync(providersRoot)) {
-    return null;
-  }
-
-  let accounts: string[];
-  try {
-    accounts = readdirSync(providersRoot, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => entry.name)
-      .sort();
-  } catch {
-    return null;
-  }
-
-  const candidates: Array<{
-    account: string;
-    usable: boolean;
-    mtimeMs: number;
-    kindRank: number;
-    credentials: AntigravityCredentials;
-  }> = [];
-
-  for (const account of accounts) {
-    const acpRoot = join(providersRoot, account, ACP_DIR_NAME);
-    if (!existsSync(acpRoot)) {
-      continue;
-    }
-
-    const authMethod = readAuthMethod(join(acpRoot, AUTH_STATE_REL_PATH)) ?? "oauth-personal";
-    const acpTokenPath = join(acpRoot, ACP_TOKEN_FILE);
-    if (existsSync(acpTokenPath)) {
-      const parsed = parseAcpTokenFile(readFileUtf8(acpTokenPath), authMethod);
-      if (parsed !== null) {
-        candidates.push({
-          account,
-          usable: isProfileCredentialsUsable(parsed, nowMs),
-          mtimeMs: readFileMtimeMs(acpTokenPath),
-          kindRank: 1,
-          credentials: parsed
-        });
-      }
-    }
-
-    const cliTokenPath = join(acpRoot, CLI_TOKEN_FILE);
-    if (existsSync(cliTokenPath)) {
-      const raw = readFileUtf8(cliTokenPath);
-      const parsed = raw === null ? null : parseCliTokenCredentials(raw, authMethod);
-      if (parsed !== null) {
-        candidates.push({
-          account,
-          usable: isProfileCredentialsUsable(parsed, nowMs),
-          mtimeMs: readFileMtimeMs(cliTokenPath),
-          kindRank: 0,
-          credentials: parsed
-        });
-      }
-    }
-  }
-
-  if (candidates.length === 0) {
-    return null;
-  }
-
-  candidates.sort((left, right) => {
-    const usableDiff = Number(right.usable) - Number(left.usable);
-    if (usableDiff !== 0) {
-      return usableDiff;
-    }
-    if (right.mtimeMs !== left.mtimeMs) {
-      return right.mtimeMs - left.mtimeMs;
-    }
-    if (right.kindRank !== left.kindRank) {
-      return right.kindRank - left.kindRank;
-    }
-    return left.account.localeCompare(right.account);
-  });
-
-  return candidates[0]?.credentials ?? null;
-}
-
-function resolveProfileAuthMethod(providersRoot: string): AntigravityAuthMethod | null {
-  if (!existsSync(providersRoot)) {
-    return null;
-  }
-  try {
-    const accounts = readdirSync(providersRoot, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => entry.name)
-      .sort();
-    for (const account of accounts) {
-      const authMethod = readAuthMethod(join(providersRoot, account, ACP_DIR_NAME, AUTH_STATE_REL_PATH));
-      if (authMethod !== null) {
-        return authMethod;
-      }
-    }
-  } catch {
-    return null;
-  }
-  return null;
-}
-
-function readAuthMethod(filePath: string): AntigravityAuthMethod | null {
-  const raw = readFileUtf8(filePath);
-  if (raw === null) {
-    return null;
-  }
-  const record = parseJsonRecord(raw);
-  const methodId = record === null ? null : readNonEmptyString(record.methodId);
-  if (methodId === "oauth-personal" || methodId === "oauth-business") {
-    return methodId;
-  }
-  return null;
-}
-
-function parseAcpTokenFile(
-  raw: string | null,
-  authMethod: AntigravityAuthMethod
-): AntigravityCredentials | null {
-  if (raw === null) {
-    return null;
-  }
-  const record = parseJsonRecord(raw);
-  if (record === null) {
-    return null;
-  }
-  const clientId = readNonEmptyString(record.client_id);
-  const clientSecret = readNonEmptyString(record.client_secret);
-  const refreshToken = readNonEmptyString(record.refresh_token);
-  if (clientId === null || clientSecret === null || refreshToken === null) {
-    return null;
-  }
-  return {
-    kind: "acp-token",
-    authMethod,
-    clientId,
-    clientSecret,
-    refreshToken,
-    projectId: readNonEmptyString(record.project_id)
-  };
-}
-
-function parseCliTokenCredentials(
-  raw: string,
-  authMethod: AntigravityAuthMethod
-): AntigravityCredentials | null {
-  const outer = parseJsonRecord(raw);
-  if (outer === null) {
-    return null;
-  }
-  const tokenRecord = asRecord(outer.token) ?? outer;
-  const accessToken = readNonEmptyString(tokenRecord.access_token);
-  if (accessToken === null) {
-    return null;
-  }
-  const expiresAtIso = readTimestamp(tokenRecord.expiry);
-  const expiresAt = expiresAtIso === null ? null : Date.parse(expiresAtIso);
-  return {
-    kind: "cli-token",
-    authMethod,
-    accessToken,
-    refreshToken: readNonEmptyString(tokenRecord.refresh_token),
-    expiresAt: expiresAt !== null && Number.isFinite(expiresAt) ? expiresAt : null,
-    clientId: readNonEmptyString(outer.client_id ?? tokenRecord.client_id),
-    clientSecret: readNonEmptyString(outer.client_secret ?? tokenRecord.client_secret),
-    projectId: readNonEmptyString(outer.project_id ?? tokenRecord.project_id)
-  };
-}
-
-async function readSystemKeyringSecret(): Promise<string | null> {
-  if (process.platform === "darwin") {
-    try {
-      const { stdout } = await execFileAsync(
-        "security",
-        ["find-generic-password", "-s", KEYRING_SERVICE, "-a", KEYRING_ACCOUNT, "-w"],
-        { encoding: "utf8", timeout: KEYRING_TIMEOUT_MS }
-      );
-      const trimmed = stdout.trim();
-      return trimmed.length === 0 ? null : trimmed;
-    } catch {
-      return null;
-    }
-  }
-
-  if (process.platform === "linux") {
-    try {
-      const { stdout } = await execFileAsync(
-        "secret-tool",
-        ["lookup", "service", KEYRING_SERVICE, "username", KEYRING_ACCOUNT],
-        { encoding: "utf8", timeout: KEYRING_TIMEOUT_MS }
-      );
-      const trimmed = stdout.trim();
-      return trimmed.length === 0 ? null : trimmed;
-    } catch {
-      return null;
-    }
-  }
-
-  return null;
-}
-
-function resolveBucketGroupIdentity(
-  bucketId: string,
-  groupDisplayName: string | null
-): { limitId: string; limitName: string } {
-  if (bucketId.startsWith("gemini-argon-")) {
-    return { limitId: "gemini-argon", limitName: groupDisplayName ?? "Gemini Argon" };
-  }
-  if (bucketId.startsWith("gemini-carbon-")) {
-    return { limitId: "gemini-carbon", limitName: groupDisplayName ?? "Gemini Carbon" };
-  }
-  if (bucketId.startsWith("gemini-")) {
-    return { limitId: "gemini", limitName: groupDisplayName ?? "Gemini Models" };
-  }
-  if (bucketId.startsWith("3p-")) {
-    return { limitId: "3p", limitName: groupDisplayName ?? "Claude and GPT models" };
-  }
-  const normalizedPrefix = bucketId.replace(/-(?:5h|weekly)$/u, "");
-  return {
-    limitId: normalizedPrefix.length > 0 ? normalizedPrefix : bucketId,
-    limitName: groupDisplayName ?? (normalizedPrefix.length > 0 ? normalizedPrefix : bucketId)
-  };
-}
-
-function resolveModelFamily(
-  modelId: string,
-  modelProvider: string | null
-): { limitId: string; limitName: string } | null {
-  if (modelProvider === "MODEL_PROVIDER_GOOGLE" || modelId.startsWith("gemini-")) {
-    return { limitId: "gemini", limitName: "Gemini Models" };
-  }
-  if (modelProvider === "MODEL_PROVIDER_ANTHROPIC" || modelId.startsWith("claude-")) {
-    return { limitId: "claude", limitName: "Claude Models" };
-  }
-  if (modelProvider === "MODEL_PROVIDER_OPENAI" || modelId.startsWith("gpt-")) {
-    return { limitId: "gpt", limitName: "GPT Models" };
-  }
-  return null;
-}
-
-function parseModelQuotaWindow(
-  value: unknown,
-  windowMinutes: number
-): OfficialKeyUsageWindow | null {
-  const record = asRecord(value);
-  if (record === null) {
-    return null;
-  }
-  const remainingFraction = readFiniteNumber(record.remainingFraction);
-  if (remainingFraction === null) {
-    return null;
-  }
-  return {
-    usedPercent: fractionToUsedPercent(remainingFraction),
-    windowMinutes,
-    resetsAt: readTimestamp(record.resetTime)
-  };
-}
-
-/**
- * Unused buckets often report `remainingFraction: 1` with `resetTime ≈ now +
- * windowDuration`. Treat that synthetic rolling horizon as `null` so the UI
- * does not show a countdown before the window actually starts.
- */
-function resolveSummaryResetTime(input: {
-  resetTime: unknown;
-  remainingFraction: number;
-  description: string | null;
-  windowMinutes: number;
-  requestedAtMs: number;
-}): string | null {
-  const iso = readTimestamp(input.resetTime);
-  if (iso === null) {
-    return null;
-  }
-  if (
-    input.remainingFraction === 1 &&
-    input.description === null &&
-    input.windowMinutes > 0 &&
-    Number.isFinite(input.requestedAtMs) &&
-    Math.abs(Date.parse(iso) - input.requestedAtMs - input.windowMinutes * 60_000) <= 60_000
-  ) {
-    return null;
-  }
-  return iso;
-}
-
-function fractionToUsedPercent(remainingFraction: number): number {
-  const clampedRemaining = Math.min(1, Math.max(0, remainingFraction));
-  return Number(((1 - clampedRemaining) * 100).toFixed(2));
-}
-
-function resolveDefaultProvidersRoot(): string {
-  return (
-    readNonEmptyString(process.env.AGENT_METRICS_ANTIGRAVITY_PROVIDERS_ROOT) ??
-    join(homedir(), ".t3", "userdata", "providers", "antigravity")
-  );
-}
-
-function resolveDefaultCliHome(): string {
-  return join(homedir(), ".gemini", "antigravity-cli");
-}
-
-function resolveDefaultManagerRoot(): string {
-  return join(homedir(), ".antigravity_tools");
-}
-
-function normalizeEpochMs(value: number): number {
-  return value > 1e12 ? value : value * 1000;
-}
-
 function antigravityUserAgent(): string {
   return `antigravity/hub/2.24.0 (aidev_client; os_type=${process.platform}; arch=${process.arch}; cl=963137146)`;
 }
 
-function readFileUtf8(filePath: string): string | null {
-  try {
-    return readFileSync(filePath, "utf8");
-  } catch {
-    return null;
-  }
-}
-
 function stripTrailingSlashes(value: string): string {
   return value.trim().replace(/\/+$/u, "");
-}
-
-function readTimestamp(value: unknown): string | null {
-  if (typeof value !== "string" || value.trim().length === 0) {
-    return null;
-  }
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return null;
-  }
-  return value as Record<string, unknown>;
-}
-
-function parseJsonRecord(value: string): Record<string, unknown> | null {
-  try {
-    return asRecord(JSON.parse(value) as unknown);
-  } catch {
-    return null;
-  }
-}
-
-function readNonEmptyString(value: unknown): string | null {
-  if (typeof value !== "string") {
-    return null;
-  }
-  const trimmed = value.trim();
-  return trimmed.length === 0 ? null : trimmed;
-}
-
-function readFiniteNumber(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
