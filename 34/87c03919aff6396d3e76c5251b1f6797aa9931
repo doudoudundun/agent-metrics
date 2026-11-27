@@ -1,0 +1,61 @@
+packages/contracts/src/index.ts
+  s_746568314a7a56::t_c06be3317a61c6 4
+apps/dashboard/src/personal-quota-store.ts
+  s_746568314a7a56::t_9d4ef8690ff985 1-96
+apps/dashboard/src/components/PersonalQuotaPanel.tsx
+  s_746568314a7a56::t_e211d65c661d1f 2
+  s_746568314a7a56::t_2986b6cf28ba08 43-59
+  s_746568314a7a56::t_695e36d7431d40 1,3-42,60-193
+apps/core/src/core-routes.ts
+  s_746568314a7a56::t_b0c6423344a133 301-307
+  s_746568314a7a56::t_d21e67d1e37df5 9
+  s_746568314a7a56::t_971fadd21f0e61 38
+packages/contracts/src/personal-quota.ts
+  s_746568314a7a56::t_58bd08429bb70c 1-261
+apps/dashboard/src/App.test.tsx
+  s_746568314a7a56::t_78e4384e37fc80 8
+  s_746568314a7a56::t_0e24e3ab86771b 209
+  s_746568314a7a56::t_8d819b31e40f4e 34
+apps/dashboard/src/api.ts
+  s_746568314a7a56::t_8c4a729fa186a0 18
+  s_746568314a7a56::t_2e1f85abef69de 41
+  s_746568314a7a56::t_022f32a8a72ac9 5
+  s_746568314a7a56::t_896e79814b9c93 222-229
+apps/core/src/personal-quota.test.ts
+  s_746568314a7a56::t_4e9f13ff5b8f30 1-117
+apps/core/src/personal-quota.ts
+  s_746568314a7a56::t_dc9e52335955d5 1-81
+apps/dashboard/src/DashboardPage.tsx
+  s_746568314a7a56::t_c6c5e0e35858f7 6
+  s_746568314a7a56::t_b0d20ca9327a33 237
+  s_746568314a7a56::t_60a4f983e5a065 569-577
+  s_746568314a7a56::t_bd7a4fe7335ee6 219-223
+  s_746568314a7a56::t_978d523838da5c 188-191
+  s_746568314a7a56::t_49fb1000d8400e 258
+  s_746568314a7a56::t_fb1be850646ee4 24
+  s_746568314a7a56::t_0c3252ce08120b 250
+apps/dashboard/src/DashboardPage.test.tsx
+  s_746568314a7a56::t_2d9ec998d4922a 825
+  s_746568314a7a56::t_c16e83e3f14178 12
+  s_746568314a7a56::t_abed84cc41cfb3 42
+apps/dashboard/src/DashboardPage.guard.test.tsx
+  s_746568314a7a56::t_f96db5929d07e4 43
+  s_746568314a7a56::t_d84ceb506ec80e 167
+  s_746568314a7a56::t_7b8a444a997296 16
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.8",
+  "base_commit_sha": "3487c03919aff6396d3e76c5251b1f6797aa9931",
+  "prompts": {},
+  "sessions": {
+    "s_746568314a7a56": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "agent-05692b3f-acba-4bc4-b047-3bc2b4ff87a6",
+        "model": "unknown"
+      },
+      "human_author": "doudoudundun <1103992580@qq.com>"
+    }
+  }
+}
