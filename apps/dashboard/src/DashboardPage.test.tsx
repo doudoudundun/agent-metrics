@@ -709,6 +709,39 @@ describe("DashboardPage", () => {
 
     view.unmount();
   });
+
+  it("refreshes quota queries on window focus with a 15s throttle", async () => {
+    let nowMs = 1_000_000;
+    const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => nowMs);
+    try {
+      const view = render(<DashboardPage />);
+      await screen.findByRole("region", { name: "Overview metrics for Today" });
+
+      expect(fetchKeyUsage).toHaveBeenCalledTimes(1);
+      expect(fetchCursorAccountUsage).toHaveBeenCalledTimes(1);
+
+      nowMs += 5_000;
+      window.dispatchEvent(new Event("focus"));
+      expect(fetchKeyUsage).toHaveBeenCalledTimes(1);
+      expect(fetchCursorAccountUsage).toHaveBeenCalledTimes(1);
+
+      nowMs += 10_000;
+      window.dispatchEvent(new Event("focus"));
+      await waitFor(() => {
+        expect(fetchKeyUsage).toHaveBeenCalledTimes(2);
+        expect(fetchCursorAccountUsage).toHaveBeenCalledTimes(2);
+      });
+
+      view.unmount();
+
+      nowMs += 20_000;
+      window.dispatchEvent(new Event("focus"));
+      expect(fetchKeyUsage).toHaveBeenCalledTimes(2);
+      expect(fetchCursorAccountUsage).toHaveBeenCalledTimes(2);
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
 });
 
 function seedApiMocks(): void {

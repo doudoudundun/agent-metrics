@@ -73,6 +73,7 @@ type RouteInput = {
   db: MetricsDatabase;
   input: ScopeInput;
   syncCoordinator: SyncCoordinator;
+  onManualSync?: (adapterInstanceId?: string) => void;
 };
 
 function sendApiError(
@@ -133,7 +134,13 @@ function isValidationError(error: unknown): boolean {
 }
 
 
-export function registerCoreRoutes({ app, db, input, syncCoordinator }: RouteInput): void {
+export function registerCoreRoutes({
+  app,
+  db,
+  input,
+  syncCoordinator,
+  onManualSync
+}: RouteInput): void {
   function readScope(request: { query: unknown; id: string }, reply: ErrorReply) {
     try {
       return resolveRequestScope(request.query, input);
@@ -188,6 +195,7 @@ export function registerCoreRoutes({ app, db, input, syncCoordinator }: RouteInp
     try {
       ManualSyncRequestSchema.parse(request.body ?? {});
       const response = syncCoordinator.manualSync();
+      onManualSync?.();
       reply.code(202);
       return ManualSyncResponseSchema.parse(response);
     } catch (error) {
@@ -200,6 +208,7 @@ export function registerCoreRoutes({ app, db, input, syncCoordinator }: RouteInp
     try {
       ManualSyncRequestSchema.parse(request.body ?? {});
       const response = syncCoordinator.manualSync(params.adapterInstanceId);
+      onManualSync?.(params.adapterInstanceId);
       reply.code(202);
       return ManualSyncResponseSchema.parse(response);
     } catch (error) {

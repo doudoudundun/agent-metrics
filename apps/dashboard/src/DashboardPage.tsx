@@ -57,6 +57,7 @@ const SOURCE_CATALOG: SourceOption[] = [
 ];
 
 const VISIBLE_SOURCE_LIMIT = 5;
+const QUOTA_FOCUS_REFRESH_MS = 15_000;
 
 const COST_FORMAT = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -147,6 +148,7 @@ export function DashboardPage() {
   const [syncError, setSyncError] = useState<string | null>(null);
   const syncControllerRef = useRef<AbortController | null>(null);
   const mountedRef = useRef(true);
+  const lastQuotaRefreshAtRef = useRef(Date.now());
 
   const scopeKey = useMemo(() => scopeCacheKey(scope), [scope]);
   const queryKey = useMemo(() => `${scopeKey}:${sourceVendor}`, [scopeKey, sourceVendor]);
@@ -219,6 +221,29 @@ export function DashboardPage() {
     };
   }, [queryClient]);
 
+  const refreshCursorUsage = cursorUsageQuery.refresh;
+  const refreshKeyUsage = keyUsageQuery.refresh;
+
+  useEffect(() => {
+    const handleWindowFocus = () => {
+      if (!mountedRef.current || document.visibilityState === "hidden") {
+        return;
+      }
+      const now = Date.now();
+      if (now - lastQuotaRefreshAtRef.current < QUOTA_FOCUS_REFRESH_MS) {
+        return;
+      }
+      lastQuotaRefreshAtRef.current = now;
+      void refreshKeyUsage().catch(() => undefined);
+      void refreshCursorUsage().catch(() => undefined);
+    };
+
+    window.addEventListener("focus", handleWindowFocus);
+    return () => {
+      window.removeEventListener("focus", handleWindowFocus);
+    };
+  }, [refreshCursorUsage, refreshKeyUsage]);
+
   const handleSync = async () => {
     const controller = new AbortController();
     syncControllerRef.current = controller;
@@ -241,6 +266,7 @@ export function DashboardPage() {
         );
       }
       try {
+        lastQuotaRefreshAtRef.current = Date.now();
         await Promise.all([
           overviewQuery.refresh(),
           sourceVendor !== "all" ? sourceUsageQuery.refresh() : Promise.resolve(),

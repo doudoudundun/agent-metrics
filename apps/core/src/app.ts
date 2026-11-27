@@ -35,6 +35,7 @@ import { installHttpSecurity } from "./http-security.js";
 import { registerCoreRoutes } from "./core-routes.js";
 import { persistCursorAccountUsage } from "./cursor-account-usage.js";
 import { startCursorOfficialRefreshLoop } from "./cursor-official-refresh.js";
+import { collectAntigravityKeyUsage } from "./official-key-usage-antigravity.js";
 import { collectCodexKeyUsage } from "./official-key-usage.js";
 import { collectZCodeKeyUsage } from "./official-key-usage-zcode.js";
 import { startOfficialKeyUsageRefreshLoop } from "./key-usage-refresh.js";
@@ -336,16 +337,34 @@ export function buildApp(input: BuildAppInput): MetricsApp {
         sourceAdapter: "antigravity-acp",
         sourceVendor: "antigravity",
         enabled: true,
-        sync: async ({ signal }) =>
-          runWithCanonicalWriterLease(signal, async () => {
+        sync: async ({ signal }) => {
+          const result = await runWithCanonicalWriterLease(signal, async () => {
             await syncAntigravityAcpSessions({
               eventLogPath: canonicalEventLogPath,
               cursorPath: agentPaths.antigravityCursorPath,
               ledgerPath: agentPaths.antigravityLedgerPath
             });
             return projectAfterSourceSync();
-          })
+          });
+          if (!signal.aborted) {
+            try {
+              if (keyUsageRefresh !== null) {
+                await keyUsageRefresh.triggerNow({ force: true, vendor: "antigravity" });
+              } else {
+                await collectAntigravityKeyUsage(
+                  db as unknown as import("./domain-types.js").SqliteDatabaseLike,
+                  { log: metricsApp.log }
+                );
+              }
+            } catch (error) {
+              metricsApp.log.warn(
+                `antigravity key usage refresh failed: ${error instanceof Error ? error.message : String(error)}`
+              );
+            }
+          }
+          return result;
         }
+      }
     );
   }
 
@@ -372,6 +391,24 @@ export function buildApp(input: BuildAppInput): MetricsApp {
 
   app.addHook("onReady", async () => {
     if (sourceSyncAdapters.length > 0) {
+      // Seed official key usage (Codex/ZCode local sources) and start the
+      // periodic key-usage loop before initial sync so Antigravity sync runs
+      // coalesce with any scheduled refresh.
+      const keyUsageDb = db as unknown as import("./domain-types.js").SqliteDatabaseLike;
+      void collectCodexKeyUsage(keyUsageDb, {
+        log: metricsApp.log
+      }).catch((error: unknown) => {
+        metricsApp.log.warn(`official key usage collection failed: ${String(error)}`);
+      });
+      void collectZCodeKeyUsage(keyUsageDb, {
+        log: metricsApp.log
+      }).catch((error: unknown) => {
+        metricsApp.log.warn(`zcode key usage collection failed: ${String(error)}`);
+      });
+      keyUsageRefresh = startOfficialKeyUsageRefreshLoop(keyUsageDb, {
+        log: metricsApp.log
+      });
+
       const initialAdapterIds = sourceSyncAdapters
         .map((adapter) => adapter.adapterInstanceId)
         .filter((adapterInstanceId) => {
@@ -397,22 +434,6 @@ export function buildApp(input: BuildAppInput): MetricsApp {
           log: metricsApp.log
         }
       );
-      // Seed official key usage (Codex/ZCode local sources) at startup; the
-      // refresh loops below keep the snapshots current afterwards.
-      const keyUsageDb = db as unknown as import("./domain-types.js").SqliteDatabaseLike;
-      void collectCodexKeyUsage(keyUsageDb, {
-        log: metricsApp.log
-      }).catch((error: unknown) => {
-        metricsApp.log.warn(`official key usage collection failed: ${String(error)}`);
-      });
-      void collectZCodeKeyUsage(keyUsageDb, {
-        log: metricsApp.log
-      }).catch((error: unknown) => {
-        metricsApp.log.warn(`zcode key usage collection failed: ${String(error)}`);
-      });
-      keyUsageRefresh = startOfficialKeyUsageRefreshLoop(keyUsageDb, {
-        log: metricsApp.log
-      });
       if (agentPaths !== null && canonicalEventLogPath !== undefined) {
         const eventLogPath = canonicalEventLogPath;
         const paths = agentPaths;
@@ -552,6 +573,11 @@ export function buildApp(input: BuildAppInput): MetricsApp {
             } catch (error) {
               metricsApp.log.warn(`zcode key usage collection failed: ${String(error)}`);
             }
+            try {
+              await keyUsageRefresh?.triggerNow({ vendor: "antigravity" });
+            } catch (error) {
+              metricsApp.log.warn(`antigravity key usage refresh failed: ${String(error)}`);
+            }
           },
           { log: metricsApp.log }
         );
@@ -564,7 +590,22 @@ export function buildApp(input: BuildAppInput): MetricsApp {
     }
   });
 
-  registerCoreRoutes({ app, db, input, syncCoordinator });
+  registerCoreRoutes({
+    app,
+    db,
+    input,
+    syncCoordinator,
+    onManualSync: (adapterInstanceId) => {
+      if (adapterInstanceId === undefined) {
+        void keyUsageRefresh?.triggerNow({ force: true, vendor: "kimicode" });
+        void keyUsageRefresh?.triggerNow({ force: true, vendor: "zcode" });
+      } else if (adapterInstanceId.startsWith("kimicode")) {
+        void keyUsageRefresh?.triggerNow({ force: true, vendor: "kimicode" });
+      } else if (adapterInstanceId.startsWith("zcode")) {
+        void keyUsageRefresh?.triggerNow({ force: true, vendor: "zcode" });
+      }
+    }
+  });
 
   return metricsApp;
 }

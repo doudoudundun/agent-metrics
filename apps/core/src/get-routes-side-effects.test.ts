@@ -15,11 +15,15 @@ import * as antigravityAdapter from "@agent-metrics/adapters-antigravity";
 import { appendJsonLine } from "@agent-metrics/shared-utils";
 import { buildApp } from "./app.js";
 import * as eventLogProjector from "./event-log-projector.js";
+import * as officialKeyUsageAntigravity from "./official-key-usage-antigravity.js";
+import * as officialKeyUsageKimicode from "./official-key-usage-kimicode.js";
+import * as officialKeyUsageZcodeApi from "./official-key-usage-zcode-api.js";
 
 const apps: Array<ReturnType<typeof buildApp>> = [];
 
 afterEach(async () => {
   await Promise.all(apps.splice(0).map((app) => app.close()));
+  vi.restoreAllMocks();
 });
 
 describe("GET routes have no synchronization side effects", () => {
@@ -56,6 +60,15 @@ describe("GET routes have no synchronization side effects", () => {
     const antigravitySpy = vi
       .spyOn(antigravityAdapter, "syncAntigravityAcpSessions")
       .mockResolvedValue(undefined);
+    const antigravityKeyUsageSpy = vi
+      .spyOn(officialKeyUsageAntigravity, "collectAntigravityKeyUsage")
+      .mockResolvedValue({ snapshotsFound: 0, snapshotsStored: 0 });
+    const kimicodeKeyUsageSpy = vi
+      .spyOn(officialKeyUsageKimicode, "collectKimicodeKeyUsage")
+      .mockResolvedValue({ snapshotsFound: 0, snapshotsStored: 0 });
+    const zcodeApiKeyUsageSpy = vi
+      .spyOn(officialKeyUsageZcodeApi, "collectZCodeApiKeyUsage")
+      .mockResolvedValue({ snapshotsFound: 0, snapshotsStored: 0 });
     const ingestSpy = vi.spyOn(eventLogProjector, "ingestEventLog");
 
     const app = buildApp({
@@ -83,6 +96,10 @@ describe("GET routes have no synchronization side effects", () => {
     workbuddySpy.mockClear();
     codebuddyLogSpy.mockClear();
     antigravitySpy.mockClear();
+    antigravityKeyUsageSpy.mockClear();
+    kimicodeKeyUsageSpy.mockClear();
+    zcodeApiKeyUsageSpy.mockClear();
+    cursorOfficialSpy.mockClear();
     ingestSpy.mockClear();
 
     const triggerSpy = vi.spyOn(app.syncCoordinator, "trigger");
@@ -94,6 +111,7 @@ describe("GET routes have no synchronization side effects", () => {
       "/api/health",
       "/api/widget-snapshot",
       "/api/sync/status",
+      "/api/key-usage",
       "/api/overview?mode=calendar&range=day",
       "/api/token-trend?mode=calendar&range=day",
       "/api/tools?mode=calendar&range=day",
@@ -125,6 +143,9 @@ describe("GET routes have no synchronization side effects", () => {
     expect(workbuddySpy).not.toHaveBeenCalled();
     expect(codebuddyLogSpy).not.toHaveBeenCalled();
     expect(antigravitySpy).not.toHaveBeenCalled();
+    expect(antigravityKeyUsageSpy).not.toHaveBeenCalled();
+    expect(kimicodeKeyUsageSpy).not.toHaveBeenCalled();
+    expect(zcodeApiKeyUsageSpy).not.toHaveBeenCalled();
     expect(ingestSpy).not.toHaveBeenCalled();
     expect(triggerSpy).not.toHaveBeenCalled();
     expect(manualSyncSpy).not.toHaveBeenCalled();

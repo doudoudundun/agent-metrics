@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as claudeAdapter from "@agent-metrics/adapters-claude";
 import * as codexAdapter from "@agent-metrics/adapters-codex";
 import * as opencodeAdapter from "@agent-metrics/adapters-opencode";
+import * as officialKeyUsageAntigravity from "./official-key-usage-antigravity.js";
 import { recordClaudeTranscriptReference } from "@agent-metrics/adapters-claude";
 import { getAgentMetricsPaths } from "@agent-metrics/shared-utils";
 import { appendJsonLine } from "@agent-metrics/shared-utils";
@@ -1251,6 +1252,71 @@ describe("ingestEventLog", () => {
       .map((line) => JSON.parse(line) as { source_vendor?: string })
       .filter((event) => event.source_vendor === "antigravity");
     expect(antigravityEvents).toHaveLength(6);
+
+    await app.close();
+  });
+
+  it("awaits Antigravity key quota refresh during manual Antigravity sync without failing on quota errors", async () => {
+    const repoRoot = await mkdtemp(join(tmpdir(), "agent-metrics-antigravity-quota-sync-"));
+    const paths = getAgentMetricsPaths(repoRoot);
+    const fixture = await createAntigravityFixture(repoRoot);
+    process.env.AGENT_METRICS_ANTIGRAVITY_PROVIDERS_ROOT = fixture.providersRoot;
+
+    const quotaSpy = vi
+      .spyOn(officialKeyUsageAntigravity, "collectAntigravityKeyUsage")
+      .mockResolvedValue({ snapshotsFound: 0, snapshotsStored: 0 });
+
+    const app = buildApp({
+      dbPath,
+      eventLogPath: paths.eventLogPath,
+      repoRoot,
+      ...scopedAppInput
+    });
+    await app.ready();
+
+    const initialRunIds = app.syncCoordinator
+      .getStatus()
+      .adapters.flatMap((adapter) => [adapter.activeRunId, adapter.pendingRunId])
+      .filter((runId): runId is string => typeof runId === "string");
+    if (initialRunIds.length > 0) {
+      await waitForSyncRuns(app, initialRunIds);
+    }
+
+    quotaSpy.mockClear();
+    let resolveQuota: ((value: { snapshotsFound: number; snapshotsStored: number }) => void) | undefined;
+    quotaSpy.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveQuota = resolve;
+        })
+    );
+
+    const firstSync = await app.inject({
+      method: "POST",
+      url: "/api/sync/antigravity-acp@antigravity:default",
+      headers: { origin: "http://127.0.0.1" }
+    });
+    expect(firstSync.statusCode).toBe(202);
+    const firstRunId = firstSync.json().runs[0]?.runId as string;
+    expect(firstRunId).toBeTruthy();
+
+    await expect.poll(() => quotaSpy.mock.calls.length).toBe(1);
+    expect(app.syncCoordinator.getRun(firstRunId)?.status).toBe("syncing");
+
+    resolveQuota?.({ snapshotsFound: 1, snapshotsStored: 1 });
+    await waitForSyncRuns(app, [firstRunId]);
+    expect(app.syncCoordinator.getRun(firstRunId)?.status).toBe("succeeded");
+
+    quotaSpy.mockRejectedValueOnce(new Error("quota endpoint unavailable"));
+    const secondSync = await app.inject({
+      method: "POST",
+      url: "/api/sync/antigravity-acp@antigravity:default",
+      headers: { origin: "http://127.0.0.1" }
+    });
+    expect(secondSync.statusCode).toBe(202);
+    const secondRunId = secondSync.json().runs[0]?.runId as string;
+    await waitForSyncRuns(app, [secondRunId]);
+    expect(app.syncCoordinator.getRun(secondRunId)?.status).toBe("succeeded");
 
     await app.close();
   });
