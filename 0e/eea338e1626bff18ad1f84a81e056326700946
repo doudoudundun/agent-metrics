@@ -1,0 +1,201 @@
+apps/dashboard/src/DashboardPage.tsx
+  s_6a5664286e7f33::t_af800d3583db06 55-56
+packages/event-schema/src/events.ts
+  s_f614aa3463986a::t_c2ce3aeec4ee51 144-149,225-226,302-308
+packages/adapters-claude/src/transcript-sync.ts
+  s_3a56891fc9099b::t_8025ab9b04e63e 4,96-98,616-641
+apps/dashboard/src/DashboardPage.test.tsx
+  s_f614aa3463986a::t_418aea1fe5439a 134-135
+  s_f614aa3463986a::t_fb366883f530cd 94-133,136-137
+packages/adapters-cursor/src/cursor-auth.test.ts
+  s_f655eac4dfa30f::t_d9acdf9cf25ab1 1-2,71-101
+packages/event-schema/src/sources.ts
+  s_6a5664286e7f33::t_af800d3583db06 12-13,30-31,46-47
+apps/core/src/domain-migrations.ts
+  s_f614aa3463986a::t_c2ce3aeec4ee51 54-55,193-203
+  s_3a56891fc9099b::t_5b47d1bfa1d8b1 7-8,10-11,14-15,56-58,206-265
+packages/adapters-codebuddy-log/src/codebuddy-log.test.ts
+  s_f614aa3463986a::t_c2ce3aeec4ee51 179,181-199,418-460,462-468
+  s_f614aa3463986a::t_fd8f5eb056aa05 54,180,461
+packages/adapters-workbuddy/src/workbuddy.test.ts
+  s_f614aa3463986a::t_801259093c59d6 104-105,155,169-192
+README.md
+  s_c0113016a4bd1b::t_ebae169faa60ae 61-62
+apps/core/src/aggregate-queries.test.ts
+  s_f614aa3463986a::t_dede398ed3a31f 11-12,170-188
+  s_c0113016a4bd1b::t_b807cc12ab8438 8,519-521,523,531-541
+apps/dashboard/src/components/ModelUsagePanel.tsx
+  s_c0113016a4bd1b::t_02031689f6fc5b 84
+  s_6a5664286e7f33::t_48377cbf717d47 43-45,94-96,100
+  s_f655eac4dfa30f::t_d13a33eeb9bc5d 72,97-99,103
+  s_f614aa3463986a::t_5d6bd238565d9d 163-164
+apps/dashboard/src/components/TokenTrendPanel.tsx
+  s_f614aa3463986a::t_5d6bd238565d9d 54-55
+apps/core/package.json
+  s_6a5664286e7f33::t_af800d3583db06 15
+packages/metrics-engine/src/pricing.ts
+  s_2e54a49ab3f303::t_023ce237dcc886 445-452
+  s_6a5664286e7f33::t_8d00a79c5eb3dd 118-119
+  s_f655eac4dfa30f::t_a3cae4bd8064c1 394
+  s_c0113016a4bd1b::t_0f077bd9926c30 303,342-343,460-461
+  s_f655eac4dfa30f::t_125713d554303c 45-48,54-56,67-68,72-74,90,97,235-236,243-244,246,362-371,383-393,395-403,440,443
+  s_c0113016a4bd1b::t_917936b8845e73 345-348,353-358,430
+  s_f655eac4dfa30f::t_d13a33eeb9bc5d 372-373,381-382,404-407,438-439
+  s_6a5664286e7f33::t_90eaf9273e2dcc 431
+  s_2e54a49ab3f303::t_b6a63b03e4592a 120-123,126
+  s_6a5664286e7f33::t_ca207ef64c4164 124,127
+  s_c0113016a4bd1b::t_b3ed4996598939 1-2
+packages/adapters-codex/src/codex.ts
+  s_3a56891fc9099b::t_2f3a3c6f6e16cb 39-44,92,98-103,126-127,133,136,138,142,568-569,594-599,601-606,610,641,647,663-669,672,674-691,707,715-719,732,743
+  s_c0113016a4bd1b::t_ebae169faa60ae 720-721,824-825
+  s_3a56891fc9099b::t_4fe60722c34e00 64-65,708-714
+packages/adapters-codex/src/codex.test.ts
+  s_3a56891fc9099b::t_49c8e106c354b0 976-1001
+  s_c0113016a4bd1b::t_ebae169faa60ae 1094
+packages/adapters-workbuddy/src/workbuddy-sync.ts
+  s_f614aa3463986a::t_74a7d5557a408b 373
+apps/dashboard/src/components/ModelUsagePanel.test.tsx
+  s_6a5664286e7f33::t_d9e22c5ce17df4 363,372-373,375-376
+  s_6a5664286e7f33::t_cd90314eb8536a 374
+  s_c0113016a4bd1b::t_b807cc12ab8438 272,279,292-293
+  s_f655eac4dfa30f::t_e23d4212c480d9 21-40
+apps/dashboard/src/components/KpiGrid.tsx
+  s_f614aa3463986a::t_02f81489630e2b 9
+  s_f614aa3463986a::t_5d6bd238565d9d 92
+apps/core/src/query-plan.test.ts
+  s_f655eac4dfa30f::t_c3e23f5648baf0 5,91-114
+apps/core/src/app.ts
+  s_6a5664286e7f33::t_af800d3583db06 6,46,253-274
+packages/adapters-codebuddy-log/src/codebuddy-log-sync.ts
+  s_f614aa3463986a::t_c2ce3aeec4ee51 29-33,315-316
+  s_f614aa3463986a::t_74a7d5557a408b 317-322
+apps/core/src/core-routes.ts
+  s_f614aa3463986a::t_fd8f5eb056aa05 218-224,238
+apps/core/src/domain-projection.ts
+  s_f614aa3463986a::t_c2ce3aeec4ee51 258,267-268,327-328,330,560-562
+  s_f614aa3463986a::t_6b19b0553bbbb7 128,247-248,259-266,271-272,274-278,281-306,334,588
+  s_f655eac4dfa30f::t_c969f3bac9d9a6 8,423-424,426,429-431
+apps/core/src/aggregate-queries.ts
+  s_f655eac4dfa30f::t_d13a33eeb9bc5d 4,111,339,352
+  s_f614aa3463986a::t_c2ce3aeec4ee51 56-62,78-81,84,90-93,127-128,233,280,294-297,335-338
+  s_c0113016a4bd1b::t_02031689f6fc5b 269,275,303-304,312
+  s_6a5664286e7f33::t_90eaf9273e2dcc 311,313,621
+  s_f614aa3463986a::t_fd8f5eb056aa05 82-83,115,356-359
+  s_f614aa3463986a::t_1981e43b7fb862 85-89
+packages/event-schema/src/normalization.ts
+  s_3a56891fc9099b::t_3174de4748405f 85-86,105
+  s_f614aa3463986a::t_c2ce3aeec4ee51 218-222
+apps/core/src/session-queries.ts
+  s_f614aa3463986a::t_c2ce3aeec4ee51 12-16,273-277,367-368,399-407,411-412
+  s_c0113016a4bd1b::t_02031689f6fc5b 288
+  s_6a5664286e7f33::t_90eaf9273e2dcc 287,289
+  s_f614aa3463986a::t_fd8f5eb056aa05 57,416-419
+packages/adapters-claude/src/transcript-sync.test.ts
+  s_3a56891fc9099b::t_2aeb7e4f74968a 24
+  s_3a56891fc9099b::t_128f398b0dc3c5 12-22,26-50
+packages/contracts/src/overview.ts
+  s_f655eac4dfa30f::t_d13a33eeb9bc5d 29
+  s_f614aa3463986a::t_5d6bd238565d9d 34-35,37-39,73,104-105
+packages/metrics-engine/src/pricing.test.ts
+  s_6a5664286e7f33::t_5625daa9249ae6 90,93,107-109,115-118,321-322
+  s_2e54a49ab3f303::t_9796f90383cb24 110-114
+  s_f655eac4dfa30f::t_9f15079a77f70f 198-200,202-212,215,219-228
+  s_f655eac4dfa30f::t_9c66964358d614 213-214,216-218,229-230
+  s_f655eac4dfa30f::t_a3cae4bd8064c1 201
+  s_f655eac4dfa30f::t_e23d4212c480d9 3,13-19
+  s_2e54a49ab3f303::t_91fbb3bb4dc728 92
+  s_6a5664286e7f33::t_1f4b2fe61ac0cb 31-36
+  s_c0113016a4bd1b::t_b807cc12ab8438 329-334,336-337,344-349
+  s_2e54a49ab3f303::t_a47dc24ea7fa08 37-43
+apps/core/src/domain-schema.ts
+  s_f655eac4dfa30f::t_c969f3bac9d9a6 3-5,172-174
+  s_f614aa3463986a::t_c2ce3aeec4ee51 142
+  s_f614aa3463986a::t_74a7d5557a408b 140-141
+apps/core/src/domain-projection.test.ts
+  s_f614aa3463986a::t_2c39463a73a762 101-144
+packages/adapters-workbuddy/src/workbuddy.ts
+  s_f614aa3463986a::t_801259093c59d6 297-300,323
+packages/metrics-engine/src/index.ts
+  s_f655eac4dfa30f::t_d13a33eeb9bc5d 325
+apps/core/src/domain-migrations.test.ts
+  s_f614aa3463986a::t_fd8f5eb056aa05 174
+  s_6a5664286e7f33::t_bf0a0fcd588d41 454,475-478
+  s_3a56891fc9099b::t_c5f754e81430e3 175-176
+  s_f614aa3463986a::t_2c39463a73a762 321-342
+packages/adapters-codebuddy-log/src/codebuddy-log.ts
+  s_f614aa3463986a::t_74a7d5557a408b 2-7,274,379-382
+  s_f614aa3463986a::t_c2ce3aeec4ee51 62-68,211,295-300,373-375
+packages/shared-utils/src/agent-paths.ts
+  s_6a5664286e7f33::t_af800d3583db06 20-21
+  s_6a5664286e7f33::t_bb4d26d3913283 118-119
+apps/core/src/domain-migration-helpers.ts
+  s_6a5664286e7f33::t_af800d3583db06 50-51,82-83
+apps/core/src/canonical-queries.ts
+  s_f614aa3463986a::t_1981e43b7fb862 243-247
+  s_f614aa3463986a::t_c2ce3aeec4ee51 8,18-19,161,239-242,248-254
+  s_c0113016a4bd1b::t_02031689f6fc5b 13,156,193
+  s_6a5664286e7f33::t_90eaf9273e2dcc 192,194
+packages/adapters-cursor/src/cursor-auth.ts
+  s_f655eac4dfa30f::t_86b62fc96bb516 1-3,27,33-61,80-81,99-108,113,116-117
+packages/event-schema/src/usage.ts
+  s_6a5664286e7f33::t_af800d3583db06 83-84
+  s_c0113016a4bd1b::t_ebae169faa60ae 45-46
+apps/dashboard/src/legacy-api.ts
+  s_6a5664286e7f33::t_af800d3583db06 19,485-486
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.8",
+  "base_commit_sha": "0eeea338e1626bff18ad1f84a81e056326700946",
+  "prompts": {},
+  "sessions": {
+    "s_2e54a49ab3f303": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "agent-015d8a3d-4042-49ad-852c-3c9b0ec4dcc2",
+        "model": "unknown"
+      },
+      "human_author": "doudoudundun <1103992580@qq.com>"
+    },
+    "s_3a56891fc9099b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1f3e6-b3b2-7660-ae48-562289c761df",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "doudoudundun <1103992580@qq.com>"
+    },
+    "s_6a5664286e7f33": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1d3f2-0ae4-7030-8924-77baff9ad226",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "doudoudundun <1103992580@qq.com>"
+    },
+    "s_c0113016a4bd1b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1d434-1b23-79e2-b447-8dfaf5324a94",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "doudoudundun <1103992580@qq.com>"
+    },
+    "s_f614aa3463986a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1e849-41a9-74e2-b630-f7b3d0a233ff",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "doudoudundun <1103992580@qq.com>"
+    },
+    "s_f655eac4dfa30f": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a2109b-19b5-7550-8015-aab8235244ac",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "doudoudundun <1103992580@qq.com>"
+    }
+  }
+}
