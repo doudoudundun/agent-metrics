@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { readdir, readFile, rename, rm, stat, writeFile, mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -67,8 +67,45 @@ export function resolveDefaultCodexMulticaSessionsRoot(): string {
   return join(homedir(), ".codex", "multica-sessions");
 }
 
+/**
+ * any-subagent managed Codex conversations run with a per-conversation
+ * CODEX_HOME (<state>/conversations/<id>/provider/codex-home), so their rollouts
+ * never land under ~/.codex/sessions. Discover each isolated sessions root.
+ */
+export function resolveDefaultAnySubagentSessionsRoots(): string[] {
+  const stateHome =
+    process.env.XDG_STATE_HOME?.trim() || join(homedir(), ".local", "state");
+  const conversationsRoot = join(stateHome, "any-subagent", "conversations");
+  if (!existsSync(toFsPath(conversationsRoot))) {
+    return [];
+  }
+
+  let entries;
+  try {
+    entries = readdirSync(toFsPath(conversationsRoot), { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  const roots: string[] = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) {
+      continue;
+    }
+    const sessions = join(conversationsRoot, entry.name, "provider", "codex-home", "sessions");
+    if (existsSync(toFsPath(sessions))) {
+      roots.push(sessions);
+    }
+  }
+  return roots.sort();
+}
+
 export function resolveDefaultCodexSessionsRoots(): string[] {
-  return [resolveDefaultCodexSessionsRoot(), resolveDefaultCodexMulticaSessionsRoot()];
+  return [
+    resolveDefaultCodexSessionsRoot(),
+    resolveDefaultCodexMulticaSessionsRoot(),
+    ...resolveDefaultAnySubagentSessionsRoots()
+  ];
 }
 
 export function resolveDefaultCodexLogsDbPath(): string {
@@ -156,6 +193,10 @@ export function toFsPath(filePath: string): string {
 
 export function isMulticaSessionsPath(filePath: string): boolean {
   return /(?:^|[/\\])multica-sessions(?:[/\\]|$)/iu.test(filePath);
+}
+
+export function isAnySubagentSessionsPath(filePath: string): boolean {
+  return /(?:^|[/\\])provider[/\\]codex-home[/\\]sessions(?:[/\\]|$)/iu.test(filePath);
 }
 
 export async function syncCodexRollouts(input: {
@@ -330,7 +371,8 @@ export async function syncCodexRollouts(input: {
 
     try {
       const pathSessionId = sessionIdFromRolloutPath(filePath);
-      const checkpointSessionId = resumeState?.sessionMeta?.sessionId ?? null;
+      const checkpointSessionId =
+        resumeState?.childUsageMeta?.sessionId ?? resumeState?.sessionMeta?.sessionId ?? null;
       const metadataSessionId =
         pathSessionId !== null && checkpointSessionId !== null && pathSessionId !== checkpointSessionId
           ? null
@@ -351,7 +393,11 @@ export async function syncCodexRollouts(input: {
           sessionModels,
           providerConfigs,
           turnInputMetadata,
-          sourceInstanceId: isMulticaSessionsPath(filePath) ? "codex:multica" : undefined
+          sourceInstanceId: isMulticaSessionsPath(filePath)
+            ? "codex:multica"
+            : isAnySubagentSessionsPath(filePath)
+              ? "codex:any-subagent"
+              : undefined
         },
         resumeState
       );
@@ -801,18 +847,15 @@ function isValidParserState(value: unknown): value is CodexParserState {
   if (
     value.sessionMeta !== null &&
     value.sessionMeta !== undefined &&
-    !isRecord(value.sessionMeta)
+    !isValidSessionMetadata(value.sessionMeta)
   ) {
     return false;
   }
 
-  const sessionMeta = value.sessionMeta;
   if (
-    isRecord(sessionMeta) &&
-    (typeof sessionMeta.sessionId !== "string" ||
-      typeof sessionMeta.timestamp !== "string" ||
-      typeof sessionMeta.workspacePath !== "string" ||
-      (sessionMeta.providerId !== null && typeof sessionMeta.providerId !== "string"))
+    value.childUsageMeta !== null &&
+    value.childUsageMeta !== undefined &&
+    !isValidSessionMetadata(value.childUsageMeta)
   ) {
     return false;
   }
@@ -842,6 +885,22 @@ function isValidParserState(value: unknown): value is CodexParserState {
   if (value.tokenCountUsageSeen !== undefined && typeof value.tokenCountUsageSeen !== "boolean") {
     return false;
   }
+  if (
+    value.pendingMirror !== undefined &&
+    value.pendingMirror !== null &&
+    (!isRecord(value.pendingMirror) ||
+      value.pendingMirror.type !== "token.usage.recorded" ||
+      !AnyEventSchema.safeParse(value.pendingMirror).success)
+  ) {
+    return false;
+  }
+  if (
+    value.previousTotalTokens !== undefined &&
+    value.previousTotalTokens !== null &&
+    (!Number.isSafeInteger(value.previousTotalTokens) || (value.previousTotalTokens as number) < 0)
+  ) {
+    return false;
+  }
   for (const key of ["mirroredUsageEvents", "mirroredUsageDeferredEvents"]) {
     const events = value[key];
     if (events !== undefined &&
@@ -851,6 +910,16 @@ function isValidParserState(value: unknown): value is CodexParserState {
   }
 
   return true;
+}
+
+function isValidSessionMetadata(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.sessionId === "string" &&
+    typeof value.timestamp === "string" &&
+    typeof value.workspacePath === "string" &&
+    (value.providerId === null || typeof value.providerId === "string")
+  );
 }
 
 function parseSessionModels(value: unknown): Record<string, string> {

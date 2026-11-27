@@ -733,4 +733,109 @@ describe("syncCodexRollouts", () => {
 
     await rm(root, { recursive: true, force: true });
   });
+
+  it("discovers isolated any-subagent conversation homes from the state root", async () => {
+    const root = await mkdtemp(join(tmpdir(), "agent-metrics-codex-anyagent-"));
+    const isolatedSessions = join(
+      root,
+      "any-subagent",
+      "conversations",
+      "224b76ca-979d-4b3e-b529-2ee871dc129e",
+      "provider",
+      "codex-home",
+      "sessions"
+    );
+    await mkdir(isolatedSessions, { recursive: true });
+    // A conversation without a codex-home (other backends) must be ignored.
+    await mkdir(join(root, "any-subagent", "conversations", "other", "provider", "home"), {
+      recursive: true
+    });
+
+    const previousXdg = process.env.XDG_STATE_HOME;
+    process.env.XDG_STATE_HOME = root;
+    try {
+      const { resolveDefaultAnySubagentSessionsRoots } = await import("./codex-sync.js");
+      expect(resolveDefaultAnySubagentSessionsRoots()).toEqual([isolatedSessions]);
+    } finally {
+      if (previousXdg === undefined) {
+        delete process.env.XDG_STATE_HOME;
+      } else {
+        process.env.XDG_STATE_HOME = previousXdg;
+      }
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("tags rollouts from isolated any-subagent homes with their own source instance", async () => {
+    const root = await mkdtemp(join(tmpdir(), "agent-metrics-codex-anyagent-sync-"));
+    const isolatedRoot = join(
+      root,
+      "conversations",
+      "224b76ca-979d-4b3e-b529-2ee871dc129e",
+      "provider",
+      "codex-home",
+      "sessions"
+    );
+    const dayRoot = join(isolatedRoot, "2026", "10", "28");
+    const sessionId = "01a1810a-3168-7d32-9023-279f65016206";
+    const rolloutPath = join(dayRoot, `rollout-2026-10-28T13-44-56-${sessionId}.jsonl`);
+    const eventLogPath = join(root, "events.jsonl");
+    const cursorPath = join(root, "codex-cursor.json");
+    const ledgerPath = join(root, "codex-ledger.json");
+    const logsDbPath = join(root, "logs_2.sqlite");
+    const configPath = join(root, "config.toml");
+
+    await mkdir(dayRoot, { recursive: true });
+    await writeFile(configPath, "", "utf8");
+    await writeFile(
+      rolloutPath,
+      JSON.stringify({
+        timestamp: "2026-10-28T13:44:56.000Z",
+        type: "session_meta",
+        payload: {
+          id: sessionId,
+          timestamp: "2026-10-28T13:44:56.000Z",
+          cwd: "D:/projects/dev",
+          model_provider: "ai"
+        }
+      }),
+      "utf8"
+    );
+    const db = new Database(logsDbPath);
+    db.exec(`
+      CREATE TABLE logs (
+        id INTEGER PRIMARY KEY,
+        ts INTEGER NOT NULL DEFAULT 0,
+        level TEXT NOT NULL DEFAULT 'INFO',
+        target TEXT NOT NULL DEFAULT 'codex_otel.log_only',
+        feedback_log_body TEXT,
+        estimated_bytes INTEGER NOT NULL DEFAULT 0
+      );
+    `);
+    db.close();
+
+    await syncCodexRollouts({
+      eventLogPath,
+      cursorPath,
+      ledgerPath,
+      sessionsRoots: [isolatedRoot],
+      logsDbPath,
+      configPath
+    });
+
+    const events = (await readFile(eventLogPath, "utf8"))
+      .trim()
+      .split("\n")
+      .filter((line) => line.length > 0)
+      .map((line) => JSON.parse(line) as { session_id: string; source_instance_id: string });
+
+    expect(events).toEqual([
+      expect.objectContaining({
+        session_id: sessionId,
+        source_instance_id: "codex:any-subagent"
+      })
+    ]);
+
+    await rm(root, { recursive: true, force: true });
+  });
 });

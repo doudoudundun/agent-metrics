@@ -16,12 +16,14 @@ import {
   readAntigravityTimingDbSignature,
   type AntigravityTimingIndex
 } from "./antigravity-timing.js";
+import { readAntigravityConversationWorkspaces } from "./antigravity-workspaces.js";
 
 const ANTIGRAVITY_LEDGER_PREFIX = "antigravity:";
 const TIMING_LEDGER_SUFFIX = ":timing-v1";
 const ACP_DIR_NAME = "antigravity-acp";
 const BRAIN_DIR_NAME = "brain";
 const CONVERSATIONS_DIR_NAME = "conversations";
+const CONVERSATION_SUMMARIES_DB_FILE = "conversation_summaries.db";
 const TRANSCRIPT_PARENT_DIRS = [".system_generated", "logs"];
 const TRANSCRIPT_FILE_NAME = "transcript_full.jsonl";
 
@@ -39,21 +41,38 @@ type AntigravityCursorState = {
 type DiscoveredTranscript = {
   transcriptPath: string;
   conversationDbPath: string;
+  acpRoot: string;
   sessionId: string;
 };
+
+function readOptionalEnv(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : undefined;
+}
 
 export function resolveDefaultAntigravityProvidersRoot(): string {
   return join(homedir(), ".t3", "userdata", "providers", "antigravity");
 }
 
-export function resolveAntigravitySourcePaths(input: { providersRoot?: string } = {}): {
+export function resolveDefaultAntigravityCliHome(): string {
+  return join(homedir(), ".gemini", "antigravity-cli");
+}
+
+export function resolveAntigravitySourcePaths(
+  input: { providersRoot?: string; cliHome?: string } = {}
+): {
   providersRoot: string;
+  cliHome: string | null;
 } {
+  const explicitProvidersRoot =
+    input.providersRoot ?? readOptionalEnv(process.env.AGENT_METRICS_ANTIGRAVITY_PROVIDERS_ROOT);
+  const explicitCliHome =
+    input.cliHome ?? readOptionalEnv(process.env.AGENT_METRICS_ANTIGRAVITY_CLI_HOME);
   return {
-    providersRoot:
-      input.providersRoot ??
-      process.env.AGENT_METRICS_ANTIGRAVITY_PROVIDERS_ROOT ??
-      resolveDefaultAntigravityProvidersRoot()
+    providersRoot: explicitProvidersRoot ?? resolveDefaultAntigravityProvidersRoot(),
+    cliHome:
+      explicitCliHome ??
+      (explicitProvidersRoot === undefined ? resolveDefaultAntigravityCliHome() : null)
   };
 }
 
@@ -74,13 +93,10 @@ export async function syncAntigravityAcpSessions(input: {
   cursorPath: string;
   ledgerPath: string;
   providersRoot?: string;
+  cliHome?: string;
 }): Promise<void> {
   const paths = resolveAntigravitySourcePaths(input);
-  if (!existsSync(paths.providersRoot)) {
-    return;
-  }
-
-  const transcripts = await discoverAntigravityTranscripts(paths.providersRoot);
+  const transcripts = await discoverAntigravityTranscripts(paths);
   if (transcripts.length === 0) {
     return;
   }
@@ -91,6 +107,7 @@ export async function syncAntigravityAcpSessions(input: {
     eventLogPath: input.eventLogPath
   });
   const baselineEventCount = seenEventIds.size;
+  const workspacesByRoot = new Map<string, Map<string, string>>();
   let cursorChanged = false;
 
   for (const transcript of transcripts) {
@@ -110,6 +127,15 @@ export async function syncAntigravityAcpSessions(input: {
       continue;
     }
 
+    let workspaces = workspacesByRoot.get(transcript.acpRoot);
+    if (workspaces === undefined) {
+      workspaces = readAntigravityConversationWorkspaces(
+        join(transcript.acpRoot, CONVERSATION_SUMMARIES_DB_FILE)
+      );
+      workspacesByRoot.set(transcript.acpRoot, workspaces);
+    }
+    const workspacePath = workspaces.get(transcript.sessionId);
+
     const timings =
       timingDbSignature.length > 0
         ? loadAntigravitySessionTimings(transcript.conversationDbPath)
@@ -117,7 +143,8 @@ export async function syncAntigravityAcpSessions(input: {
     const events = await readTranscriptEvents(
       transcript.transcriptPath,
       transcript.sessionId,
-      timings
+      timings,
+      workspacePath
     );
     let sessionStartedEmitted = cursorState.sessions[transcript.sessionId] === true;
     for (const event of events) {
@@ -127,7 +154,8 @@ export async function syncAntigravityAcpSessions(input: {
           seenEventIds,
           normalizeAntigravitySessionStarted({
             sessionId: transcript.sessionId,
-            timestamp: event.timestamp
+            timestamp: event.timestamp,
+            workspacePath
           })
         );
         cursorState.sessions[transcript.sessionId] = true;
@@ -151,32 +179,58 @@ export async function syncAntigravityAcpSessions(input: {
 }
 
 /**
- * Enumerate `providersRoot/<account>/antigravity-acp/brain/<session>/
- * .system_generated/logs/transcript_full.jsonl` across every account alongside
- * its optional sibling `conversations/<session>.db` path. Everything else in
- * the brain tree (statev2, auth, cache, chunks) is deliberately untouched.
+ * Enumerate `<acpRoot>/brain/<session>/.system_generated/logs/transcript_full.jsonl`
+ * across every hosted account (`providersRoot/<account>/antigravity-acp`) and,
+ * when active, the standalone Antigravity CLI home (`~/.gemini/antigravity-cli`),
+ * alongside its optional sibling `conversations/<session>.db` and
+ * `conversation_summaries.db`. Everything else in the brain tree is untouched.
  */
-async function discoverAntigravityTranscripts(providersRoot: string): Promise<DiscoveredTranscript[]> {
+async function discoverAntigravityTranscripts(paths: {
+  providersRoot: string;
+  cliHome: string | null;
+}): Promise<DiscoveredTranscript[]> {
   const transcripts: DiscoveredTranscript[] = [];
-  for (const account of await listDirectories(providersRoot)) {
-    const acpRoot = join(providersRoot, account, ACP_DIR_NAME);
-    const brainRoot = join(acpRoot, BRAIN_DIR_NAME);
-    if (!existsSync(brainRoot)) {
-      continue;
-    }
-    const conversationsRoot = join(acpRoot, CONVERSATIONS_DIR_NAME);
-    for (const session of await listDirectories(brainRoot)) {
-      const transcriptPath = join(brainRoot, session, ...TRANSCRIPT_PARENT_DIRS, TRANSCRIPT_FILE_NAME);
-      if (existsSync(transcriptPath)) {
-        transcripts.push({
-          transcriptPath,
-          conversationDbPath: join(conversationsRoot, `${session}.db`),
-          sessionId: session
-        });
-      }
+  const seenTranscriptPaths = new Set<string>();
+
+  if (existsSync(paths.providersRoot)) {
+    for (const account of await listDirectories(paths.providersRoot)) {
+      await collectAcpRootTranscripts(
+        join(paths.providersRoot, account, ACP_DIR_NAME),
+        transcripts,
+        seenTranscriptPaths
+      );
     }
   }
+
+  if (paths.cliHome !== null && existsSync(paths.cliHome)) {
+    await collectAcpRootTranscripts(paths.cliHome, transcripts, seenTranscriptPaths);
+  }
+
   return transcripts.sort((left, right) => left.transcriptPath.localeCompare(right.transcriptPath));
+}
+
+async function collectAcpRootTranscripts(
+  acpRoot: string,
+  transcripts: DiscoveredTranscript[],
+  seenTranscriptPaths: Set<string>
+): Promise<void> {
+  const brainRoot = join(acpRoot, BRAIN_DIR_NAME);
+  if (!existsSync(brainRoot)) {
+    return;
+  }
+  const conversationsRoot = join(acpRoot, CONVERSATIONS_DIR_NAME);
+  for (const session of await listDirectories(brainRoot)) {
+    const transcriptPath = join(brainRoot, session, ...TRANSCRIPT_PARENT_DIRS, TRANSCRIPT_FILE_NAME);
+    if (existsSync(transcriptPath) && !seenTranscriptPaths.has(transcriptPath)) {
+      seenTranscriptPaths.add(transcriptPath);
+      transcripts.push({
+        transcriptPath,
+        conversationDbPath: join(conversationsRoot, `${session}.db`),
+        acpRoot,
+        sessionId: session
+      });
+    }
+  }
 }
 
 async function listDirectories(root: string): Promise<string[]> {
@@ -203,7 +257,8 @@ async function readFileSignature(filePath: string): Promise<TranscriptFileSignat
 async function readTranscriptEvents(
   transcriptPath: string,
   sessionId: string,
-  timings: AntigravityTimingIndex | undefined
+  timings: AntigravityTimingIndex | undefined,
+  workspacePath: string | undefined
 ): Promise<NormalizedEventV2[]> {
   let contents: string;
   try {
@@ -226,7 +281,7 @@ async function readTranscriptEvents(
       // signature changes again.
       continue;
     }
-    events.push(...normalizeAntigravityTranscriptRecord(parsed, { sessionId, timings }));
+    events.push(...normalizeAntigravityTranscriptRecord(parsed, { sessionId, timings, workspacePath }));
   }
   return events;
 }

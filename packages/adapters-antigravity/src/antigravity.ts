@@ -44,6 +44,7 @@ export function normalizeAntigravityTranscriptRecord(
 export function normalizeAntigravitySessionStarted(input: {
   sessionId: string;
   timestamp: string;
+  workspacePath?: string;
 }): NormalizedEventV2 {
   const event: AnyEvent = {
     event_id: `antigravity:${input.sessionId}:session:started`,
@@ -51,7 +52,7 @@ export function normalizeAntigravitySessionStarted(input: {
     timestamp: input.timestamp,
     source_vendor: ANTIGRAVITY_SOURCE_VENDOR,
     source_adapter: ANTIGRAVITY_SOURCE_ADAPTER,
-    workspace_path: normalizeWorkspacePath(undefined),
+    workspace_path: input.workspacePath ?? normalizeWorkspacePath(undefined),
     type: "session.started"
   };
   return toNormalizedEventV2(event, { sourceRecordId: event.event_id });

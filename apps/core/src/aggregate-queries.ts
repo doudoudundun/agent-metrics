@@ -55,6 +55,13 @@ export type TokenUsageOverviewRow = {
   output_tokens: number;
   cache_creation_input_tokens: number;
   cache_read_input_tokens: number;
+  /**
+   * 1 when the source reported a zero cache read for this row (a measured
+   * miss), NULL otherwise. Only used for sources that cannot tell an unreported
+   * read from a real zero; unmeasured rows are still counted in every token
+   * total, so this never changes what a request costs.
+   */
+  cache_read_reported: number | null;
   source_vendor: SourceVendor;
   usage_measurement: UsageMeasurement;
   usage_source: string;
@@ -69,6 +76,25 @@ export type TokenUsageOverviewRow = {
   decode_duration_ms: number | null;
   first_token_latency_ms: number | null;
 };
+
+/**
+ * Whether a row may enter a cache hit rate. CodeBuddy CLI logs many calls
+ * without any cache figure (auto-permission classifier, web fetch); their
+ * zero is "unknown", not a miss, so they only count once the provider reported
+ * a read (0 included, flagged by `cache_read_reported`). Other sources retain
+ * their existing cache accounting.
+ */
+export function hasCacheEvidence(row: {
+  usage_source: string | null;
+  cache_read_input_tokens: number;
+  cache_read_reported: number | null;
+}): boolean {
+  return (
+    row.usage_source !== "codebuddy-log" ||
+    row.cache_read_input_tokens > 0 ||
+    row.cache_read_reported === 1
+  );
+}
 
 type TokensByModelRow = {
   model: string;
@@ -90,6 +116,7 @@ type TokensByModelRow = {
   avgOutputTokensPerSecond: number | null;
   avgFirstTokenLatencyMs: number | null;
   cacheHitRate: number;
+  cacheableInputTokens?: number;
   speedSampleCount: number;
   ttftSampleCount: number;
 };
@@ -104,6 +131,8 @@ type ModelUsageAccumulator = {
   outputTokens: number;
   cacheReadTokens: number;
   cacheCreationTokens: number;
+  /** Cacheable input of measured rows only; the hit rate denominator. */
+  measuredCacheableInput: number;
   totalTokens: number;
   costUsd: number;
   pricedRows: number;
@@ -212,6 +241,7 @@ export function selectTokenUsageRows(
         output_tokens,
         cache_creation_input_tokens,
         cache_read_input_tokens,
+        cache_read_reported,
         source_vendor,
         usage_measurement,
         usage_source,
@@ -261,6 +291,7 @@ export function selectTokensByModel(
       outputTokens: 0,
       cacheReadTokens: 0,
       cacheCreationTokens: 0,
+      measuredCacheableInput: 0,
       totalTokens: 0,
       costUsd: 0,
       pricedRows: 0,
@@ -275,6 +306,10 @@ export function selectTokensByModel(
     current.outputTokens += row.output_tokens;
     current.cacheReadTokens += row.cache_read_input_tokens;
     current.cacheCreationTokens += row.cache_creation_input_tokens;
+    if (hasCacheEvidence(row)) {
+      current.measuredCacheableInput +=
+        row.input_tokens + row.cache_read_input_tokens + row.cache_creation_input_tokens;
+    }
     current.totalTokens +=
       row.input_tokens +
       row.output_tokens +
@@ -323,10 +358,10 @@ export function selectTokensByModel(
 
   return [...grouped.values()]
     .map((current) => {
-      // Cache hit rate is measured against cacheable input only: output tokens
-      // are never cacheable, so including them would understate every model.
-      const cacheableInput =
-        current.inputTokens + current.cacheReadTokens + current.cacheCreationTokens;
+      // Cache hit rate is measured against cacheable input only (output tokens
+      // are never cacheable) and only over rows whose cache read was measured;
+      // unreported rows stay in the token totals but not in the ratio.
+      const cacheableInput = current.measuredCacheableInput;
 
       return {
         model: current.model,
@@ -344,6 +379,9 @@ export function selectTokensByModel(
           current.decodeMs > 0 ? (current.decodedOutputTokens * 1000) / current.decodeMs : null,
         avgFirstTokenLatencyMs: current.ttftCount > 0 ? current.ttftSumMs / current.ttftCount : null,
         cacheHitRate: cacheableInput > 0 ? current.cacheReadTokens / cacheableInput : 0,
+        ...(cacheableInput !== current.inputTokens + current.cacheReadTokens + current.cacheCreationTokens
+          ? { cacheableInputTokens: cacheableInput }
+          : {}),
         speedSampleCount: current.speedSampleCount,
         ttftSampleCount: current.ttftCount
       };

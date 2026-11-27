@@ -51,7 +51,8 @@ export function TokenTrendPanel({
   const totalTokens = rows.reduce((sum, row) => sum + row.totalTokens, 0);
   const totalCacheRead = rows.reduce((sum, row) => sum + row.cacheReadTokens, 0);
   const totalCacheableInput = rows.reduce(
-    (sum, row) => sum + row.inputTokens + row.cacheReadTokens + row.cacheCreationTokens,
+    (sum, row) =>
+      sum + (row.cacheableInputTokens ?? (row.inputTokens + row.cacheReadTokens + row.cacheCreationTokens)),
     0
   );
   const cacheHitRate = totalCacheableInput > 0 ? totalCacheRead / totalCacheableInput : 0;

@@ -748,4 +748,53 @@ describe("canonical V2 projection", () => {
 
     db.close();
   });
+
+  it("enriches the same CodeBuddy request with a measured zero, billing and then a cache hit", () => {
+    const db = createDb();
+    runDomainMigrations(db);
+    const original = toNormalizedEventV2({
+      event_id: "codebuddy-cli:session-1:usage:message-1",
+      session_id: "session-1",
+      timestamp: "2026-10-27T02:57:36.264Z",
+      source_vendor: "workbuddy",
+      source_adapter: "codebuddy-cli-log",
+      workspace_path: ".",
+      type: "token.usage.recorded",
+      message_id: "message-1",
+      model: "hy4-preview",
+      input_tokens: 100,
+      output_tokens: 5,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 0,
+      server_tool_use: "{}",
+      usage_source: "codebuddy-log"
+    });
+    const reportedMiss = { ...original, cache_read_reported: true, credit: 0.42 } as NormalizedEventV2;
+    const reportedHit = { ...original, cache_read_input_tokens: 75 } as NormalizedEventV2;
+    const readUsage = () =>
+      db
+        .prepare(
+          "SELECT event_id, credit, displayed_input_tokens, cache_read_input_tokens, cache_read_reported FROM usage_events"
+        )
+        .all();
+
+    projectNormalizedEvents(db, [original]);
+    expect(readUsage()[0]).toMatchObject({ cache_read_reported: null, credit: null });
+    expect(projectNormalizedEvents(db, [reportedMiss])[0].conflict).toBe(false);
+    expect(readUsage()[0]).toMatchObject({ cache_read_reported: 1, credit: 0.42 });
+
+    for (const replay of [reportedHit, reportedHit, original, reportedMiss]) {
+      expect(projectNormalizedEvents(db, [replay])[0].conflict).toBe(false);
+    }
+    expect(readUsage()).toEqual([
+      {
+        event_id: original.event_id,
+        credit: 0.42,
+        displayed_input_tokens: 25,
+        cache_read_input_tokens: 75,
+        cache_read_reported: null
+      }
+    ]);
+    db.close();
+  });
 });

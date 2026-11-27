@@ -51,7 +51,7 @@ function workspaceLine(): string {
 
 type ModelCallOptions = {
   inputTokens: number;
-  cachedReadTokens: number;
+  cachedReadTokens?: number;
   cachedWriteTokens?: number;
   sessionId?: string;
 };
@@ -185,6 +185,27 @@ describe("parseCodebuddyLog", () => {
   it("leaves cache at zero when the provider layer logged no figures", () => {
     const scan = parseCodebuddyLog(quaEndLine({ messageId: "msg_a" }), ".");
     expect(scan.requests[0]?.cacheReadTokens).toBe(0);
+  });
+
+  it("keeps the cache read unknown when the telemetry line omits it", () => {
+    const telemetry = modelCallLine({ inputTokens: 24733 });
+    const scan = parseCodebuddyLog(
+      [quaEndLine({ messageId: "msg_a", promptTokens: 24733 }), telemetry].join("\n"),
+      "."
+    );
+    expect(scan.requests[0]).toMatchObject({ cacheReadTokens: 0, cacheReadReported: false });
+  });
+
+  it("keeps a reported zero cache read as a measured miss", () => {
+    const text = [
+      quaEndLine({ messageId: "msg_a", promptTokens: 24733 }),
+      modelCallLine({ inputTokens: 24733, cachedReadTokens: 0 })
+    ].join("\n");
+
+    expect(parseCodebuddyLog(text, ".").requests[0]).toMatchObject({
+      cacheReadTokens: 0,
+      cacheReadReported: true
+    });
   });
 
   it("keeps a single record per message id", () => {
@@ -420,6 +441,59 @@ describe("syncCodebuddyCliLogs", () => {
     expect(usage).toHaveLength(2);
     expect(usage[1]).toMatchObject({ credit: 0.42 });
     expect(usage[0]?.event_id).toBe(usage[1]?.event_id);
+  });
+
+  it("re-emits a request once an explicit zero cache read arrives later", async () => {
+    const root = await mkdtemp(join(tmpdir(), "agent-metrics-codebuddy-log-"));
+    roots.push(root);
+    const logRoot = await writeLog(
+      root,
+      quaEndLine({ messageId: "msg_a", promptTokens: 24733 })
+    );
+    const eventLogPath = join(root, "events.jsonl");
+    const cursorPath = join(root, "cursor.json");
+    const ledgerPath = join(root, "ledger.json");
+
+    await syncCodebuddyCliLogs({ eventLogPath, cursorPath, ledgerPath, logRoot, settleMs: 0 });
+    const before = (await readEvents(eventLogPath)).filter(
+      (event) => event.type === "token.usage.recorded"
+    );
+    expect(before[0]).toMatchObject({ cache_read_input_tokens: 0 });
+    expect(before[0]).not.toHaveProperty("cache_read_reported");
+
+    const dayDir = join(logRoot, "2026-10-27");
+    await writeFile(
+      join(dayDir, "d-projects-dev-demo__cc63707d9.log"),
+      [
+        quaEndLine({ messageId: "msg_a", promptTokens: 24733 }),
+        modelCallLine({ inputTokens: 24733, cachedReadTokens: 0 })
+      ].join("\n") + "\n"
+    );
+
+    await syncCodebuddyCliLogs({ eventLogPath, cursorPath, ledgerPath, logRoot, settleMs: 0 });
+
+    const usage = (await readEvents(eventLogPath)).filter(
+      (event) => event.type === "token.usage.recorded"
+    );
+    expect(usage).toHaveLength(2);
+    expect(usage[1]).toMatchObject({
+      cache_read_input_tokens: 0,
+      cache_read_reported: true
+    });
+    // The ledger key differs, the event identity does not: the projector fills
+    // the stored row in place.
+    expect(usage[1]?.event_id).toBe(usage[0]?.event_id);
+    const ledger = JSON.parse(await readFile(ledgerPath, "utf8")) as { eventIds: string[] };
+    const recordId = String(usage[0]?.source_record_id);
+    expect(ledger.eventIds).toEqual(
+      expect.arrayContaining([recordId, `${recordId}:cache-zero`])
+    );
+
+    // A further pass has nothing new to write.
+    await syncCodebuddyCliLogs({ eventLogPath, cursorPath, ledgerPath, logRoot, settleMs: 0 });
+    expect(
+      (await readEvents(eventLogPath)).filter((event) => event.type === "token.usage.recorded")
+    ).toHaveLength(2);
   });
 
   it("re-emits a request once its cache split arrives later", async () => {

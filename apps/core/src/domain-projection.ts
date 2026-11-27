@@ -5,6 +5,7 @@ import {
 } from "@agent-metrics/event-schema";
 import { displayedInputTokens } from "@agent-metrics/metrics-engine";
 import type { SqliteDatabaseLike } from "./domain-migrations.js";
+import { TOOL_CALL_ID_EXPRESSION, TOOL_EVENT_PREDICATE } from "./domain-schema.js";
 import { recomputeClaudeToolAliases } from "./tool-aliases.js";
 
 type StoredEventRow = {
@@ -128,8 +129,7 @@ function projectOne(
   if (conflict && parsed.type === "token.usage.recorded" && parsed.source_vendor === "workbuddy") {
     const reconciled =
       reconcileWorkbuddyUsageEnrichment(db, parsed) ??
-      reconcileUsageCredit(db, parsed) ??
-      reconcileUsageCache(db, parsed);
+      reconcileUsageDetails(db, parsed);
     if (reconciled !== null) {
       return { eventId: parsed.event_id, semanticFingerprint: reconciled,
         projected: false, idempotent: true, conflict: false };
@@ -252,7 +252,12 @@ function reconcileWorkbuddyUsageEnrichment(
   }
   if (stored.type !== "token.usage.recorded" || row.semantic_fingerprint !== semanticFingerprint(stored)) return null;
   const withoutEnrichment = (value: typeof incoming) => {
-    const { service_tier: _tier, credit: _credit, ...rest } = value;
+    const {
+      service_tier: _tier,
+      credit: _credit,
+      cache_read_reported: _reported,
+      ...rest
+    } = value;
     return { ...rest, first_token_latency_ms: null, decode_duration_ms: null,
       cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
   };
@@ -278,13 +283,21 @@ function reconcileWorkbuddyUsageEnrichment(
   const staleEstimate = storedFirst !== null && incomingFirst === null;
   if (storedFirst !== null && incomingFirst !== null && storedFirst !== incomingFirst) return null;
   if (!promotesToPrecise && !staleEstimate && storedDecode !== null && incomingDecode !== null && storedDecode !== incomingDecode) return null;
-  const merged = { ...stored,
+  const promotesCacheHit =
+    stored.cache_read_input_tokens === 0 && incoming.cache_read_input_tokens > 0;
+  const mergedCacheReported = promotesCacheHit
+    ? incoming.cache_read_reported === true
+    : stored.cache_read_reported === true || incoming.cache_read_reported === true;
+  const { cache_read_reported: _storedReported, ...storedBase } = stored;
+  const merged = {
+    ...storedBase,
     first_token_latency_ms: storedFirst ?? incomingFirst,
     decode_duration_ms: promotesToPrecise ? incomingDecode ?? storedDecode : storedDecode ?? incomingDecode,
     cache_read_input_tokens: stored.cache_read_input_tokens || incoming.cache_read_input_tokens,
     cache_creation_input_tokens: stored.cache_creation_input_tokens || incoming.cache_creation_input_tokens,
     ...((storedTier ?? incomingTier) === null ? {} : { service_tier: storedTier ?? incomingTier }),
-    ...((storedCredit ?? incomingCredit) === null ? {} : { credit: storedCredit ?? incomingCredit })
+    ...((storedCredit ?? incomingCredit) === null ? {} : { credit: storedCredit ?? incomingCredit }),
+    ...(mergedCacheReported ? { cache_read_reported: true as const } : {})
   };
   const fingerprint = semanticFingerprint(merged);
   if (fingerprint !== row.semantic_fingerprint) {
@@ -305,10 +318,10 @@ function reconcileWorkbuddyUsageEnrichment(
       .run(JSON.stringify(merged), fingerprint, incoming.event_id);
     db.prepare(`UPDATE usage_events SET first_token_latency_ms = ?, decode_duration_ms = ?,
       service_tier = ?, credit = ?, cache_read_input_tokens = ?, cache_creation_input_tokens = ?,
-      displayed_input_tokens = ?, semantic_fingerprint = ? WHERE event_id = ?`)
+      displayed_input_tokens = ?, cache_read_reported = ?, semantic_fingerprint = ? WHERE event_id = ?`)
       .run(merged.first_token_latency_ms, merged.decode_duration_ms, storedTier ?? incomingTier,
         storedCredit ?? incomingCredit, merged.cache_read_input_tokens, merged.cache_creation_input_tokens,
-        displayed, fingerprint, incoming.event_id);
+        displayed, merged.cache_read_reported === true ? 1 : null, fingerprint, incoming.event_id);
     db.prepare("UPDATE event_observations SET semantic_fingerprint = ? WHERE event_id = ?")
       .run(fingerprint, incoming.event_id);
   }
@@ -375,71 +388,66 @@ function reconcileAntigravityUsageTiming(
   return fingerprint;
 }
 
-/**
- * A billing line can reach the source log after the request it belongs to, so
- * the first projection may have stored the row without a credit. Patch the
- * credit onto an otherwise identical row instead of recording a conflict.
- */
-function reconcileUsageCredit(
+/** Cache accounting and billing can arrive after the request, or in one replay. */
+function reconcileUsageDetails(
   db: SqliteDatabaseLike,
   incoming: Extract<NormalizedEventV2, { type: "token.usage.recorded" }>
 ): string | null {
-  if (incoming.credit === undefined || incoming.credit === null) return null;
   const row = db.prepare<{ payload_json: string; semantic_fingerprint: string }>(
     "SELECT payload_json, semantic_fingerprint FROM normalized_events WHERE event_id = ?"
   ).get(incoming.event_id);
   if (row === undefined) return null;
   const stored = NormalizedEventV2Schema.parse(JSON.parse(row.payload_json));
   if (stored.type !== "token.usage.recorded") return null;
-  if (stored.credit !== undefined && stored.credit !== null) return null;
-  if (semanticFingerprint(withoutCredit(stored)) !== semanticFingerprint(withoutCredit(incoming))) {
-    return null;
-  }
-  const merged = { ...stored, credit: incoming.credit };
-  const fingerprint = semanticFingerprint(merged);
-  if (fingerprint !== row.semantic_fingerprint) {
-    db.prepare(`UPDATE normalized_events SET payload_json = ?, semantic_fingerprint = ? WHERE event_id = ?`)
-      .run(JSON.stringify(merged), fingerprint, incoming.event_id);
-    db.prepare(`UPDATE usage_events SET credit = ?, semantic_fingerprint = ? WHERE event_id = ?`)
-      .run(merged.credit, fingerprint, incoming.event_id);
-    db.prepare("UPDATE event_observations SET semantic_fingerprint = ? WHERE event_id = ?")
-      .run(fingerprint, incoming.event_id);
-  }
-  return fingerprint;
-}
-
-function withoutCredit<T extends { credit?: number | null }>(value: T): Omit<T, "credit"> {
-  const { credit: _credit, ...rest } = value;
-  return rest;
-}
-
-/**
- * The cache split is logged by the provider layer one line after the usage
- * record, so a request first lands with `cache_read_input_tokens` at 0. For a
- * gross-input source that makes the whole prompt look uncached, inflating the
- * uncached figure by an order of magnitude, so the record is patched as soon as
- * the real split arrives.
- */
-function reconcileUsageCache(
-  db: SqliteDatabaseLike,
-  incoming: Extract<NormalizedEventV2, { type: "token.usage.recorded" }>
-): string | null {
-  if (incoming.cache_read_input_tokens <= 0) return null;
-  const row = db.prepare<{ payload_json: string; semantic_fingerprint: string }>(
-    "SELECT payload_json, semantic_fingerprint FROM normalized_events WHERE event_id = ?"
-  ).get(incoming.event_id);
-  if (row === undefined) return null;
-  const stored = NormalizedEventV2Schema.parse(JSON.parse(row.payload_json));
-  if (stored.type !== "token.usage.recorded") return null;
-  if (stored.cache_read_input_tokens > 0) return null;
-  if (semanticFingerprint(withoutCache(stored)) !== semanticFingerprint(withoutCache(incoming))) {
-    return null;
-  }
-  const merged = {
-    ...stored,
-    cache_read_input_tokens: incoming.cache_read_input_tokens,
-    cache_creation_input_tokens: incoming.cache_creation_input_tokens
+  const comparable = (value: typeof incoming) => {
+    const {
+      credit: _credit,
+      cache_read_input_tokens: _read,
+      cache_creation_input_tokens: _write,
+      cache_read_reported: _reported,
+      ...identity
+    } = value;
+    return identity;
   };
+  if (semanticFingerprint(comparable(stored)) !== semanticFingerprint(comparable(incoming))) {
+    return null;
+  }
+  if (incoming.credit != null && stored.credit != null && incoming.credit !== stored.credit) {
+    return null;
+  }
+  if (
+    stored.cache_read_input_tokens > 0 &&
+    incoming.cache_read_input_tokens > 0 &&
+    stored.cache_read_input_tokens !== incoming.cache_read_input_tokens
+  ) {
+    return null;
+  }
+  const fillsCredit = stored.credit == null && incoming.credit != null;
+  const fillsCache =
+    stored.cache_read_input_tokens === 0 &&
+    (incoming.cache_read_input_tokens > 0 ||
+      (incoming.cache_read_reported === true && stored.cache_read_reported !== true));
+  if (!fillsCredit && !fillsCache) {
+    const oldOrSameCache =
+      (incoming.cache_read_input_tokens === 0 && incoming.cache_creation_input_tokens === 0) ||
+      (incoming.cache_read_input_tokens === stored.cache_read_input_tokens &&
+        incoming.cache_creation_input_tokens === stored.cache_creation_input_tokens);
+    return incoming.usage_source === "codebuddy-log" && oldOrSameCache
+      ? row.semantic_fingerprint
+      : null;
+  }
+  const merged = { ...stored };
+  if (fillsCredit) merged.credit = incoming.credit;
+  if (fillsCache) {
+    merged.cache_read_input_tokens = incoming.cache_read_input_tokens;
+    merged.cache_creation_input_tokens =
+      incoming.cache_creation_input_tokens || stored.cache_creation_input_tokens;
+    if (incoming.cache_read_reported === true) {
+      merged.cache_read_reported = true;
+    } else {
+      delete merged.cache_read_reported;
+    }
+  }
   const fingerprint = semanticFingerprint(merged);
   if (fingerprint === row.semantic_fingerprint) {
     return fingerprint;
@@ -460,25 +468,20 @@ function reconcileUsageCache(
   db.prepare(`UPDATE normalized_events SET payload_json = ?, semantic_fingerprint = ? WHERE event_id = ?`)
     .run(JSON.stringify(merged), fingerprint, incoming.event_id);
   db.prepare(
-    `UPDATE usage_events SET cache_read_input_tokens = ?, cache_creation_input_tokens = ?,
-     displayed_input_tokens = ?, semantic_fingerprint = ? WHERE event_id = ?`
+    `UPDATE usage_events SET credit = ?, cache_read_input_tokens = ?, cache_creation_input_tokens = ?,
+     displayed_input_tokens = ?, cache_read_reported = ?, semantic_fingerprint = ? WHERE event_id = ?`
   ).run(
+    merged.credit ?? null,
     merged.cache_read_input_tokens,
     merged.cache_creation_input_tokens,
     displayed,
+    merged.cache_read_reported === true ? 1 : null,
     fingerprint,
     incoming.event_id
   );
   db.prepare("UPDATE event_observations SET semantic_fingerprint = ? WHERE event_id = ?")
     .run(fingerprint, incoming.event_id);
   return fingerprint;
-}
-
-function withoutCache<
-  T extends { cache_read_input_tokens: number; cache_creation_input_tokens: number }
->(value: T): Omit<T, "cache_read_input_tokens" | "cache_creation_input_tokens"> {
-  const { cache_read_input_tokens: _read, cache_creation_input_tokens: _write, ...rest } = value;
-  return rest;
 }
 
 function prepareServiceTierEnrichment(
@@ -607,22 +610,16 @@ function recomputeToolCall(
       `SELECT event_id, timestamp, event_type, payload_json
        FROM normalized_events
        WHERE source_instance_id = ? AND session_id = ?
-         AND event_type IN ('tool.called', 'tool.succeeded', 'tool.failed')`
+         AND ${TOOL_EVENT_PREDICATE}
+         AND ${TOOL_CALL_ID_EXPRESSION} = ?`
     )
-    .all(event.source_instance_id, event.session_id)
-    .filter((row) => {
-      const candidate = parseToolEvent(row.payload_json);
-      return candidate?.tool_call_id === event.tool_call_id;
-    })
+    .all(event.source_instance_id, event.session_id, event.tool_call_id)
     .sort((left, right) => left.timestamp.localeCompare(right.timestamp) || left.event_id.localeCompare(right.event_id));
 
-  const starts = rows
-    .map((row) => parseToolEvent(row.payload_json))
-    .filter((candidate): candidate is ToolEventPayload => candidate?.type === "tool.called");
-  const terminals = rows
-    .map((row) => parseToolEvent(row.payload_json))
+  const candidates = rows.map((row) => parseToolEvent(row.payload_json));
+  const start = candidates.find((candidate) => candidate?.type === "tool.called") ?? undefined;
+  const terminals = candidates
     .filter((candidate): candidate is ToolEventPayload => candidate?.type === "tool.succeeded" || candidate?.type === "tool.failed");
-  const start = starts[0];
   // Prefer a name-matched succeeded terminal over failed. Historical codex
   // misclassifications may leave both after an adapter fix re-emits success;
   // a real tool_call_id should not end as failed if any terminal reported success.
@@ -750,8 +747,8 @@ function projectUsage(
       provider_host, input_token_semantics, usage_measurement, raw_input_tokens,
       displayed_input_tokens, output_tokens, cache_creation_input_tokens,
       cache_read_input_tokens, server_tool_use, usage_source, service_tier,
-      first_token_latency_ms, decode_duration_ms, credit, semantic_fingerprint
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      first_token_latency_ms, decode_duration_ms, credit, cache_read_reported, semantic_fingerprint
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     event.event_id,
     event.schema_version,
@@ -777,6 +774,7 @@ function projectUsage(
     event.first_token_latency_ms ?? null,
     event.decode_duration_ms ?? null,
     event.credit ?? null,
+    event.cache_read_reported === true ? 1 : null,
     semanticFingerprint(event)
   );
 }

@@ -289,6 +289,10 @@ function normalizeAssistantMessage(
   }
 
   const providerData = asRecord(record.providerData);
+  const rawCredit = asRecord(providerData?.rawUsage)?.credit;
+  const credit = typeof rawCredit === "number" && Number.isFinite(rawCredit) && rawCredit >= 0
+    ? rawCredit
+    : undefined;
   const model = readString(providerData?.model) ?? state.lastModel;
   if (model !== null) {
     state.lastModel = model;
@@ -343,6 +347,10 @@ function normalizeUsage(
     return [];
   }
 
+  const rawCredit = asRecord(providerData?.rawUsage)?.credit;
+  const credit = typeof rawCredit === "number" && Number.isFinite(rawCredit) && rawCredit >= 0
+    ? rawCredit
+    : undefined;
   const model = readString(providerData?.model) ?? state.lastModel;
   if (model !== null) {
     state.lastModel = model;
@@ -374,6 +382,7 @@ function normalizeUsage(
       output_tokens: outputTokens,
       cache_creation_input_tokens: cacheWriteTokens,
       cache_read_input_tokens: cacheReadTokens,
+      credit,
       server_tool_use: "{}",
       usage_source: "workbuddy-usage",
       provider_id: "unknown",

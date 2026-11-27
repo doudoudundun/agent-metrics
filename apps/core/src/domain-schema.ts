@@ -1,5 +1,9 @@
 import type { SqliteDatabaseLike } from "./domain-types.js";
 
+export const TOOL_EVENT_PREDICATE = "event_type IN ('tool.called', 'tool.succeeded', 'tool.failed')";
+export const TOOL_CALL_ID_EXPRESSION =
+  "CASE WHEN json_valid(payload_json) THEN json_extract(payload_json, '$.tool_call_id') END";
+
 export function createCanonicalSchema(db: SqliteDatabaseLike): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS source_instances (
@@ -131,6 +135,9 @@ export function createCanonicalSchema(db: SqliteDatabaseLike): void {
       -- than a priced token table (WorkBuddy, CodeBuddy). NULL when the source
       -- could not attribute a credit to the request.
       credit REAL,
+      -- 1 distinguishes a reported zero from an unreported cache read.
+      -- A positive cache read is already a measurement.
+      cache_read_reported INTEGER CHECK (cache_read_reported IN (0, 1)),
       semantic_fingerprint TEXT NOT NULL
     );
 
@@ -160,6 +167,9 @@ export function createCanonicalSchema(db: SqliteDatabaseLike): void {
       ON domain_sessions (source_instance_id, started_at);
     CREATE INDEX IF NOT EXISTS idx_normalized_events_source_timestamp
       ON normalized_events (source_instance_id, timestamp);
+    CREATE INDEX IF NOT EXISTS idx_normalized_events_tool_call
+      ON normalized_events (source_instance_id, session_id, ${TOOL_CALL_ID_EXPRESSION})
+      WHERE ${TOOL_EVENT_PREDICATE};
     CREATE INDEX IF NOT EXISTS idx_normalized_events_event_fingerprint
       ON normalized_events (event_id, semantic_fingerprint);
     CREATE INDEX IF NOT EXISTS idx_event_observations_adapter_event
@@ -299,13 +309,24 @@ function quoteIdentifier(value: string): string {
  * transcript entries that share a provider message id across sessions.
  */
 export function ensureAdditiveUsageSchema(db: SqliteDatabaseLike): void {
+  const hasCacheReported = db
+    .prepare<{ name: string }>("PRAGMA table_info(usage_events)")
+    .all()
+    .some((column) => column.name === "cache_read_reported");
   const view = db.prepare<{ sql: string }>(
     "SELECT sql FROM sqlite_master WHERE type = 'view' AND name = 'additive_usage_events'"
   ).get();
-  // Upgrade the pre-credit local view without touching its raw usage facts.
-  if (view && !view.sql.includes("canonical.credit IS usage.credit")) {
+  // Upgrade the pre-credit/pre-cache-reported local view without touching its raw usage facts.
+  if (
+    view &&
+    (!view.sql.includes("canonical.credit IS usage.credit") ||
+      (hasCacheReported && !view.sql.includes("canonical.cache_read_reported IS usage.cache_read_reported")))
+  ) {
     db.exec("DROP VIEW additive_usage_events");
   }
+  const cacheReportedClause = hasCacheReported
+    ? "\n           AND canonical.cache_read_reported IS usage.cache_read_reported"
+    : "";
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_usage_events_workbuddy_message
       ON usage_events (source_instance_id, message_id, event_id)
@@ -341,7 +362,7 @@ export function ensureAdditiveUsageSchema(db: SqliteDatabaseLike): void {
            AND canonical.cache_creation_input_tokens IS usage.cache_creation_input_tokens
            AND canonical.cache_read_input_tokens IS usage.cache_read_input_tokens
            AND canonical.server_tool_use IS usage.server_tool_use
-           AND canonical.credit IS usage.credit
+           AND canonical.credit IS usage.credit${cacheReportedClause}
        );
   `);
 }

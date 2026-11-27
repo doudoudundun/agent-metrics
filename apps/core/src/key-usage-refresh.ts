@@ -33,13 +33,27 @@ export function startOfficialKeyUsageRefreshLoop(
     }
     inFlight = true;
     try {
-      await collectKimicodeKeyUsage(db, { log: options.log });
-      await collectZCodeApiKeyUsage(db, { log: options.log });
-      await collectAntigravityKeyUsage(db, { log: options.log });
-    } catch (error) {
-      options.log?.warn(
-        `official key usage refresh failed: ${error instanceof Error ? error.message : String(error)}`
-      );
+      try {
+        await collectKimicodeKeyUsage(db, { log: options.log });
+      } catch (error) {
+        options.log?.warn(
+          `kimicode key usage refresh failed: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+      try {
+        await collectZCodeApiKeyUsage(db, { log: options.log });
+      } catch (error) {
+        options.log?.warn(
+          `zcode key usage refresh failed: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+      try {
+        await collectAntigravityKeyUsage(db, { log: options.log });
+      } catch (error) {
+        options.log?.warn(
+          `antigravity key usage refresh failed: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
     } finally {
       inFlight = false;
     }

@@ -314,7 +314,6 @@ export function DashboardPage() {
   );
   const statusLabel = formatDashboardStatusLabel(status);
   const scopeLabel = buildScopeLabel(scope);
-  const showCursorOfficialUsage = sourceVendor === "cursor" || sourceVendor === "all";
 
   return (
     <main className="dashboard-page">
@@ -517,17 +516,15 @@ export function DashboardPage() {
                 : null
             }
             leadCards={
-              showCursorOfficialUsage ? (
-                <CursorQuotaCard
-                  usage={cursorUsageQuery.data ?? null}
-                  loading={cursorUsageQuery.status === "loading"}
-                  errorMessage={
-                    cursorUsageQuery.status === "error"
-                      ? cursorUsageQuery.error?.message ?? "Unable to load Cursor official usage."
-                      : null
+              <CursorQuotaCard
+                usage={cursorUsageQuery.data ?? null}
+                loading={cursorUsageQuery.status === "loading"}
+                errorMessage={
+                  cursorUsageQuery.status === "error"
+                    ? cursorUsageQuery.error?.message ?? "Unable to load Cursor official usage."
+                    : null
                 }
-                />
-              ) : null
+              />
             }
           />
         </div>

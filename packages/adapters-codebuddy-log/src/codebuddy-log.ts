@@ -1,5 +1,10 @@
 import { normalizeWorkspacePath, toNormalizedEventV2 } from "@agent-metrics/event-schema";
-import type { AnyEvent, NormalizedEventV2, SourceAdapter, SourceVendor } from "@agent-metrics/event-schema";
+import type {
+  NormalizedEventV2,
+  SourceAdapter,
+  SourceVendor,
+  TokenUsageRecordedEvent
+} from "@agent-metrics/event-schema";
 
 /**
  * CodeBuddy CLI keeps a per-process request log under
@@ -57,6 +62,13 @@ export type CodebuddyLogRequest = {
   decodeDurationMs: number | null;
   /** Cached prompt tokens reported by the provider layer; 0 when it logged none. */
   cacheReadTokens: number;
+  /**
+   * Whether the provider layer's completion line carried `cached_read_tokens`
+   * (0 included). Many requests (auto mode classifier, web fetch) only log
+   * `qua.end`: their cache read is unknown, not zero, and must not count as a
+   * cache miss.
+   */
+  cacheReadReported: boolean;
   cacheCreationTokens: number;
   /** Credit units billed for this request; null when the log reported none. */
   credit: number | null;
@@ -199,6 +211,7 @@ export function parseCodebuddyLog(text: string, fallbackWorkspace: string): Code
       firstTokenLatencyMs: ttft,
       decodeDurationMs,
       cacheReadTokens: previous?.cacheReadTokens ?? 0,
+      cacheReadReported: previous?.cacheReadReported ?? false,
       cacheCreationTokens: previous?.cacheCreationTokens ?? 0,
       credit: previous?.credit ?? null
     });
@@ -261,7 +274,7 @@ export function normalizeCodebuddyLogSessionHeader(header: {
 }
 
 export function normalizeCodebuddyLogRequest(request: CodebuddyLogRequest): NormalizedEventV2 {
-  const event: AnyEvent = {
+  const event: TokenUsageRecordedEvent = {
     event_id: buildEventId(request.sessionId, `usage:${request.messageId}`),
     session_id: request.sessionId,
     timestamp: new Date(request.timestamp).toISOString(),
@@ -282,7 +295,12 @@ export function normalizeCodebuddyLogRequest(request: CodebuddyLogRequest): Norm
     decode_duration_ms: request.decodeDurationMs,
     provider_id: "unknown",
     provider_base_url: null,
-    provider_host: null
+    provider_host: null,
+    // Absent when the provider never reported a cache read: the value is then
+    // unknown, not a measured miss. A positive figure is measured by itself.
+    ...(request.cacheReadReported && request.cacheReadTokens === 0
+      ? { cache_read_reported: true }
+      : {})
   };
   return toNormalizedEventV2(event, { sourceRecordId: `codebuddy-cli:usage:${request.messageId}` });
 }
@@ -355,10 +373,16 @@ function applyCacheAccounting(
   if (request === undefined) {
     return;
   }
+  // Only a reported `cached_read_tokens` (0 included) is evidence of a
+  // measurement; a completed line without it leaves the cache read unknown.
+  const cachedRead = readNonNegativeInt(payload.cached_read_tokens);
   // Gross input must stay >= cache-read; clamp so a mismatched pairing cannot
   // produce an event the schema rejects.
   const limit = request.promptTokens;
-  request.cacheReadTokens = Math.min(readNonNegativeInt(payload.cached_read_tokens) ?? 0, limit);
+  if (cachedRead !== null) {
+    request.cacheReadReported = true;
+    request.cacheReadTokens = Math.min(cachedRead, limit);
+  }
   request.cacheCreationTokens = Math.min(
     readNonNegativeInt(payload.cached_write_tokens) ?? 0,
     limit

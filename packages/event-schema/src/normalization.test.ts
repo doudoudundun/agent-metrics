@@ -122,6 +122,48 @@ describe("legacy event normalization", () => {
       })
     );
   });
+
+  it("maps legacy zcode-db opencode rows to zcode and preserves optional metadata", () => {
+    const started = normalizeEventV2({
+      event_id: "codex-started-1",
+      session_id: "session-1",
+      timestamp: "2026-11-23T10:00:00.000Z",
+      source_vendor: "codex",
+      source_adapter: "codex-rollout",
+      workspace_path: ".",
+      type: "session.started",
+      originator: "codex_exec"
+    });
+    expect(started.ok).toBe(true);
+    if (started.ok && started.event.type === "session.started") {
+      expect(started.event.originator).toBe("codex_exec");
+    }
+
+    const zcodeUsage = normalizeEventV2({
+      event_id: "zcode-usage-1",
+      session_id: "session-1",
+      timestamp: "2026-11-23T10:00:01.000Z",
+      source_vendor: "opencode",
+      source_adapter: "zcode-db",
+      workspace_path: ".",
+      type: "token.usage.recorded",
+      message_id: "message-1",
+      model: "glm-5",
+      input_tokens: 100,
+      output_tokens: 10,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 0,
+      cache_read_reported: true,
+      server_tool_use: "{}",
+      usage_source: "opencode-message"
+    });
+    expect(zcodeUsage.ok).toBe(true);
+    if (zcodeUsage.ok && zcodeUsage.event.type === "token.usage.recorded") {
+      expect(zcodeUsage.event.source_vendor).toBe("zcode");
+      expect(zcodeUsage.event.source_instance_id).toBe("zcode:default");
+      expect(zcodeUsage.event.cache_read_reported).toBe(true);
+    }
+  });
 });
 
 describe("toNormalizedEventV2", () => {

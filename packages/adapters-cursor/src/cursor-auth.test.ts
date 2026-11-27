@@ -1,4 +1,5 @@
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
@@ -66,5 +67,37 @@ describe("readCursorAuthCredentials", () => {
     db.close();
 
     expect(readCursorAuthCredentials(dbPath)).toBeNull();
+  });
+
+  it("uses an existing CLI session only when it matches the encrypted IDE account", async () => {
+    const root = await mkdtemp(join(tmpdir(), "agent-metrics-cursor-auth-"));
+    roots.push(root);
+    const dbPath = join(root, "state.vscdb");
+    const authPath = join(root, "auth.json");
+    const db = new Database(dbPath);
+    try {
+      db.exec("CREATE TABLE ItemTable (key TEXT PRIMARY KEY, value TEXT)");
+      const insert = db.prepare("INSERT INTO ItemTable (key, value) VALUES (?, ?)");
+      insert.run("cursorAuth/accessToken", "cursor-safe-storage:v1:encrypted-access");
+      insert.run("cursorAuth/refreshToken", "cursor-safe-storage:v1:encrypted-refresh");
+      insert.run("cursorAuth/cachedScopedProfile", JSON.stringify({ authId: "account-1" }));
+      insert.run("cursorAuth/cachedEmail", "dev@example.com");
+    } finally {
+      db.close();
+    }
+
+    expect(readCursorAuthCredentials(dbPath, authPath)).toBeNull();
+
+    const createToken = (sub: string) => `header.${Buffer.from(JSON.stringify({ sub })).toString("base64url")}.signature`;
+    await writeFile(authPath, JSON.stringify({ accessToken: createToken("account-2") }));
+    expect(readCursorAuthCredentials(dbPath, authPath)).toBeNull();
+
+    const accessToken = createToken("account-1");
+    await writeFile(authPath, JSON.stringify({ accessToken, refreshToken: "cli-refresh-token" }));
+    expect(readCursorAuthCredentials(dbPath, authPath)).toMatchObject({
+      accessToken,
+      refreshToken: null,
+      email: "dev@example.com"
+    });
   });
 });

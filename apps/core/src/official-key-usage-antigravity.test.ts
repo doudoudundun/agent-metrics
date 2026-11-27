@@ -335,6 +335,69 @@ describe("readAntigravityCredentials", () => {
       accessToken: "keyring-tok"
     });
   });
+
+  it("falls back to standalone CLI home antigravity-oauth-token when profile credentials are absent", async () => {
+    const providersRoot = await makeTempRoot("agent-metrics-agy-empty-prov-");
+    const cliHome = await makeTempRoot("agent-metrics-agy-standalone-cli-");
+    await mkdir(join(cliHome, "cache"), { recursive: true });
+    await writeFile(
+      join(cliHome, "cache", "acp-auth-state.json"),
+      JSON.stringify({ methodId: "oauth-business" })
+    );
+    await writeFile(
+      join(cliHome, "antigravity-oauth-token"),
+      JSON.stringify({
+        token: {
+          access_token: "standalone-cli-tok",
+          refresh_token: "standalone-refresh-tok",
+          expiry: "2026-11-25T03:00:00Z"
+        }
+      })
+    );
+
+    const creds = await readAntigravityCredentials({ providersRoot, cliHome });
+    expect(creds).toEqual({
+      kind: "cli-token",
+      authMethod: "oauth-business",
+      accessToken: "standalone-cli-tok",
+      refreshToken: "standalone-refresh-tok",
+      expiresAt: Date.parse("2026-11-25T03:00:00.000Z"),
+      clientId: null,
+      clientSecret: null,
+      projectId: null
+    });
+  });
+
+  it("reads standalone CLI home token via AGENT_METRICS_ANTIGRAVITY_CLI_HOME", async () => {
+    const providersRoot = await makeTempRoot("agent-metrics-agy-empty-prov-env-");
+    const cliHome = await makeTempRoot("agent-metrics-agy-cli-env-");
+    const previousCliHome = process.env.AGENT_METRICS_ANTIGRAVITY_CLI_HOME;
+    process.env.AGENT_METRICS_ANTIGRAVITY_CLI_HOME = cliHome;
+    try {
+      await writeFile(
+        join(cliHome, "antigravity-oauth-token"),
+        JSON.stringify({
+          token: {
+            access_token: "env-cli-tok",
+            expiry: "2026-11-25T04:00:00Z"
+          }
+        })
+      );
+
+      const creds = await readAntigravityCredentials({ providersRoot });
+      expect(creds).toMatchObject({
+        kind: "cli-token",
+        authMethod: "oauth-personal",
+        accessToken: "env-cli-tok"
+      });
+    } finally {
+      if (previousCliHome === undefined) {
+        delete process.env.AGENT_METRICS_ANTIGRAVITY_CLI_HOME;
+      } else {
+        process.env.AGENT_METRICS_ANTIGRAVITY_CLI_HOME = previousCliHome;
+      }
+    }
+  });
 });
 
 describe("collectAntigravityKeyUsage", () => {

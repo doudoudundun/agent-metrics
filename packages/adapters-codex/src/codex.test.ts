@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { NormalizedEventV2Schema } from "@agent-metrics/event-schema";
-import { extractCodexEventsFromRollout } from "./codex.js";
+import { createCodexRolloutParser, extractCodexEventsFromRollout } from "./codex.js";
 import { codexTurnMetadataKey } from "./turn-metadata.js";
 
 describe("extractCodexEventsFromRollout", () => {
@@ -1743,5 +1743,103 @@ describe("extractCodexEventsFromRollout", () => {
         source_instance_id: "codex:multica"
       })
     );
+  });
+
+  it("attributes a spawned rollout's counters to the child and recovers a response omitted by the counter", () => {
+    const child = "019e5dc9-b10c-7371-8edd-066e8db7e50d";
+    const parent = "019e5dc9-b10c-7371-8edd-066e8db7e50e";
+    const usage = { input_tokens: 100, output_tokens: 15, total_tokens: 115 };
+    const rows = [
+      { type: "session_meta", payload: { id: child, source: { subagent: { thread_spawn: { parent_thread_id: parent } } } } },
+      { type: "session_meta", payload: { id: parent } },
+      { type: "token_usage_record", payload: { response_id: "resp_counted", usage } },
+      { type: "event_msg", payload: { type: "token_count", info: { last_token_usage: usage, total_token_usage: usage } } },
+      { type: "token_usage_record", payload: { response_id: "resp_missing", usage } },
+      { type: "event_msg", payload: { type: "token_count", info: {
+        last_token_usage: { input_tokens: 0, output_tokens: 0, total_tokens: 50 }, total_token_usage: usage
+      } } }
+    ];
+    const events = extractCodexEventsFromRollout({
+      filePath: `rollout-2026-10-28T10-00-00-${child}.jsonl`,
+      contents: rows.map((row, index) => JSON.stringify({
+        ...row, timestamp: `2026-10-28T10:00:00.00${index}Z`
+      })).join("\n")
+    }).filter((event) => event.type === "token.usage.recorded");
+    expect(events.map((event) => [event.session_id, event.message_id, event.input_tokens])).toEqual([
+      [child, "usage_115", 100],
+      [child, "usage_resp_missing", 100]
+    ]);
+  });
+
+  it("preserves childUsageMeta and pendingMirror across streaming checkpoint boundaries", () => {
+    const child = "019e5dc9-b10c-7371-8edd-066e8db7e50d";
+    const parent = "019e5dc9-b10c-7371-8edd-066e8db7e50e";
+    const usage = { input_tokens: 100, output_tokens: 15, total_tokens: 115 };
+    const lines = [
+      { type: "session_meta", payload: { id: child, cwd: "D:/child", source: { subagent: { thread_spawn: { parent_thread_id: parent } } } } },
+      { type: "session_meta", payload: { id: parent, cwd: "D:/parent" } },
+      { type: "token_usage_record", payload: { response_id: "resp_counted", usage } },
+      { type: "event_msg", payload: { type: "token_count", info: { last_token_usage: usage, total_token_usage: usage } } },
+      { type: "token_usage_record", payload: { response_id: "resp_missing", usage } },
+      { type: "event_msg", payload: { type: "token_count", info: {
+        last_token_usage: { input_tokens: 0, output_tokens: 0, total_tokens: 50 }, total_token_usage: usage
+      } } }
+    ].map((row, index) => JSON.stringify({ ...row, timestamp: `2026-10-28T10:00:00.00${index}Z` }));
+    const options = { filePath: `rollout-2026-10-28T10-00-00-${child}.jsonl` };
+    const expected = extractCodexEventsFromRollout({ ...options, contents: lines.join("\n") });
+
+    for (let split = 0; split <= lines.length; split += 1) {
+      const first = createCodexRolloutParser(options);
+      const collected = [...first.parseLines(lines.slice(0, split))];
+      const checkpoint = JSON.parse(JSON.stringify(first.checkpoint())) as ReturnType<typeof first.checkpoint>;
+      const second = createCodexRolloutParser(options, checkpoint);
+      collected.push(...second.parseLines(lines.slice(split)), ...second.flush());
+      expect(collected, `split at ${split}`).toEqual(expected);
+    }
+  });
+
+  it("records the session originator on session.started", () => {
+    const sessionId = "019e5dc9-b10c-7371-8edd-066e8db7e50d";
+    const events = extractCodexEventsFromRollout({
+      filePath: `rollout-2026-11-23T10-00-00-${sessionId}.jsonl`,
+      contents: JSON.stringify({
+        timestamp: "2026-11-23T10:00:00.000Z",
+        type: "session_meta",
+        payload: {
+          id: sessionId,
+          timestamp: "2026-11-23T10:00:00.000Z",
+          cwd: "D:/projects/dev",
+          originator: "codex_exec"
+        }
+      })
+    });
+    const started = events.find((event) => event.type === "session.started");
+    expect(started).toMatchObject({ originator: "codex_exec" });
+    expect(NormalizedEventV2Schema.safeParse(started).success).toBe(true);
+  });
+
+  it("keeps a spawned rollout's non-usage events on the child after the parent meta", () => {
+    const child = "019e5dc9-b10c-7371-8edd-066e8db7e50d";
+    const parent = "019e5dc9-b10c-7371-8edd-066e8db7e50e";
+    const rows = [
+      { type: "session_meta", payload: { id: child, cwd: "D:/child", source: { subagent: { thread_spawn: { parent_thread_id: parent } } } } },
+      { type: "session_meta", payload: { id: parent, cwd: "D:/parent" } },
+      { type: "event_msg", payload: { type: "user_message", message: "child prompt" } },
+      { type: "event_msg", payload: { type: "agent_message", message: "child reply" } },
+      { type: "response_item", payload: { type: "custom_tool_call", call_id: "call-1", name: "Read", input: "{}" } },
+      { type: "response_item", payload: { type: "custom_tool_call_output", call_id: "call-1", output: "Exit code: 0" } }
+    ];
+    const events = extractCodexEventsFromRollout({
+      filePath: `rollout-2026-10-28T10-00-00-${child}.jsonl`,
+      contents: rows.map((row, index) => JSON.stringify({
+        ...row, timestamp: `2026-10-28T10:00:00.00${index}Z`
+      })).join("\n")
+    });
+    const nonUsage = events.filter((event) => event.type !== "session.started");
+    expect(nonUsage.length).toBeGreaterThan(0);
+    for (const event of nonUsage) {
+      expect(event.session_id).toBe(child);
+      expect(event.workspace_path).toBe("D:/child");
+    }
   });
 });

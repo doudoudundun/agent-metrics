@@ -6,6 +6,7 @@ type OverviewResponse = {
   outputTokens: number;
   cacheReadTokens: number;
   cacheCreationTokens: number;
+  cacheableInputTokens?: number;
   turnCount: number;
   responseCount: number;
   totalToolCalls: number;
@@ -88,7 +89,7 @@ export function KpiGrid({ overview, scopeLabel }: KpiGridProps) {
   const cacheTokens = overview.cacheReadTokens + overview.cacheCreationTokens;
   // Cacheable input only: output tokens are never cacheable, so counting them
   // would understate the hit rate.
-  const cacheableInput = overview.inputTokens + cacheTokens;
+  const cacheableInput = overview.cacheableInputTokens ?? (overview.inputTokens + cacheTokens);
   const cacheHitRate = cacheableInput > 0 ? overview.cacheReadTokens / cacheableInput : 0;
   const displayedToolCalls = resolveDisplayedToolCalls(overview);
   const primaryItems: Array<{

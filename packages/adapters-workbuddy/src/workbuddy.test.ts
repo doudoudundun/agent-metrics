@@ -101,7 +101,8 @@ describe("normalizeWorkbuddyRecord", () => {
             prompt_tokens: 1000,
             completion_tokens: 50,
             prompt_cache_hit_tokens: 800,
-            prompt_cache_write_tokens: 0
+            prompt_cache_write_tokens: 0,
+            credit: 0.53
           }
         }
       },
@@ -151,6 +152,7 @@ describe("normalizeWorkbuddyRecord", () => {
         output_tokens: 50,
         cache_read_input_tokens: 800,
         cache_creation_input_tokens: 0,
+        credit: 0.53,
         input_token_semantics: "gross"
       })
     );
@@ -163,6 +165,31 @@ describe("normalizeWorkbuddyRecord", () => {
       expect(event.source_instance_id).toBe("workbuddy:default");
     }
   });
+
+  it.each([0, undefined, null, -1, Infinity, true])(
+    "only records valid reported credit: %s",
+    (credit) => {
+      const events = normalizeWorkbuddyRecord(
+        {
+          id: "asst_with_usage",
+          timestamp: 1_792_463_891_326,
+          type: "message",
+          role: "assistant",
+          providerData: {
+            usage: { inputTokens: 1000, outputTokens: 50 },
+            rawUsage: { credit }
+          }
+        },
+        SESSION_ID,
+        WORKSPACE,
+        createWorkbuddyParseState()
+      );
+
+      const usage = events.find((event) => event.type === "token.usage.recorded");
+      expect(usage).toMatchObject({ input_tokens: 1000, output_tokens: 50 });
+      expect(usage?.credit).toBe(credit === 0 ? 0 : undefined);
+    }
+  );
 
   it("derives a step decode window from record timestamps", () => {
     const state = createWorkbuddyParseState();

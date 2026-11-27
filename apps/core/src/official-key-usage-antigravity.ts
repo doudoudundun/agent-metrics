@@ -76,6 +76,7 @@ export type AntigravityCredentials =
 
 export type CollectAntigravityKeyUsageOptions = {
   providersRoot?: string;
+  cliHome?: string;
   dailyEndpoint?: string;
   prodEndpoint?: string;
   oauthTokenUrl?: string;
@@ -321,6 +322,7 @@ export function parseAntigravityAvailableModels(
 export async function readAntigravityCredentials(
   options: {
     providersRoot?: string;
+    cliHome?: string;
     readKeyringSecret?: () => Promise<string | null>;
   } = {}
 ): Promise<AntigravityCredentials | null> {
@@ -330,10 +332,30 @@ export async function readAntigravityCredentials(
     return profileCredentials;
   }
 
+  const allowDefaultLocalFallback =
+    options.providersRoot === undefined &&
+    readNonEmptyString(process.env.AGENT_METRICS_ANTIGRAVITY_PROVIDERS_ROOT) === null;
+  const cliHome =
+    options.cliHome ??
+    readNonEmptyString(process.env.AGENT_METRICS_ANTIGRAVITY_CLI_HOME) ??
+    (allowDefaultLocalFallback ? resolveDefaultCliHome() : null);
+  if (cliHome !== null) {
+    const cliTokenPath = join(cliHome, CLI_TOKEN_FILE);
+    if (existsSync(cliTokenPath)) {
+      const raw = readFileUtf8(cliTokenPath);
+      const authMethod = readAuthMethod(join(cliHome, AUTH_STATE_REL_PATH)) ?? "oauth-personal";
+      const parsed = raw === null ? null : parseCliTokenCredentials(raw, authMethod);
+      if (parsed !== null) {
+        return parsed;
+      }
+    }
+  }
+
   const allowSystemKeyring =
     options.readKeyringSecret !== undefined ||
-    (options.providersRoot === undefined &&
-      readNonEmptyString(process.env.AGENT_METRICS_ANTIGRAVITY_PROVIDERS_ROOT) === null);
+    (allowDefaultLocalFallback &&
+      options.cliHome === undefined &&
+      readNonEmptyString(process.env.AGENT_METRICS_ANTIGRAVITY_CLI_HOME) === null);
   if (!allowSystemKeyring) {
     return null;
   }
@@ -372,6 +394,7 @@ export async function collectAntigravityKeyUsage(
 
   const credentials = await readAntigravityCredentials({
     providersRoot: options.providersRoot,
+    cliHome: options.cliHome,
     readKeyringSecret: options.readKeyringSecret
   });
   if (credentials === null) {
@@ -927,6 +950,10 @@ function resolveDefaultProvidersRoot(): string {
     readNonEmptyString(process.env.AGENT_METRICS_ANTIGRAVITY_PROVIDERS_ROOT) ??
     join(homedir(), ".t3", "userdata", "providers", "antigravity")
   );
+}
+
+function resolveDefaultCliHome(): string {
+  return join(homedir(), ".gemini", "antigravity-cli");
 }
 
 function antigravityUserAgent(): string {

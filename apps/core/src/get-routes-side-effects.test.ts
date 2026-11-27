@@ -11,6 +11,7 @@ import * as dshAdapter from "@agent-metrics/adapters-dsh";
 import * as cursorAdapter from "@agent-metrics/adapters-cursor";
 import * as workbuddyAdapter from "@agent-metrics/adapters-workbuddy";
 import * as codebuddyLogAdapter from "@agent-metrics/adapters-codebuddy-log";
+import * as antigravityAdapter from "@agent-metrics/adapters-antigravity";
 import { appendJsonLine } from "@agent-metrics/shared-utils";
 import { buildApp } from "./app.js";
 import * as eventLogProjector from "./event-log-projector.js";
@@ -52,6 +53,9 @@ describe("GET routes have no synchronization side effects", () => {
     const codebuddyLogSpy = vi
       .spyOn(codebuddyLogAdapter, "syncCodebuddyCliLogs")
       .mockResolvedValue({ filesScanned: 0, requestsWritten: 0, requestsSkippedAsDuplicate: 0 });
+    const antigravitySpy = vi
+      .spyOn(antigravityAdapter, "syncAntigravityAcpSessions")
+      .mockResolvedValue(undefined);
     const ingestSpy = vi.spyOn(eventLogProjector, "ingestEventLog");
 
     const app = buildApp({
@@ -78,6 +82,7 @@ describe("GET routes have no synchronization side effects", () => {
     cursorSpy.mockClear();
     workbuddySpy.mockClear();
     codebuddyLogSpy.mockClear();
+    antigravitySpy.mockClear();
     ingestSpy.mockClear();
 
     const triggerSpy = vi.spyOn(app.syncCoordinator, "trigger");
@@ -119,6 +124,7 @@ describe("GET routes have no synchronization side effects", () => {
     expect(cursorSpy).not.toHaveBeenCalled();
     expect(workbuddySpy).not.toHaveBeenCalled();
     expect(codebuddyLogSpy).not.toHaveBeenCalled();
+    expect(antigravitySpy).not.toHaveBeenCalled();
     expect(ingestSpy).not.toHaveBeenCalled();
     expect(triggerSpy).not.toHaveBeenCalled();
     expect(manualSyncSpy).not.toHaveBeenCalled();

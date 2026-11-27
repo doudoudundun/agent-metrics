@@ -9,6 +9,47 @@ import {
 } from "./transcript-sync.js";
 
 describe("syncKnownClaudeTranscripts", () => {
+  it("collects a registered session's child transcript once without root discovery", async () => {
+    const repoRoot = await mkdtemp(join(tmpdir(), "agent-metrics-transcript-sync-"));
+    const transcriptPath = join(repoRoot, "session-parent.jsonl");
+    const child = join(repoRoot, "session-parent", "subagents", "agent-child.jsonl");
+    const paths = getAgentMetricsPaths(repoRoot);
+    try {
+      await writeClaudeTranscript(child, [{
+        type: "assistant",
+        timestamp: "2026-05-27T10:00:05.000Z",
+        message: {
+          id: "msg_child", role: "assistant", model: "sonnet-test",
+          content: [{ type: "text", text: "Done." }],
+          usage: { input_tokens: 12, output_tokens: 5, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 }
+        }
+      }]);
+      await recordClaudeTranscriptReference({
+        manifestPath: paths.transcriptManifestPath,
+        transcriptPath,
+        workspacePath: repoRoot,
+        sessionId: "session-parent"
+      });
+      const input = {
+        manifestPath: paths.transcriptManifestPath,
+        eventLogPath: paths.eventLogPath,
+        transcriptCursorPath: paths.transcriptCursorPath,
+        transcriptLedgerPath: paths.transcriptLedgerPath,
+        discoveryRoots: []
+      };
+      await syncKnownClaudeTranscripts(input);
+      await syncKnownClaudeTranscripts(input);
+      const usage = (await readJsonLines(paths.eventLogPath)).filter((line) =>
+        line.type === "token.usage.recorded"
+      );
+      expect(usage).toEqual([expect.objectContaining({
+        session_id: "session-parent", message_id: "msg_child", input_tokens: 12, output_tokens: 5
+      })]);
+    } finally {
+      await rm(repoRoot, { recursive: true, force: true });
+    }
+  });
+
   it("appends one prompt, assistant, and usage event once across reruns", async () => {
     const repoRoot = await mkdtemp(join(tmpdir(), "agent-metrics-transcript-sync-"));
     const transcriptPath = join(repoRoot, "claude-session.jsonl");

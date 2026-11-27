@@ -136,9 +136,9 @@ const SOURCE_PROBES = [
   {
     source: "antigravity-acp",
     adapter: "antigravity-acp",
-    roots: [join(homedir(), ".t3", "userdata", "providers", "antigravity")],
-    // ~/.t3 根下 auth、cache、sqlite-wal 等几乎一直在写，上层目录 mtime 说明
-    // 不了有没有模型调用；只 stat 精确层级下的 transcript_full.jsonl。
+    roots: resolveAntigravityProbeRoots(),
+    // ~/.t3 根和 CLI home 下 auth、cache、sqlite-wal 等几乎一直在写，上层目录
+    // mtime 说明不了有没有模型调用；只 stat 精确层级下的 transcript_full.jsonl。
     latestActivity: () => newestAntigravityTranscript()
   }
 ];
@@ -498,20 +498,42 @@ function daysSince(isoTimestamp) {
  * 不能证明发生了模型调用。所以沿精确层级逐个 stat transcript_full.jsonl，
  * 目录不存在或还没有任何 transcript 时返回 null（走 source_silent 判定）。
  */
-function newestAntigravityTranscript() {
-  const providersRoot = join(homedir(), ".t3", "userdata", "providers", "antigravity");
-  let newest = null;
+function resolveAntigravityBrainRoots() {
+  const providersRoot =
+    process.env.AGENT_METRICS_ANTIGRAVITY_PROVIDERS_ROOT?.trim() ||
+    join(homedir(), ".t3", "userdata", "providers", "antigravity");
+  const cliHome =
+    process.env.AGENT_METRICS_ANTIGRAVITY_CLI_HOME?.trim() ||
+    join(homedir(), ".gemini", "antigravity-cli");
+  const brainRoots = [];
 
-  let accounts;
   try {
-    accounts = readdirSync(providersRoot, { withFileTypes: true });
+    for (const account of readdirSync(providersRoot, { withFileTypes: true })) {
+      if (!account.isDirectory()) continue;
+      brainRoots.push(join(providersRoot, account.name, "antigravity-acp", "brain"));
+    }
   } catch {
-    return null;
+    // Hosted Antigravity providers root is optional.
   }
 
-  for (const account of accounts) {
-    if (!account.isDirectory()) continue;
-    const brainRoot = join(providersRoot, account.name, "antigravity-acp", "brain");
+  brainRoots.push(join(cliHome, "brain"));
+  return [...new Set(brainRoots)];
+}
+
+function resolveAntigravityProbeRoots() {
+  const providersRoot =
+    process.env.AGENT_METRICS_ANTIGRAVITY_PROVIDERS_ROOT?.trim() ||
+    join(homedir(), ".t3", "userdata", "providers", "antigravity");
+  const cliHome =
+    process.env.AGENT_METRICS_ANTIGRAVITY_CLI_HOME?.trim() ||
+    join(homedir(), ".gemini", "antigravity-cli");
+  return [providersRoot, join(cliHome, "brain")];
+}
+
+function newestAntigravityTranscript() {
+  let newest = null;
+
+  for (const brainRoot of resolveAntigravityBrainRoots()) {
     let sessions;
     try {
       sessions = readdirSync(brainRoot, { withFileTypes: true });

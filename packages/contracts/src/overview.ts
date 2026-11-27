@@ -31,11 +31,12 @@ export const TokensByModelRowSchema = TokenComponentsSchema.extend({
   avgFirstTokenLatencyMs: z.number().nonnegative().nullable(),
   /**
    * Share of cacheable input served from the provider prompt cache:
-   * cacheRead / (input + cacheRead + cacheCreation). 0 when the row has no
-   * cacheable input at all, so the dashboard can tell "no caching" apart from
-   * "no traffic".
+   * cacheRead divided by the input with cache measurements. 0 when the
+   * denominator is empty.
    */
   cacheHitRate: FiniteRate,
+  /** Supplied when this denominator differs from the sum of input components. */
+  cacheableInputTokens: NonNegativeInt.optional(),
   /** Number of usage rows with a positive decode duration; this is not a request count. */
   speedSampleCount: NonNegativeInt.optional(),
   /** Number of usage rows carrying a valid first-token latency; this is not a request count. */
@@ -73,6 +74,7 @@ export const OverviewResponseSchema = AggregateMetaSchema.merge(TokenComponentsS
   insertions: NonNegativeInt,
   deletions: NonNegativeInt,
   tokensByModel: z.array(TokensByModelRowSchema),
+  cacheableInputTokens: NonNegativeInt.optional(),
   sourceBreakdown: z.array(SourceBreakdownRowSchema),
   providerBreakdown: z.array(ProviderBreakdownRowSchema),
   totalCostUsd: z.number().nonnegative().nullable()
@@ -103,7 +105,8 @@ export const TokenTrendPointSchema = TokenComponentsSchema.extend({
   bucketStart: z.string().datetime(),
   bucket: TokenTrendBucketSchema.optional(),
   label: z.string().min(1),
-  cacheHitRate: FiniteRate
+  cacheHitRate: FiniteRate,
+  cacheableInputTokens: NonNegativeInt.optional()
 });
 
 export const TokenTrendResponseSchema = AggregateMetaSchema.extend({

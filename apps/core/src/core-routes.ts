@@ -215,6 +215,13 @@ export function registerCoreRoutes({ app, db, input, syncCoordinator }: RouteInp
     const sourceVendor = resolveSourceVendor(request.query);
     const overviewRows = selectOverviewRows(db, scope, sourceVendor);
     const tokensByModel = selectTokensByModel(db, scope, sourceVendor, overviewRows.tokenUsage);
+    const cacheableInputTokens = tokensByModel.some((row) => row.cacheableInputTokens !== undefined)
+      ? tokensByModel.reduce(
+          (sum, row) =>
+            sum + (row.cacheableInputTokens ?? (row.inputTokens + row.cacheReadTokens + row.cacheCreationTokens)),
+          0
+        )
+      : undefined;
 
     const response = withScopeMetadata(
       {
@@ -228,6 +235,7 @@ export function registerCoreRoutes({ app, db, input, syncCoordinator }: RouteInp
           codeEdits: overviewRows.codeEdits
         }),
         tokensByModel,
+        ...(cacheableInputTokens !== undefined ? { cacheableInputTokens } : {}),
         sourceBreakdown: selectSourceBreakdown(db, scope, sourceVendor, overviewRows.tokenUsage),
         providerBreakdown: selectProviderBreakdown(db, scope, sourceVendor, overviewRows.tokenUsage).map((row) => ({
           ...row,

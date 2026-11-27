@@ -9,7 +9,7 @@ import {
   buildToolActivityWindow,
   TOOL_CALLS_SESSION_JOIN
 } from "./query-support.js";
-import { selectTokenUsageRows, type TokenUsageOverviewRow } from "./aggregate-queries.js";
+import { hasCacheEvidence, selectTokenUsageRows, type TokenUsageOverviewRow } from "./aggregate-queries.js";
 
 type SessionListRow = {
   sessionId: string;
@@ -50,6 +50,7 @@ type TokenTrendRow = {
   cacheReadTokens: number;
   cacheCreationTokens: number;
   cacheHitRate: number;
+  cacheableInputTokens?: number;
 };
 
 export function selectSessions(
@@ -265,8 +266,11 @@ export function selectSourceBreakdown(
       cacheableInput: 0,
       cacheReadTokens: 0
     };
-    sourceCacheTotals.cacheableInput += cacheableInput;
-    sourceCacheTotals.cacheReadTokens += row.cache_read_input_tokens;
+    // A row with no cache evidence is neither a hit nor a miss.
+    if (hasCacheEvidence(row)) {
+      sourceCacheTotals.cacheableInput += cacheableInput;
+      sourceCacheTotals.cacheReadTokens += row.cache_read_input_tokens;
+    }
     cacheTotals.set(row.source_vendor, sourceCacheTotals);
     // input_tokens already carries the displayed (gross-adjusted) input, which
     // is what the price table expects since cache reads are priced separately.
@@ -354,6 +358,8 @@ export function selectTokenTrend(
     hour12: false
   });
   const buckets = new Map<string, TokenTrendRow>();
+  // Measured cacheable input per bucket; the row only exposes the rate.
+  const measuredInput = new Map<string, number>();
 
   for (const row of rows) {
     // Session-context snapshots (cursor-composer-context) MUST NOT contribute
@@ -384,15 +390,27 @@ export function selectTokenTrend(
       row.output_tokens +
       row.cache_read_input_tokens +
       row.cache_creation_input_tokens;
+    if (hasCacheEvidence(row)) {
+      measuredInput.set(
+        bucket.key,
+        (measuredInput.get(bucket.key) ?? 0) +
+          row.input_tokens +
+          row.cache_read_input_tokens +
+          row.cache_creation_input_tokens
+      );
+    }
     buckets.set(bucket.key, current);
   }
 
-  return Array.from(buckets.values()).map((row) => {
-    const cacheableInput = row.inputTokens + row.cacheReadTokens + row.cacheCreationTokens;
+  return Array.from(buckets.entries()).map(([key, row]) => {
+    const cacheableInput = measuredInput.get(key) ?? 0;
 
     return {
       ...row,
-      cacheHitRate: cacheableInput > 0 ? row.cacheReadTokens / cacheableInput : 0
+      cacheHitRate: cacheableInput > 0 ? row.cacheReadTokens / cacheableInput : 0,
+      ...(cacheableInput !== row.inputTokens + row.cacheReadTokens + row.cacheCreationTokens
+        ? { cacheableInputTokens: cacheableInput }
+        : {})
     };
   });
 }

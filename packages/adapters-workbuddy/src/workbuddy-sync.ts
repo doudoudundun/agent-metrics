@@ -371,7 +371,7 @@ async function loadCliLogMessageIds(ledgerPath: string | undefined): Promise<Set
     if (!key.startsWith(CLI_LOG_USAGE_PREFIX)) {
       continue;
     }
-    const messageId = key.slice(CLI_LOG_USAGE_PREFIX.length).replace(/:cache$|:credit$/u, "");
+    const messageId = key.slice(CLI_LOG_USAGE_PREFIX.length).replace(/:(?:cache(?:-zero)?|credit)$/u, "");
     if (messageId.length > 0) {
       messageIds.add(messageId);
     }

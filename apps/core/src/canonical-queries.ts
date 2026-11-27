@@ -5,6 +5,7 @@ import { SessionDetailResponseSchema, WidgetSnapshotResponseSchema } from "@agen
 import type { SourceAdapter, SourceVendor } from "@agent-metrics/event-schema";
 import type { SqliteDatabaseLike } from "./domain-migrations.js";
 import type { SourceVendorFilter } from "./core-types.js";
+import { hasCacheEvidence } from "./aggregate-queries.js";
 import { resolveTimeScope, type ResolvedTimeScope } from "./time-scope.js";
 
 type UsageRow = {
@@ -14,6 +15,8 @@ type UsageRow = {
   outputTokens: number;
   cacheReadTokens: number;
   cacheCreationTokens: number;
+  /** 1 when the provider reported a zero cache read for this row. */
+  cacheReadReported: number | null;
   usageSource: string | null;
   occurredAt: string;
 };
@@ -154,6 +157,7 @@ export function selectWidgetSnapshot(
          output_tokens AS outputTokens,
          cache_read_input_tokens AS cacheReadTokens,
          cache_creation_input_tokens AS cacheCreationTokens,
+         cache_read_reported AS cacheReadReported,
          usage_source AS usageSource,
          occurred_at AS occurredAt
        FROM additive_usage_events
@@ -228,7 +232,22 @@ export function selectWidgetSnapshot(
   const successfulToolCalls = toolRows.filter((row) => row.status === "succeeded").length;
   const failedToolCalls = toolRows.filter((row) => row.status === "failed").length;
   const terminalToolCalls = successfulToolCalls + failedToolCalls;
-  const cacheableInput = usage.inputTokens + usage.cacheReadTokens + usage.cacheCreationTokens;
+  // The widget's ratio only covers rows with cache evidence (same rule as the
+  // dashboard's hit rate); the token totals above still include every row.
+  const cacheableInput = usageRows.reduce(
+    (total, row) =>
+      hasCacheEvidence({
+        usage_source: row.usageSource,
+        cache_read_input_tokens: row.cacheReadTokens,
+        cache_read_reported: row.cacheReadReported
+      })
+        ? total +
+          safeCount(row.displayedInputTokens) +
+          safeCount(row.cacheReadTokens) +
+          safeCount(row.cacheCreationTokens)
+        : total,
+    0
+  );
   const totalTokens =
     usage.inputTokens + usage.outputTokens + usage.cacheReadTokens + usage.cacheCreationTokens;
 

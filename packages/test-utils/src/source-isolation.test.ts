@@ -25,16 +25,17 @@ afterEach(() => {
 });
 
 describe("AGENT_METRICS_SOURCE_ENV_VARS", () => {
-  it("lists exactly the 21 known source-path env vars", () => {
+  it("lists exactly the 22 known source-path env vars", () => {
     // Pinned count: spec section 20.1 enumerates Claude discovery roots,
     // OpenCode db/models, ZCode db/models, MiMo db/models, Kimi Code home, DSH
     // home, WorkBuddy home, CodeBuddy home/request-logs, Codex
     // sessions/logs-db/config, Cursor tracking-db/workspace-storage/
     // storage-json/global-storage-db/projects-root, and Antigravity
-    // providers-root. Adding a source requires adding it here and to the helper.
-    expect(AGENT_METRICS_SOURCE_ENV_VARS).toHaveLength(21);
+    // providers-root/cli-home. Adding a source requires adding it here and to the helper.
+    expect(AGENT_METRICS_SOURCE_ENV_VARS).toHaveLength(22);
     expect([...AGENT_METRICS_SOURCE_ENV_VARS].sort()).toEqual(
       [
+        "AGENT_METRICS_ANTIGRAVITY_CLI_HOME",
         "AGENT_METRICS_ANTIGRAVITY_PROVIDERS_ROOT",
         "AGENT_METRICS_CLAUDE_DISCOVERY_ROOTS",
         "AGENT_METRICS_CODEX_CONFIG_PATH",

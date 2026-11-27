@@ -4,10 +4,15 @@ import {
   PHASE2_NAME,
   columnNames,
   hasMigration,
+  registerAdapter,
+  registerSource,
   resolveNow,
+  sha256,
+  stableStringify,
   tableExists,
   tableNames,
-  throwUnknownShape
+  throwUnknownShape,
+  withoutProvenance
 } from "./domain-migration-helpers.js";
 import { backfillLegacyData } from "./domain-backfill.js";
 import { reconcileLegacyMigration } from "./domain-reconciliation.js";
@@ -51,7 +56,13 @@ const USAGE_CREDIT_NAME = "009-add-usage-credit";
 const WORKBUDDY_USAGE_DEDUP_VERSION = 10;
 const WORKBUDDY_USAGE_DEDUP_NAME = "010-deduplicate-inherited-workbuddy-usage";
 const LEGACY_WORKBUDDY_USAGE_DEDUP_NAME = "009-deduplicate-inherited-workbuddy-usage";
-const LATEST_VERSION = WORKBUDDY_USAGE_DEDUP_VERSION;
+const USAGE_CACHE_REPORTED_VERSION = 11;
+const USAGE_CACHE_REPORTED_NAME = "011-add-usage-cache-reported";
+const LEGACY_USAGE_CACHE_REPORTED_NAME = "010-add-usage-cache-reported";
+const ZCODE_SUBAGENT_USAGE_VERSION = 12;
+const ZCODE_SUBAGENT_USAGE_NAME = "012-repair-legacy-zcode-subagent-usage";
+const LEGACY_ZCODE_SUBAGENT_USAGE_NAME = "011-repair-legacy-zcode-subagent-usage";
+const LATEST_VERSION = ZCODE_SUBAGENT_USAGE_VERSION;
 
 const LEGACY_TABLES = [
   "sessions",
@@ -194,9 +205,82 @@ export function runDomainMigrations(db: SqliteDatabaseLike, now: MigrationNow = 
       }
     })();
   }
+  if (!hasMigration(db, USAGE_CACHE_REPORTED_NAME)) {
+    db.transaction(() => {
+      // Fresh databases carry the column from createCanonicalSchema; only
+      // upgrade existing tables. Every earlier row stays NULL: the source never
+      // recorded whether it measured a cache read for it, and a historical zero
+      // may be "not reported" just as easily as a real miss.
+      const columns = columnNames(db, "usage_events");
+      if (!columns.has("cache_read_reported")) {
+        db.exec("ALTER TABLE usage_events ADD COLUMN cache_read_reported INTEGER");
+      }
+      insertMigration(db, USAGE_CACHE_REPORTED_VERSION, USAGE_CACHE_REPORTED_NAME, appliedAt);
+    })();
+  }
+  if (!hasMigration(db, ZCODE_SUBAGENT_USAGE_NAME)) {
+    db.transaction(() => {
+      repairLegacyZcodeSubagentUsage(db, appliedAt);
+      insertMigration(db, ZCODE_SUBAGENT_USAGE_VERSION, ZCODE_SUBAGENT_USAGE_NAME, appliedAt);
+    })();
+  }
   // Keep the view and its lookup index self-healing if a database was copied
   // with a missing auxiliary object after the migration marker was written.
   ensureAdditiveUsageSchema(db);
+}
+
+// Legacy IDs retain the ZCode adapter's namespace even when the original
+// importer stored the OpenCode vendor. Match both the namespace and child ID.
+export function repairLegacyZcodeSubagentUsage(db: SqliteDatabaseLike, appliedAt: string): void {
+  const scope = `source_instance_id = 'opencode:default'
+      AND event_id GLOB 'legacy:token_usage_events:opencode:zcode:*'
+      AND session_id GLOB 'sess_subagent_agent_*'`;
+  if (!db.prepare(`SELECT 1 FROM usage_events WHERE ${scope} LIMIT 1`).get()) return;
+  registerSource(db, "zcode:default", "zcode", appliedAt);
+  registerAdapter(db, "zcode:default", "zcode-db", appliedAt);
+  db.exec(`
+    INSERT OR IGNORE INTO domain_sessions (
+      source_instance_id, session_id, source_vendor, source_adapter, workspace_path,
+      started_at, ended_at, exit_code
+    )
+    SELECT 'zcode:default', usage.session_id, 'zcode', 'zcode-db',
+      COALESCE(sessions.workspace_path, '.'), COALESCE(sessions.started_at, MIN(usage.occurred_at)),
+      sessions.ended_at, sessions.exit_code
+    FROM (SELECT * FROM usage_events WHERE ${scope}) usage
+    LEFT JOIN domain_sessions sessions
+      ON sessions.source_instance_id = usage.source_instance_id AND sessions.session_id = usage.session_id
+    GROUP BY usage.session_id;
+  `);
+  const details = db.prepare<{ event_id: string; payload_json: string }>(`
+    SELECT event_id, payload_json FROM normalized_events
+    WHERE event_id IN (SELECT event_id FROM usage_events WHERE ${scope})
+  `).all();
+  const updateDetail = db.prepare(`
+    UPDATE normalized_events SET source_instance_id = 'zcode:default', source_vendor = 'zcode',
+      source_adapter = 'zcode-db', adapter_instance_id = 'zcode-db@zcode:default',
+      payload_json = ?, semantic_fingerprint = ? WHERE event_id = ?
+  `);
+  const updateObservation = db.prepare(`
+    UPDATE event_observations SET source_adapter = 'zcode-db',
+      adapter_instance_id = 'zcode-db@zcode:default', semantic_fingerprint = ?
+    WHERE event_id = ? AND adapter_instance_id = ?
+  `);
+  const updateUsageFingerprint = db.prepare("UPDATE usage_events SET semantic_fingerprint = ? WHERE event_id = ?");
+  for (const detail of details) {
+    const payload = JSON.parse(detail.payload_json);
+    const priorAdapter = payload.adapter_instance_id;
+    Object.assign(payload, {
+      source_instance_id: "zcode:default", source_vendor: "zcode",
+      source_adapter: "zcode-db", adapter_instance_id: "zcode-db@zcode:default"
+    });
+    const serialized = stableStringify(payload);
+    const fingerprint = sha256(stableStringify(withoutProvenance(payload)));
+    updateDetail.run(serialized, fingerprint, detail.event_id);
+    updateObservation.run(fingerprint, detail.event_id, priorAdapter);
+    updateUsageFingerprint.run(sha256(serialized), detail.event_id);
+  }
+  db.exec(`UPDATE usage_events SET source_instance_id = 'zcode:default', source_vendor = 'zcode'
+    WHERE ${scope}`);
 }
 
 function runSessionQueryIndexMigration(db: SqliteDatabaseLike, appliedAt: string): void {
@@ -263,6 +347,16 @@ function runBaselineMigration(db: SqliteDatabaseLike, appliedAt: string): void {
     db.prepare(
       "UPDATE schema_migrations SET version = ? WHERE version = 9 AND name = ?"
     ).run(WORKBUDDY_USAGE_DEDUP_VERSION, LEGACY_WORKBUDDY_USAGE_DEDUP_NAME);
+
+    // Pre-merge local builds recorded cache-reported and ZCode subagent repair
+    // as 010/011 before upstream claimed 010 for WorkBuddy dedup. Shift 11->12
+    // before 10->11 to avoid colliding on UNIQUE(version).
+    db.prepare(
+      "UPDATE schema_migrations SET version = ?, name = ? WHERE version = 11 AND name = ?"
+    ).run(ZCODE_SUBAGENT_USAGE_VERSION, ZCODE_SUBAGENT_USAGE_NAME, LEGACY_ZCODE_SUBAGENT_USAGE_NAME);
+    db.prepare(
+      "UPDATE schema_migrations SET version = ?, name = ? WHERE version = 10 AND name = ?"
+    ).run(USAGE_CACHE_REPORTED_VERSION, USAGE_CACHE_REPORTED_NAME, LEGACY_USAGE_CACHE_REPORTED_NAME);
 
     if (!hasMigration(db, BASELINE_NAME)) {
       insertMigration(db, BASELINE_VERSION, BASELINE_NAME, appliedAt);

@@ -5,8 +5,10 @@ import {
   selectTokenUsageRows,
   selectTokensByModel
 } from "./aggregate-queries.js";
+import { selectWidgetSnapshot } from "./canonical-queries.js";
 import { runDomainMigrations, type SqliteDatabaseLike } from "./domain-migrations.js";
 import type { MetricsDatabase } from "./core-types.js";
+import { selectSourceBreakdown, selectTokenTrend } from "./session-queries.js";
 import type { ResolvedTimeScope } from "./time-scope.js";
 
 type UsageSeed = {
@@ -219,6 +221,45 @@ describe("selectTokensByModel", () => {
       ttftSampleCount: 2
     });
 
+    db.close();
+  });
+
+  it("keeps unreported CodeBuddy inputs in totals and counts a reported miss in every rate", () => {
+    const db = createDb();
+    const source = { sourceVendor: "workbuddy", usageSource: "codebuddy-log" };
+    seedUsage(db, [
+      usageSeed({
+        ...source,
+        eventId: "hit",
+        displayedInputTokens: 20,
+        rawInputTokens: 100,
+        cacheReadTokens: 80,
+        outputTokens: 10
+      }),
+      usageSeed({ ...source, eventId: "unknown", displayedInputTokens: 1000, outputTokens: 50 }),
+      usageSeed({ ...source, eventId: "reported-miss", displayedInputTokens: 100, outputTokens: 0 }),
+      usageSeed({
+        ...source,
+        usageSource: "workbuddy-usage",
+        eventId: "transcript-miss",
+        displayedInputTokens: 100,
+        outputTokens: 0
+      })
+    ]);
+    db.prepare("UPDATE usage_events SET cache_read_reported = 1 WHERE event_id = 'reported-miss'").run();
+    const metricsDb = db as unknown as MetricsDatabase;
+    const measured = { totalTokens: 1360, cacheHitRate: 80 / 300 };
+
+    expect(selectSourceBreakdown(metricsDb)).toMatchObject([measured]);
+    expect(selectTokensByModel(metricsDb)).toMatchObject([{ ...measured, cacheableInputTokens: 300 }]);
+    expect(selectTokenTrend(metricsDb)).toMatchObject([{ ...measured, cacheableInputTokens: 300 }]);
+    expect(
+      selectWidgetSnapshot(
+        db as unknown as SqliteDatabaseLike,
+        new Date("2026-10-09T11:00:00.000Z"),
+        { offsetMinutes: 0 }
+      ).metrics
+    ).toMatchObject(measured);
     db.close();
   });
 

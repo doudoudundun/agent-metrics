@@ -4,6 +4,7 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { normalizeWorkspacePath } from "@agent-metrics/event-schema";
 import { isolateSources, type IsolatedSources } from "@agent-metrics/test-utils";
 import {
   resolveAntigravitySourcePaths,
@@ -15,6 +16,7 @@ type SyncInput = {
   cursorPath: string;
   ledgerPath: string;
   providersRoot?: string;
+  cliHome?: string;
 };
 
 type TranscriptEvent = Record<string, unknown> & { type?: string };
@@ -516,6 +518,49 @@ describe("syncAntigravityAcpSessions", () => {
       decode_duration_ms: null
     });
   });
+
+  it("discovers standalone CLI transcripts and attaches conversation_summaries.db workspace paths", async () => {
+    const emptyProviders = join(root, "empty-providers");
+    const cliHome = join(root, "cli-home");
+    const sessionId = "cli-session-1";
+    const workspaceDir = join(cliHome, "sample-project");
+    const transcriptPath = join(
+      cliHome,
+      "brain",
+      sessionId,
+      ".system_generated",
+      "logs",
+      "transcript_full.jsonl"
+    );
+    await mkdir(dirname(transcriptPath), { recursive: true });
+    await writeFile(
+      transcriptPath,
+      toLines([
+        userInput(1, "2026-11-24T12:00:00Z", "hello"),
+        plannerResponse(2, "2026-11-24T12:00:05Z", "gemini-2.5-pro", {
+          input_tokens: 100,
+          output_tokens: 20
+        })
+      ])
+    );
+
+    const summaryDbPath = join(cliHome, "conversation_summaries.db");
+    const db = new Database(summaryDbPath);
+    db.exec("CREATE TABLE conversation_summaries (conversation_id TEXT PRIMARY KEY, workspace_uris TEXT)");
+    const fileUri = `file://${workspaceDir.startsWith("/") ? "" : "/"}${workspaceDir.replaceAll("\\", "/")}`;
+    db.prepare("INSERT INTO conversation_summaries (conversation_id, workspace_uris) VALUES (?, ?)").run(
+      sessionId,
+      JSON.stringify([fileUri])
+    );
+    db.close();
+
+    const input = syncInput({ providersRoot: emptyProviders, cliHome });
+    await syncAntigravityAcpSessions(input);
+
+    const events = await readEvents(input.eventLogPath);
+    expect(events).toHaveLength(4);
+    expect(events.every((e) => e.workspace_path === normalizeWorkspacePath(workspaceDir))).toBe(true);
+  });
 });
 
 async function writeTimingDb(
@@ -569,36 +614,60 @@ async function writeTimingDb(
 
 describe("resolveAntigravitySourcePaths", () => {
   let isolated: IsolatedSources | null = null;
-  let previousEnv: string | undefined;
+  let previousProvidersEnv: string | undefined;
+  let previousCliHomeEnv: string | undefined;
 
   beforeEach(async () => {
     isolated = await isolateSources();
-    previousEnv = process.env.AGENT_METRICS_ANTIGRAVITY_PROVIDERS_ROOT;
+    previousProvidersEnv = process.env.AGENT_METRICS_ANTIGRAVITY_PROVIDERS_ROOT;
+    previousCliHomeEnv = process.env.AGENT_METRICS_ANTIGRAVITY_CLI_HOME;
     delete process.env.AGENT_METRICS_ANTIGRAVITY_PROVIDERS_ROOT;
+    delete process.env.AGENT_METRICS_ANTIGRAVITY_CLI_HOME;
   });
 
   afterEach(() => {
     isolated?.cleanup();
     isolated = null;
-    if (previousEnv === undefined) {
+    if (previousProvidersEnv === undefined) {
       delete process.env.AGENT_METRICS_ANTIGRAVITY_PROVIDERS_ROOT;
     } else {
-      process.env.AGENT_METRICS_ANTIGRAVITY_PROVIDERS_ROOT = previousEnv;
+      process.env.AGENT_METRICS_ANTIGRAVITY_PROVIDERS_ROOT = previousProvidersEnv;
+    }
+    if (previousCliHomeEnv === undefined) {
+      delete process.env.AGENT_METRICS_ANTIGRAVITY_CLI_HOME;
+    } else {
+      process.env.AGENT_METRICS_ANTIGRAVITY_CLI_HOME = previousCliHomeEnv;
     }
   });
 
-  it("defaults to ~/.t3/userdata/providers/antigravity", () => {
+  it("defaults to ~/.t3/userdata/providers/antigravity and ~/.gemini/antigravity-cli", () => {
     expect(resolveAntigravitySourcePaths()).toEqual({
-      providersRoot: join(homedir(), ".t3", "userdata", "providers", "antigravity")
+      providersRoot: join(homedir(), ".t3", "userdata", "providers", "antigravity"),
+      cliHome: join(homedir(), ".gemini", "antigravity-cli")
     });
   });
 
   it("prefers the env var over the default and an explicit argument over both", () => {
     process.env.AGENT_METRICS_ANTIGRAVITY_PROVIDERS_ROOT = "/tmp/env-root";
-    expect(resolveAntigravitySourcePaths()).toEqual({ providersRoot: "/tmp/env-root" });
+    expect(resolveAntigravitySourcePaths()).toEqual({
+      providersRoot: "/tmp/env-root",
+      cliHome: null
+    });
 
-    expect(resolveAntigravitySourcePaths({ providersRoot: "/tmp/explicit-root" })).toEqual({
-      providersRoot: "/tmp/explicit-root"
+    process.env.AGENT_METRICS_ANTIGRAVITY_CLI_HOME = "/tmp/env-cli";
+    expect(resolveAntigravitySourcePaths()).toEqual({
+      providersRoot: "/tmp/env-root",
+      cliHome: "/tmp/env-cli"
+    });
+
+    expect(
+      resolveAntigravitySourcePaths({
+        providersRoot: "/tmp/explicit-root",
+        cliHome: "/tmp/explicit-cli"
+      })
+    ).toEqual({
+      providersRoot: "/tmp/explicit-root",
+      cliHome: "/tmp/explicit-cli"
     });
   });
 });

@@ -26,6 +26,12 @@ const CREDIT_LEDGER_SUFFIX = ":credit";
 /** Suffix of the ledger key that records "this request's cache split was seen". */
 const CACHE_LEDGER_SUFFIX = ":cache";
 /**
+ * Same ledger record for an explicit zero cache read. Only the key differs: the
+ * positive suffix is kept for logs written before zero was evidence, so a
+ * ledger from either side is recognised.
+ */
+const CACHE_ZERO_LEDGER_SUFFIX = ":cache-zero";
+/**
  * A billing line is written a few milliseconds before or after the `qua.end`
  * of the same request, so a pass can catch a request before its credit is on
  * disk. Such a request is written with no credit, and the ledger only records
@@ -314,8 +320,14 @@ function ledgerKeys(event: NormalizedEventV2): {
       ? `${key}${CREDIT_LEDGER_SUFFIX}`
       : null;
   // Same for the cache split, which the provider layer logs on a later line.
-  const cacheKey =
-    isUsage && event.cache_read_input_tokens > 0 ? `${key}${CACHE_LEDGER_SUFFIX}` : null;
+  // An explicit zero counts too: it turns an unknown cache read into a measured
+  // miss, which the stored event alone cannot tell apart from "never reported".
+  let cacheKey: string | null = null;
+  if (isUsage && event.cache_read_input_tokens > 0) {
+    cacheKey = `${key}${CACHE_LEDGER_SUFFIX}`;
+  } else if (isUsage && event.cache_read_reported === true) {
+    cacheKey = `${key}${CACHE_ZERO_LEDGER_SUFFIX}`;
+  }
   return { key, creditKey, cacheKey };
 }
 

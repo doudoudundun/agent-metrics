@@ -56,8 +56,8 @@ function expectOutsideFixtureRoot(path: string): void {
 }
 
 describe("source isolation guard", () => {
-  it("resolves all 21 production source paths under the fixture root", () => {
-    expect(AGENT_METRICS_SOURCE_ENV_VARS).toHaveLength(21);
+  it("resolves all 22 production source paths under the fixture root", () => {
+    expect(AGENT_METRICS_SOURCE_ENV_VARS).toHaveLength(22);
 
     const claudeRoots = resolveDefaultClaudeDiscoveryRoots("unused-by-resolver");
     const opencode = resolveOpenCodeSourcePaths();
@@ -158,9 +158,12 @@ describe("source isolation guard", () => {
     Object.values(cursor).forEach(expectInsideFixtureRoot);
 
     expect(antigravity).toEqual({
-      providersRoot: expectedPath("AGENT_METRICS_ANTIGRAVITY_PROVIDERS_ROOT")
+      providersRoot: expectedPath("AGENT_METRICS_ANTIGRAVITY_PROVIDERS_ROOT"),
+      cliHome: expectedPath("AGENT_METRICS_ANTIGRAVITY_CLI_HOME")
     });
     expectInsideFixtureRoot(antigravity.providersRoot);
+    expect(antigravity.cliHome).not.toBeNull();
+    expectInsideFixtureRoot(antigravity.cliHome!);
   });
 
   it("falls back outside the fixture root when the Claude override is removed", () => {
@@ -250,10 +253,16 @@ describe("source isolation guard", () => {
   });
 
   it("falls back outside the fixture root when the Antigravity override is removed", () => {
-    const redirected = expectedPath("AGENT_METRICS_ANTIGRAVITY_PROVIDERS_ROOT");
+    const redirectedProviders = expectedPath("AGENT_METRICS_ANTIGRAVITY_PROVIDERS_ROOT");
+    const redirectedCliHome = expectedPath("AGENT_METRICS_ANTIGRAVITY_CLI_HOME");
     delete process.env.AGENT_METRICS_ANTIGRAVITY_PROVIDERS_ROOT;
-    expectOutsideFixtureRoot(resolveAntigravitySourcePaths().providersRoot);
-    process.env.AGENT_METRICS_ANTIGRAVITY_PROVIDERS_ROOT = redirected;
+    delete process.env.AGENT_METRICS_ANTIGRAVITY_CLI_HOME;
+    const resolved = resolveAntigravitySourcePaths();
+    expectOutsideFixtureRoot(resolved.providersRoot);
+    expect(resolved.cliHome).not.toBeNull();
+    expectOutsideFixtureRoot(resolved.cliHome!);
+    process.env.AGENT_METRICS_ANTIGRAVITY_PROVIDERS_ROOT = redirectedProviders;
+    process.env.AGENT_METRICS_ANTIGRAVITY_CLI_HOME = redirectedCliHome;
   });
 
   it("falls back outside the fixture root when a directly-resolved Cursor override is removed", () => {

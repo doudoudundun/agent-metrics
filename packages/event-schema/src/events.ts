@@ -71,7 +71,8 @@ export const BaseEventSchema = z.object({
 });
 
 export const SessionStartedEventSchema = BaseEventSchema.extend({
-  type: z.literal("session.started")
+  type: z.literal("session.started"),
+  originator: NonEmptyString.optional()
 });
 
 export const SessionEndedEventSchema = BaseEventSchema.extend({
@@ -140,6 +141,12 @@ export const TokenUsageRecordedEventSchema = BaseEventSchema.extend({
   output_tokens: NonNegativeInt,
   cache_creation_input_tokens: NonNegativeInt,
   cache_read_input_tokens: NonNegativeInt,
+  /**
+   * Whether `cache_read_input_tokens` is a provider measurement. Only sources
+   * that can tell "no cache" from "not reported" set it; absent means the source
+   * does not say, and a non-zero read is a measurement on its own.
+   */
+  cache_read_reported: z.boolean().optional(),
   server_tool_use: z.string().default("{}"),
   usage_source: UsageSourceSchema,
   /** Provider-billed credit units (WorkBuddy/CodeBuddy), absent when unknown. */
@@ -215,7 +222,8 @@ export const BaseEventV2Schema = z
   .strict();
 
 export const SessionStartedEventV2Schema = BaseEventV2Schema.extend({
-  type: z.literal("session.started")
+  type: z.literal("session.started"),
+  originator: NonEmptyString.optional()
 }).strict();
 
 export const SessionEndedEventV2Schema = BaseEventV2Schema.extend({
@@ -291,6 +299,13 @@ const TokenUsageRecordedEventV2BaseSchema = z
     output_tokens: NonNegativeInt,
     cache_creation_input_tokens: NonNegativeInt,
     cache_read_input_tokens: NonNegativeInt,
+    /**
+     * Whether `cache_read_input_tokens` is a provider measurement, for a source
+     * that can tell "no cache" from "not reported": `true` makes an explicit 0 a
+     * measured miss. Absent means no such evidence, and a non-zero read is a
+     * measurement on its own.
+     */
+    cache_read_reported: z.boolean().optional(),
     server_tool_use: ServerToolUseSchema,
     usage_source: UsageSourceSchema,
     /**

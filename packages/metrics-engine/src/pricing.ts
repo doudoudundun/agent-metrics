@@ -89,9 +89,14 @@ export const MODEL_PRICING_USD: Record<string, ModelPricing> = {
   // <=272K context tier (2x above); terra rates confirmed by gradually.ai.
   "gpt-5.6-terra": { inputPer1M: 2, outputPer1M: 12, cacheReadPer1M: 0.2, cacheWritePer1M: 2.5 },
   "gpt-5.6-luna": { inputPer1M: 0.2, outputPer1M: 1.2, cacheReadPer1M: 0.02, cacheWritePer1M: 0.25 },
+  // Cursor's short-context Fast card (cursor.com/docs/models/gpt-5-6-luna).
+  "gpt-5.6-luna-fast": { inputPer1M: 0.4, outputPer1M: 2.4, cacheReadPer1M: 0.04, cacheWritePer1M: 0.5 },
   "gpt-6-sol": { inputPer1M: 2, outputPer1M: 10, cacheReadPer1M: 0.2, cacheWritePer1M: 2.5 },
   "gpt-5.3-codex": { inputPer1M: 1.75, outputPer1M: 14, cacheReadPer1M: 0.175, cacheWritePer1M: 0 },
   // Claude API standard pricing; cache writes use the 5-minute tier.
+  // 5.2 generation: $8/$40 card, cache hits at 0.025x input, 5m cache writes $10.
+  "claude-fable-5-2": { inputPer1M: 8, outputPer1M: 40, cacheReadPer1M: 0.2, cacheWritePer1M: 10 },
+  "claude-mythos-5-2": { inputPer1M: 8, outputPer1M: 40, cacheReadPer1M: 0.2, cacheWritePer1M: 10 },
   "claude-fable-5-1": { inputPer1M: 10, outputPer1M: 50, cacheReadPer1M: 0.25, cacheWritePer1M: 12.5 },
   "claude-mythos-5-1": { inputPer1M: 10, outputPer1M: 50, cacheReadPer1M: 0.25, cacheWritePer1M: 12.5 },
   "claude-fable-5": { inputPer1M: 10, outputPer1M: 50, cacheReadPer1M: 1, cacheWritePer1M: 12.5 },
@@ -114,6 +119,7 @@ export const MODEL_PRICING_USD: Record<string, ModelPricing> = {
   // Cursor effort-suffixed variant of sonnet-5-5.
   "claude-sonnet-5-5-high": { inputPer1M: 2, outputPer1M: 10, cacheReadPer1M: 0.1, cacheWritePer1M: 2.5 },
   "claude-opus-5-5": { inputPer1M: 4, outputPer1M: 20, cacheReadPer1M: 0.2, cacheWritePer1M: 5 },
+  "claude-opus-5-5-fast": { inputPer1M: 8, outputPer1M: 40, cacheReadPer1M: 0.4, cacheWritePer1M: 10 },
   "claude-opus-4-8": { inputPer1M: 5, outputPer1M: 25, cacheReadPer1M: 0.5, cacheWritePer1M: 6.25 },
   // Antigravity/T3 also serves Opus 4.6; platform.claude.com standard card
   // (5-minute cache-write tier), snapshot 2026-11-23.
@@ -121,6 +127,8 @@ export const MODEL_PRICING_USD: Record<string, ModelPricing> = {
   // <=100K prompt tier; over 100K is priced higher.
   "claude-haiku-5-5": { inputPer1M: 0.1, outputPer1M: 0.5, cacheReadPer1M: 0.01, cacheWritePer1M: 0.125 },
   "claude-haiku-4-5-20251001": { inputPer1M: 1, outputPer1M: 5, cacheReadPer1M: 0.1, cacheWritePer1M: 1.25 },
+  // GLM-5.4 uses GLM-5.3's published reference card while its own card is absent.
+  "glm-5.4": { inputPer1M: 1.4, outputPer1M: 4.4, cacheReadPer1M: 0.26, cacheWritePer1M: 0 },
   "glm-5.3": { inputPer1M: 1.4, outputPer1M: 4.4, cacheReadPer1M: 0.26, cacheWritePer1M: 0 },
   "glm-5.3-flash": { inputPer1M: 0.15, outputPer1M: 0.5, cacheReadPer1M: 0.03, cacheWritePer1M: 0 },
   // Mistral's published identifier and rate for the same GLM 5.3 Flash model.
@@ -314,6 +322,7 @@ export const MODEL_PRICING_USD: Record<string, ModelPricing> = {
   // Cursor Grok 4.6 Fast: published additional-usage rate, USD per 1M tokens.
   "cursor-grok-4.6-high-fast": { inputPer1M: 4, outputPer1M: 12, cacheReadPer1M: 1, cacheWritePer1M: 0 },
   "grok-4.5": { inputPer1M: 2, outputPer1M: 6, cacheReadPer1M: 0.5, cacheWritePer1M: 0 },
+  "minimax-m3.1-flash": { inputPer1M: 0.15, outputPer1M: 0.6, cacheReadPer1M: 0.015, cacheWritePer1M: 0 },
   "minimax-m3": { inputPer1M: 0.3, outputPer1M: 1.2, cacheReadPer1M: 0.06, cacheWritePer1M: 0 },
   // WorkBuddy's metered M3 alias; same <=512K tier as minimax-m3.
   "minimax-m3-pay": { inputPer1M: 0.3, outputPer1M: 1.2, cacheReadPer1M: 0.06, cacheWritePer1M: 0 },
@@ -464,6 +473,36 @@ export function serviceTierMultiplier(tier: string | null | undefined): number {
   return SERVICE_TIER_MULTIPLIERS[key] ?? 1;
 }
 
+// These providers encode reasoning effort in the model ID. Other models can
+// use the same words as part of a distinct model name (e.g. Qwen Max).
+const MODELS_WITH_EFFORT_SUFFIX = new Set([
+  "claude-opus-4-6", "claude-sonnet-4-6", "claude-opus-5", "claude-opus-5-5", "claude-sonnet-5-5",
+  "gemini-4-carbon", "gemini-4-argon", "gemini-4-neon", "gemini-4-hydrogen",
+  "gemini-3.8-flash", "gemini-3.6-flash",
+  "grok-4.5", "grok-4.6", "grok-4.7", "gpt-5.6-luna"
+]);
+const EFFORT_SUFFIX = /^(.+?)-(?:thinking-)?(low|medium|high|xhigh|max)(?:-thinking)?(-fast)?$/;
+
+function lookupModelPricing(record: Record<string, ModelPricing>, key: string): ModelPricing | undefined {
+  return Object.hasOwn(record, key) ? record[key] : undefined;
+}
+
+function resolveModelPriceKey(modelKey: string): string {
+  if (Object.hasOwn(MODEL_PRICING_USD, modelKey)) {
+    return modelKey;
+  }
+
+  const normalized = modelKey.replace(/^claude-4[.-]6-(opus|sonnet)(?=-|$)/, "claude-$1-4-6");
+  const match = EFFORT_SUFFIX.exec(normalized);
+  if (match) {
+    const [, baseModel, effort, speed = ""] = match;
+    if (MODELS_WITH_EFFORT_SUFFIX.has(baseModel) && (effort !== "max" || baseModel === "gpt-5.6-luna")) {
+      return baseModel + speed;
+    }
+  }
+  return normalized;
+}
+
 /**
  * Estimate the USD cost of one usage row. `inputTokens` MUST already be the
  * displayed input (gross-semantic sources have cache-read subtracted) because
@@ -495,11 +534,22 @@ export function estimateCostUsd(usage: {
   const modelKey = bareKey.startsWith("cursor-") ? bareKey.slice(7) : bareKey;
   const mode = usage.usageMode ?? resolveUsageMode(modelKey, usage.serviceTier);
   const namedFast = resolveUsageMode(modelKey) === "fast";
-  const pricing = mode === "ultrafast"
-    ? ULTRAFAST_MODEL_PRICING_USD[modelKey.replace(/-ultrafast$/u, "")]
+  let pricing = mode === "ultrafast"
+    ? lookupModelPricing(ULTRAFAST_MODEL_PRICING_USD, modelKey.replace(/-ultrafast$/u, ""))
     : mode === "fast"
-      ? FAST_MODEL_PRICING_USD[modelKey] ?? (namedFast ? MODEL_PRICING_USD[modelKey] : undefined)
-      : MODEL_PRICING_USD[key] ?? MODEL_PRICING_USD[modelKey];
+      ? lookupModelPricing(FAST_MODEL_PRICING_USD, modelKey) ??
+        (namedFast ? lookupModelPricing(MODEL_PRICING_USD, modelKey) : undefined)
+      : lookupModelPricing(MODEL_PRICING_USD, key) ?? lookupModelPricing(MODEL_PRICING_USD, modelKey);
+  if (!pricing) {
+    const resolvedKey = resolveModelPriceKey(modelKey);
+    pricing = mode === "ultrafast"
+      ? lookupModelPricing(ULTRAFAST_MODEL_PRICING_USD, resolvedKey.replace(/-ultrafast$/u, ""))
+      : mode === "fast"
+        ? lookupModelPricing(FAST_MODEL_PRICING_USD, resolvedKey) ??
+          lookupModelPricing(FAST_MODEL_PRICING_USD, resolvedKey.replace(/-fast$/u, "")) ??
+          (namedFast ? lookupModelPricing(MODEL_PRICING_USD, resolvedKey) : undefined)
+        : lookupModelPricing(MODEL_PRICING_USD, resolvedKey);
+  }
   if (!pricing) {
     return null;
   }

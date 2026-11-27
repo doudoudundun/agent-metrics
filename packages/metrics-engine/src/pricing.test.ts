@@ -387,6 +387,35 @@ describe("estimateCostUsd", () => {
     expect(estimateCostUsd({ ...USAGE, model: "kimi-k2.7" })).toBeCloseTo(4.95, 6);
   });
 
+  it("prices the missing Fable/Mythos 5.2, Opus 5.5 Fast, Luna Fast, MiniMax M3.1 and GLM-5.4 cards", () => {
+    expect(estimateCostUsd({ ...USAGE, model: "claude-fable-5-2" })).toBeCloseTo(48, 6);
+    expect(estimateCostUsd({ ...USAGE, model: "claude-mythos-5-2" })).toBeCloseTo(48, 6);
+    expect(estimateCostUsd({ ...USAGE, model: "claude-opus-5-5-fast" })).toBeCloseTo(48, 6);
+    expect(estimateCostUsd({ ...USAGE, model: "gpt-5.6-luna-fast" })).toBeCloseTo(2.8, 6);
+    expect(estimateCostUsd({ ...USAGE, model: "minimax-m3.1-flash" })).toBeCloseTo(0.75, 6);
+    expect(estimateCostUsd({ ...USAGE, model: "glm-5.4" })).toBe(
+      estimateCostUsd({ ...USAGE, model: "glm-5.3" })
+    );
+  });
+
+  it("resolves effort suffixes and Claude 4.6 aliases to the underlying card", () => {
+    expect(estimateCostUsd({ ...USAGE, model: "claude-4.6-opus-high" })).toBe(
+      estimateCostUsd({ ...USAGE, model: "claude-opus-4-6" })
+    );
+    expect(estimateCostUsd({ ...USAGE, model: "claude-4-6-sonnet-medium" })).toBe(
+      estimateCostUsd({ ...USAGE, model: "claude-sonnet-4-6" })
+    );
+    expect(estimateCostUsd({ ...USAGE, model: "gpt-5.6-luna-max" })).toBe(
+      estimateCostUsd({ ...USAGE, model: "gpt-5.6-luna" })
+    );
+    expect(estimateCostUsd({ ...USAGE, model: "claude-opus-5-5-high-fast" })).toBe(
+      estimateCostUsd({ ...USAGE, model: "claude-opus-5-5-fast" })
+    );
+    expect(estimateCostUsd({ ...USAGE, model: "claude-4.6-opus-high", serviceTier: "fast" })).toBe(
+      estimateCostUsd({ ...USAGE, model: "claude-opus-4-6", serviceTier: "fast" })
+    );
+  });
+
   it("returns null for models without a published list price", () => {
     expect(estimateCostUsd({ ...USAGE, model: "mimo/mimo-auto" })).toBeNull();
     expect(estimateCostUsd({ ...USAGE, model: "hunyuan-chat" })).toBeNull();

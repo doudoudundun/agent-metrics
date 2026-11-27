@@ -190,7 +190,9 @@ describe("runDomainMigrations", () => {
       { version: 7, name: "007-backfill-session-started-at", applied_at: "2026-07-17T12:00:00.000Z" },
       { version: 8, name: "008-add-usage-service-tier", applied_at: "2026-07-17T12:00:00.000Z" },
       { version: 9, name: "009-add-usage-credit", applied_at: "2026-07-17T12:00:00.000Z" },
-      { version: 10, name: "010-deduplicate-inherited-workbuddy-usage", applied_at: "2026-07-17T12:00:00.000Z" }
+      { version: 10, name: "010-deduplicate-inherited-workbuddy-usage", applied_at: "2026-07-17T12:00:00.000Z" },
+      { version: 11, name: "011-add-usage-cache-reported", applied_at: "2026-07-17T12:00:00.000Z" },
+      { version: 12, name: "012-repair-legacy-zcode-subagent-usage", applied_at: "2026-07-17T12:00:00.000Z" }
     ]);
 
     db.close();
@@ -333,7 +335,9 @@ describe("runDomainMigrations", () => {
     expect(db.prepare("SELECT version, name, applied_at FROM schema_migrations WHERE version >= 9 ORDER BY version").all())
       .toEqual([
         { version: 9, name: "009-add-usage-credit", applied_at: upgradeAt.toISOString() },
-        { version: 10, name: "010-deduplicate-inherited-workbuddy-usage", applied_at: originalAppliedAt }
+        { version: 10, name: "010-deduplicate-inherited-workbuddy-usage", applied_at: originalAppliedAt },
+        { version: 11, name: "011-add-usage-cache-reported", applied_at: originalAppliedAt },
+        { version: 12, name: "012-repair-legacy-zcode-subagent-usage", applied_at: originalAppliedAt }
       ]);
     expect(db.prepare("SELECT raw_input_tokens, credit FROM usage_events").get())
       .toEqual({ raw_input_tokens: 120, credit: null });
@@ -381,7 +385,9 @@ describe("runDomainMigrations", () => {
     expect(db.prepare("SELECT COUNT(*) AS count FROM usage_events").get()).toEqual({ count: 3 });
     expect(db.prepare("SELECT version, name FROM schema_migrations WHERE version >= 9 ORDER BY version").all()).toEqual([
       { version: 9, name: "009-add-usage-credit" },
-      { version: 10, name: "010-deduplicate-inherited-workbuddy-usage" }
+      { version: 10, name: "010-deduplicate-inherited-workbuddy-usage" },
+      { version: 11, name: "011-add-usage-cache-reported" },
+      { version: 12, name: "012-repair-legacy-zcode-subagent-usage" }
     ]);
     expect(db.prepare("PRAGMA integrity_check").get()).toEqual({ integrity_check: "ok" });
     runDomainMigrations(db);
@@ -802,6 +808,158 @@ describe("runDomainMigrations", () => {
       expect.objectContaining({ name: "tool_call_id", pk: 3 })
     ]));
 
+    db.close();
+  });
+
+  it("adds cache coverage to pre-011 databases and upgrades additive_usage_events without rewriting history", async () => {
+    const db = new Database(":memory:");
+    createLegacySchema(db, { migrationTable: true });
+    const runDomainMigrations = await loadRunner();
+    runDomainMigrations(db);
+    db.exec(`
+      DROP VIEW additive_usage_events;
+      ALTER TABLE usage_events DROP COLUMN cache_read_reported;
+      DELETE FROM schema_migrations WHERE name = '011-add-usage-cache-reported';
+      CREATE VIEW additive_usage_events AS SELECT * FROM usage_events;
+    `);
+    const before = db.prepare(
+      "SELECT event_id, semantic_fingerprint, cache_read_input_tokens FROM usage_events ORDER BY event_id"
+    ).all();
+    expect(before.length).toBeGreaterThan(0);
+
+    runDomainMigrations(db);
+
+    expect(db.prepare(
+      "SELECT event_id, semantic_fingerprint, cache_read_input_tokens, cache_read_reported FROM usage_events ORDER BY event_id"
+    ).all()).toEqual(before.map((row) => ({ ...row, cache_read_reported: null })));
+    expect(
+      db.prepare<{ sql: string }>("SELECT sql FROM sqlite_master WHERE name = 'additive_usage_events'").get()?.sql
+    ).toContain("canonical.cache_read_reported IS usage.cache_read_reported");
+    db.close();
+  });
+
+  it("remaps pre-merge local Windows v10/v11 migrations alongside upstream v10 WorkBuddy dedup and tier relaxation", async () => {
+    const db = new Database(":memory:");
+    createLegacySchema(db, { migrationTable: true });
+    const runDomainMigrations = await loadRunner();
+    const initialAt = "2026-07-17T12:00:00.000Z";
+    runDomainMigrations(db, new Date(initialAt));
+    restoreUpstream009TierConstraint(db);
+    db.exec(`
+      DELETE FROM schema_migrations WHERE version >= 10;
+      INSERT INTO schema_migrations (version, name, applied_at) VALUES
+        (10, '010-add-usage-cache-reported', '2026-07-17T12:00:00.000Z'),
+        (11, '011-repair-legacy-zcode-subagent-usage', '2026-07-17T12:00:00.000Z');
+      CREATE VIEW additive_usage_events AS SELECT * FROM usage_events;
+    `);
+    const upgradeAt = "2026-07-18T12:00:00.000Z";
+
+    runDomainMigrations(db, new Date(upgradeAt));
+    runDomainMigrations(db, new Date(upgradeAt));
+
+    expect(
+      db.prepare("SELECT version, name, applied_at FROM schema_migrations WHERE version >= 10 ORDER BY version").all()
+    ).toEqual([
+      { version: 10, name: "010-deduplicate-inherited-workbuddy-usage", applied_at: upgradeAt },
+      { version: 11, name: "011-add-usage-cache-reported", applied_at: initialAt },
+      { version: 12, name: "012-repair-legacy-zcode-subagent-usage", applied_at: initialAt }
+    ]);
+    expect(() => db.prepare("UPDATE usage_events SET service_tier = 'provider-burst'").run()).not.toThrow();
+    expect(
+      db.prepare<{ sql: string }>("SELECT sql FROM sqlite_master WHERE name = 'additive_usage_events'").get()?.sql
+    ).toContain("canonical.cache_read_reported IS usage.cache_read_reported");
+    db.close();
+  });
+
+  it("moves legacy zcode subagent usage out of opencode:default into zcode:default during 012", async () => {
+    const db = new Database(":memory:");
+    const runDomainMigrations = await loadRunner();
+    const initialAt = "2026-07-17T12:00:00.000Z";
+    runDomainMigrations(db, new Date(initialAt));
+
+    const zcodePayload = {
+      schema_version: 2,
+      event_id: "legacy:token_usage_events:opencode:zcode:msg-sub-1",
+      session_id: "sess_subagent_agent_1",
+      timestamp: "2026-07-17T10:05:00.000Z",
+      source_vendor: "opencode",
+      source_adapter: "opencode-db",
+      source_instance_id: "opencode:default",
+      adapter_instance_id: "opencode-db@opencode:default",
+      source_record_namespace: "zcode",
+      source_record_id: "msg-sub-1",
+      workspace_path: "/proj/a",
+      type: "token.usage.recorded",
+      message_id: "msg-sub-1",
+      model: "glm-5",
+      input_tokens: 100,
+      input_token_semantics: "gross",
+      usage_measurement: "increment",
+      output_tokens: 20,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 0,
+      server_tool_use: "{}",
+      usage_source: "opencode-message",
+      provider_id: "zhipu"
+    };
+
+    db.prepare(
+      `INSERT INTO source_instances (source_instance_id, source_vendor, created_at, updated_at)
+       VALUES ('opencode:default', 'opencode', ?, ?)`
+    ).run(initialAt, initialAt);
+    db.prepare(
+      `INSERT INTO adapter_instances (adapter_instance_id, source_instance_id, source_adapter, created_at, updated_at)
+       VALUES ('opencode-db@opencode:default', 'opencode:default', 'opencode-db', ?, ?)`
+    ).run(initialAt, initialAt);
+    db.prepare(
+      `INSERT INTO domain_sessions (source_instance_id, session_id, source_vendor, source_adapter, workspace_path, started_at)
+       VALUES ('opencode:default', 'sess_subagent_agent_1', 'opencode', 'opencode-db', '/proj/a', '2026-07-17T10:05:00.000Z'),
+              ('opencode:default', 'ses-regular', 'opencode', 'opencode-db', '/proj/a', '2026-07-17T10:00:00.000Z')`
+    ).run();
+    db.prepare(
+      `INSERT INTO normalized_events (
+         event_id, schema_version, session_id, source_instance_id, timestamp, type, event_type,
+         source_vendor, source_adapter, adapter_instance_id, source_record_namespace, source_record_id,
+         workspace_path, semantic_fingerprint, payload_json, created_at
+       ) VALUES
+         (?, 2, 'sess_subagent_agent_1', 'opencode:default', '2026-07-17T10:05:00.000Z', 'token.usage.recorded', 'token.usage.recorded',
+          'opencode', 'opencode-db', 'opencode-db@opencode:default', 'zcode', 'msg-sub-1', '/proj/a', 'old-fp', ?, ?),
+         ('legacy:token_usage_events:opencode:opencode:msg-reg-1', 2, 'ses-regular', 'opencode:default', '2026-07-17T10:00:00.000Z', 'token.usage.recorded', 'token.usage.recorded',
+          'opencode', 'opencode-db', 'opencode-db@opencode:default', 'opencode', 'msg-reg-1', '/proj/a', 'reg-fp', '{}', ?)`
+    ).run(zcodePayload.event_id, JSON.stringify(zcodePayload), initialAt, initialAt);
+    db.prepare(
+      `INSERT INTO event_observations (event_id, adapter_instance_id, source_adapter, semantic_fingerprint, observed_at)
+       VALUES (?, 'opencode-db@opencode:default', 'opencode-db', 'old-fp', ?)`
+    ).run(zcodePayload.event_id, initialAt);
+    db.prepare(
+      `INSERT INTO usage_events (
+         event_id, schema_version, source_instance_id, source_vendor, session_id, message_id,
+         occurred_at, model_id, provider_id, input_token_semantics, usage_measurement,
+         raw_input_tokens, displayed_input_tokens, output_tokens, cache_creation_input_tokens,
+         cache_read_input_tokens, server_tool_use, usage_source, semantic_fingerprint
+       ) VALUES
+         (?, 2, 'opencode:default', 'opencode', 'sess_subagent_agent_1', 'msg-sub-1',
+          '2026-07-17T10:05:00.000Z', 'glm-5', 'zhipu', 'gross', 'increment',
+          100, 100, 20, 0, 0, '{}', 'opencode-message', 'old-fp'),
+         ('legacy:token_usage_events:opencode:opencode:msg-reg-1', 2, 'opencode:default', 'opencode', 'ses-regular', 'msg-reg-1',
+          '2026-07-17T10:00:00.000Z', 'qwen-3', 'alibaba', 'gross', 'increment',
+          50, 50, 10, 0, 0, '{}', 'opencode-message', 'reg-fp')`
+    ).run(zcodePayload.event_id);
+
+    db.exec("DELETE FROM schema_migrations WHERE name = '012-repair-legacy-zcode-subagent-usage'");
+    runDomainMigrations(db, new Date("2026-07-18T12:00:00.000Z"));
+
+    expect(
+      db.prepare("SELECT source_instance_id, source_vendor FROM usage_events WHERE event_id = ?").get(zcodePayload.event_id)
+    ).toEqual({ source_instance_id: "zcode:default", source_vendor: "zcode" });
+    expect(
+      db.prepare("SELECT source_instance_id, source_vendor FROM usage_events WHERE event_id = ?").get(
+        "legacy:token_usage_events:opencode:opencode:msg-reg-1"
+      )
+    ).toEqual({ source_instance_id: "opencode:default", source_vendor: "opencode" });
+    expect(
+      db.prepare("SELECT source_instance_id, source_adapter FROM domain_sessions WHERE session_id = 'sess_subagent_agent_1' AND source_instance_id = 'zcode:default'").get()
+    ).toEqual({ source_instance_id: "zcode:default", source_adapter: "zcode-db" });
     db.close();
   });
 });

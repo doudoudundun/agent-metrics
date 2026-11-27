@@ -195,7 +195,8 @@ function groupBySource(rows: readonly TokensByModelRow[]): ModelUsageGroup[] {
     group.rows.push(row);
     group.modelCount += 1;
     group.totalTokens += row.totalTokens;
-    group.cacheableInput += row.inputTokens + row.cacheReadTokens + row.cacheCreationTokens;
+    group.cacheableInput +=
+      row.cacheableInputTokens ?? (row.inputTokens + row.cacheReadTokens + row.cacheCreationTokens);
     group.cacheReadTokens += row.cacheReadTokens;
   }
   return [...groups.values()];

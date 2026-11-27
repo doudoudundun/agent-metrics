@@ -82,7 +82,8 @@ export function normalizeEventV2(
 
 function normalizeLegacyEvent(event: AnyEvent, options: EventNormalizationOptions): EventNormalizationResult {
   const sourceAdapter = resolveSourceAdapter(event, options);
-  const sourceInstanceId = options.sourceInstanceId ?? defaultSourceInstanceId(event.source_vendor, sourceAdapter);
+  const sourceVendor = sourceAdapter === "zcode-db" && event.source_vendor === "opencode" ? "zcode" : event.source_vendor;
+  const sourceInstanceId = options.sourceInstanceId ?? defaultSourceInstanceId(sourceVendor, sourceAdapter);
   const adapterInstanceId = options.adapterInstanceId ?? `${sourceAdapter}@${sourceInstanceId}`;
   const sourceRecordNamespace = options.sourceRecordNamespace ?? defaultRecordNamespace(sourceAdapter, event.type);
   const sourceRecordId = options.sourceRecordId ?? event.event_id;
@@ -101,7 +102,7 @@ function normalizeLegacyEvent(event: AnyEvent, options: EventNormalizationOption
     }),
     session_id: event.session_id,
     timestamp,
-    source_vendor: event.source_vendor,
+    source_vendor: sourceVendor,
     source_adapter: sourceAdapter,
     source_instance_id: sourceInstanceId,
     adapter_instance_id: adapterInstanceId,
@@ -125,7 +126,7 @@ function toV2Candidate(
   options: EventNormalizationOptions
 ): Record<string, unknown> {
   if (event.type === "session.started") {
-    return { ...base, type: event.type };
+    return { ...base, type: event.type, ...(event.originator ? { originator: event.originator } : {}) };
   }
 
   if (event.type === "session.ended") {
@@ -214,6 +215,11 @@ function toV2Candidate(
       output_tokens: event.output_tokens,
       cache_creation_input_tokens: event.cache_creation_input_tokens,
       cache_read_input_tokens: event.cache_read_input_tokens,
+      // Only sources that distinguish "no cache" from "not reported" carry this;
+      // dropping it when absent keeps every other event unchanged.
+      ...(event.cache_read_reported === undefined
+        ? {}
+        : { cache_read_reported: event.cache_read_reported }),
       server_tool_use: event.server_tool_use,
       usage_source: event.usage_source,
       // Credit units are optional: only vendors that bill in credits report

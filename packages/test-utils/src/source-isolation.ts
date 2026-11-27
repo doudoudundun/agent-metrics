@@ -50,8 +50,9 @@ export type SourceEnvVarName =
   | "AGENT_METRICS_CURSOR_STORAGE_JSON_PATH"
   | "AGENT_METRICS_CURSOR_GLOBAL_STORAGE_DB_PATH"
   | "AGENT_METRICS_CURSOR_PROJECTS_ROOT"
-  // Antigravity (~/.t3/userdata/providers/antigravity)
-  | "AGENT_METRICS_ANTIGRAVITY_PROVIDERS_ROOT";
+  // Antigravity (~/.t3/userdata/providers/antigravity, ~/.gemini/antigravity-cli)
+  | "AGENT_METRICS_ANTIGRAVITY_PROVIDERS_ROOT"
+  | "AGENT_METRICS_ANTIGRAVITY_CLI_HOME";
 
 /**
  * The authoritative, exhaustive list of every source-path environment variable
@@ -83,7 +84,8 @@ export const AGENT_METRICS_SOURCE_ENV_VARS: readonly SourceEnvVarName[] = [
   "AGENT_METRICS_CURSOR_STORAGE_JSON_PATH",
   "AGENT_METRICS_CURSOR_GLOBAL_STORAGE_DB_PATH",
   "AGENT_METRICS_CURSOR_PROJECTS_ROOT",
-  "AGENT_METRICS_ANTIGRAVITY_PROVIDERS_ROOT"
+  "AGENT_METRICS_ANTIGRAVITY_PROVIDERS_ROOT",
+  "AGENT_METRICS_ANTIGRAVITY_CLI_HOME"
 ];
 
 /**

@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import { describe, expect, it } from "vitest";
 import { initializeLegacySchema } from "./legacy-schema.js";
 import { runDomainMigrations } from "./domain-migrations.js";
+import { TOOL_CALL_ID_EXPRESSION, TOOL_EVENT_PREDICATE } from "./domain-schema.js";
 
 type PlanRow = { id: number; parent: number; detail: string };
 
@@ -87,6 +88,30 @@ function seedLegacyTables(db: InstanceType<typeof Database>): void {
 }
 
 describe("domain query plans", () => {
+  it("upgrades existing databases to seek tool events by call ID, including with malformed legacy payloads", () => {
+    const db = new Database(":memory:");
+    try {
+      runDomainMigrations(db);
+      db.exec("DROP INDEX idx_normalized_events_tool_call");
+      seedDomainTables(db);
+      const setPayload = db.prepare("UPDATE normalized_events SET payload_json = ? WHERE event_id = ?");
+      setPayload.run('{"tool_call_id":"target"}', "event-0");
+      setPayload.run('{"tool_call_id":"other"}', "event-1");
+      setPayload.run("{ invalid json", "event-2");
+      runDomainMigrations(db);
+
+      const sql = `SELECT event_id FROM normalized_events
+        WHERE source_instance_id = ? AND session_id = ?
+          AND ${TOOL_EVENT_PREDICATE} AND ${TOOL_CALL_ID_EXPRESSION} = ?`;
+      const params = ["claude:default", "session-1", "target"];
+      expect(planUsesNamedIndex(explainDetails(db, sql, ...params), "idx_normalized_events_tool_call")).toBe(true);
+      expect(db.prepare(sql).all(...params)).toEqual([{ event_id: "event-0" }]);
+      expect(db.prepare("SELECT COUNT(*) AS count FROM normalized_events").get()).toEqual({ count: 200 });
+    } finally {
+      db.close();
+    }
+  });
+
   it("upgrades an already-applied v4 activity index without changing event counts", () => {
     const db = new Database(":memory:");
     runDomainMigrations(db);

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { delimiter, dirname, join } from "node:path";
+import { basename, delimiter, dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { appendJsonLine } from "@agent-metrics/shared-utils";
 import {
@@ -93,7 +93,9 @@ export async function syncKnownClaudeTranscripts(input: {
     const manifest = await loadTranscriptManifest(input.manifestPath);
     const discoveryRoots = input.discoveryRoots ?? resolveDefaultClaudeDiscoveryRoots(input.manifestPath);
     const discoveredReferences = await discoverClaudeTranscriptReferences(discoveryRoots);
-    const mergedManifest = mergeTranscriptReferences(manifest, discoveredReferences);
+    const parentReferences = mergeTranscriptReferences(manifest, discoveredReferences);
+    const subagentReferences = await discoverClaudeSubagentReferences(parentReferences);
+    const mergedManifest = mergeTranscriptReferences(parentReferences, subagentReferences);
     const manifestChanged = !isSameManifest(mergedManifest, manifest);
     const activeManifest = manifestChanged ? mergedManifest : manifest;
 
@@ -609,6 +611,32 @@ async function discoverClaudeTranscriptReferences(
   }
 
   return discovered;
+}
+
+async function discoverClaudeSubagentReferences(
+  references: ClaudeTranscriptReference[]
+): Promise<ClaudeTranscriptReference[]> {
+  const result: ClaudeTranscriptReference[] = [];
+  const knownPaths = new Set(references.map((reference) => reference.transcriptPath));
+  for (const parent of references) {
+    const directory = dirname(parent.transcriptPath);
+    if (basename(directory) === "subagents" || !parent.transcriptPath.endsWith(".jsonl")) {
+      continue;
+    }
+    const subagents = join(directory, basename(parent.transcriptPath, ".jsonl"), "subagents");
+    const entries = await readdir(subagents, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      if (!entry.isFile() || !/^agent-.+\.jsonl$/u.test(entry.name)) {
+        continue;
+      }
+      const transcriptPath = join(subagents, entry.name);
+      if (!knownPaths.has(transcriptPath)) {
+        knownPaths.add(transcriptPath);
+        result.push({ ...parent, transcriptPath });
+      }
+    }
+  }
+  return result;
 }
 
 async function collectTranscriptFiles(root: string): Promise<string[]> {

@@ -91,6 +91,55 @@ describe("DashboardPage", () => {
     view.unmount();
   });
 
+  it("uses measured cacheable input for the overview, model group and trend summaries", async () => {
+    const overview = buildReadyOverview();
+    const usage = {
+      totalTokens: 1_125,
+      inputTokens: 1_020,
+      outputTokens: 25,
+      cacheReadTokens: 80,
+      cacheCreationTokens: 0,
+      cacheableInputTokens: 100
+    };
+    vi.mocked(fetchOverview).mockResolvedValue({
+      ...overview,
+      ...usage,
+      tokensByModel: [
+        {
+          ...overview.tokensByModel[0],
+          ...usage,
+          sourceVendor: "workbuddy",
+          cacheHitRate: 0.8
+        }
+      ]
+    });
+    vi.mocked(fetchTokenTrend).mockResolvedValue({
+      mode: overview.mode,
+      range: overview.range,
+      timezone: overview.timezone,
+      windowStart: overview.windowStart,
+      windowEnd: overview.windowEnd,
+      updatedAt: overview.updatedAt,
+      rows: [
+        {
+          ...usage,
+          bucketStart: "2026-05-27T09:00:00.000Z",
+          bucket: "hour",
+          label: "17:00",
+          cacheHitRate: 0.8
+        }
+      ]
+    });
+
+    const view = render(<DashboardPage />);
+
+    const metrics = await screen.findByRole("region", { name: "Overview metrics for Today" });
+    expect(within(metrics).getByText("80.0%")).toBeInTheDocument();
+    expect(await screen.findByText("80.00% cache hit")).toBeInTheDocument();
+    expect(await screen.findAllByText("hit 80.0%")).toHaveLength(2);
+    view.unmount();
+  });
+
   it("renders the provider breakdown shares and the activity snapshot chart", async () => {
     const view = render(<DashboardPage />);
     await screen.findByRole("region", { name: "Overview metrics for Today" });
@@ -596,6 +645,67 @@ describe("DashboardPage", () => {
       totalTokens: 99
     });
     expect(await screen.findByText("99")).toBeInTheDocument();
+
+    view.unmount();
+  });
+
+  it("keeps Cursor official account usage visible across non-Cursor source tabs", async () => {
+    vi.mocked(fetchCursorAccountUsage).mockResolvedValue({
+      sourceInstanceId: "cursor:default",
+      email: "dev@example.com",
+      planName: "Pro",
+      planTier: "pro",
+      subscriptionStatus: "active",
+      hostname: null,
+      machineId: null,
+      billingCycleStart: "2026-10-27T00:00:00.000Z",
+      billingCycleEnd: "2026-11-27T00:00:00.000Z",
+      totalSpendCents: 1500,
+      includedSpendCents: 1500,
+      bonusSpendCents: 0,
+      limitCents: 2000,
+      remainingCents: 500,
+      autoPercentUsed: 72.8,
+      apiPercentUsed: 97.3,
+      totalPercentUsed: 75,
+      displayMessage: null,
+      syncedAt: "2026-11-26T06:25:00.000Z",
+      modelAggregations: [],
+      modelUsageTotalCostCents: 36730
+    });
+
+    const view = render(<DashboardPage />);
+    await screen.findByRole("region", { name: "Overview metrics for Today" });
+
+    const cursorCard = await screen.findByRole("listitem", {
+      name: "Cursor official account usage"
+    });
+    expect(cursorCard).toHaveTextContent("75%");
+
+    fireEvent.click(screen.getByRole("button", { name: /Codex/ }));
+    await waitFor(() =>
+      expect(fetchOverview).toHaveBeenCalledWith(
+        { mode: "calendar", range: "day" },
+        "codex",
+        expect.any(AbortSignal)
+      )
+    );
+    expect(
+      screen.getByRole("listitem", { name: "Cursor official account usage" })
+    ).toHaveTextContent("75%");
+
+    fireEvent.mouseEnter(screen.getByRole("button", { name: "Others" }).parentElement as HTMLElement);
+    fireEvent.click(screen.getByRole("button", { name: "Antigravity" }));
+    await waitFor(() =>
+      expect(fetchOverview).toHaveBeenCalledWith(
+        { mode: "calendar", range: "day" },
+        "antigravity",
+        expect.any(AbortSignal)
+      )
+    );
+    expect(
+      screen.getByRole("listitem", { name: "Cursor official account usage" })
+    ).toHaveTextContent("75%");
 
     view.unmount();
   });

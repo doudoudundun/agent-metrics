@@ -27,6 +27,15 @@ type PendingCodexToolCall = {
   argumentSummary: string;
 };
 
+type SessionMetadata = {
+  sessionId: string;
+  timestamp: string;
+  workspacePath: string;
+  providerId: string | null;
+};
+
+type CodexUsageEvent = Extract<AnyEvent, { type: "token.usage.recorded" }>;
+
 export type CodexParserState = {
   lineIndex: number;
   sourceInstanceId: string | null;
@@ -36,12 +45,8 @@ export type CodexParserState = {
   turnServiceTier?: string | null;
   /** Persisted session setting, used when a turn lacks more specific tier data. */
   threadServiceTier?: string | null;
-  sessionMeta: {
-    sessionId: string;
-    timestamp: string;
-    workspacePath: string;
-    providerId: string | null;
-  } | null;
+  sessionMeta: SessionMetadata | null;
+  childUsageMeta?: SessionMetadata | null;
   pendingToolCalls: [string, PendingCodexToolCall][];
   /**
    * Events sharing the newest timestamp seen so far. They are held (also
@@ -53,6 +58,8 @@ export type CodexParserState = {
   mirroredUsageEvents?: AnyEvent[];
   mirroredUsageDeferredEvents?: AnyEvent[];
   tokenCountUsageSeen?: boolean;
+  pendingMirror?: CodexUsageEvent | null;
+  previousTotalTokens?: number | null;
   /** Optional for compatibility with checkpoints created before timing support. */
   lastTokenEventMs?: number | null;
   /** Model and tier for the last timing anchor; omitted by older checkpoints. */
@@ -175,7 +182,8 @@ export function createCodexRolloutParser(
     ...[...pendingToolCalls.keys()].map((callId) => `tool:${callId}`)
   ]);
   let activeUnkeyedTimingTools = Math.max(0, state?.activeUnkeyedTimingTools ?? 0);
-  let sessionMeta: CodexParserState["sessionMeta"] = state?.sessionMeta ?? null;
+  let sessionMeta: SessionMetadata | null = state?.sessionMeta ?? null;
+  let childUsageMeta: SessionMetadata | null = state?.childUsageMeta ?? null;
   let lastTokenEventMs = state?.lastTokenEventMs ?? null;
   let lastTokenEventModel = state?.lastTokenEventModel ?? null;
   let lastTokenEventTier = state?.lastTokenEventTier ?? null;
@@ -194,6 +202,8 @@ export function createCodexRolloutParser(
   const mirroredUsageEvents: AnyEvent[] = [...(state?.mirroredUsageEvents ?? [])];
   const mirroredUsageDeferredEvents: AnyEvent[] = [...(state?.mirroredUsageDeferredEvents ?? [])];
   let tokenCountUsageSeen = state?.tokenCountUsageSeen ?? false;
+  let pendingMirror: CodexUsageEvent | null = state?.pendingMirror ?? null;
+  let previousTotalTokens: number | null = state?.previousTotalTokens ?? null;
 
   // Older checkpoints have a timestamp anchor but cannot say which model/tier
   // it belongs to. Drop that one estimate rather than risk joining unlike work.
@@ -245,11 +255,14 @@ export function createCodexRolloutParser(
         lineIndex: nextLineIndex,
         sourceInstanceId,
         sessionMeta,
+        childUsageMeta,
         pendingToolCalls: [...pendingToolCalls],
         pendingEvents: [...pendingEvents],
         mirroredUsageEvents: [...mirroredUsageEvents],
         mirroredUsageDeferredEvents: [...mirroredUsageDeferredEvents],
         tokenCountUsageSeen,
+        pendingMirror,
+        previousTotalTokens,
         lastTokenEventMs,
         lastTokenEventModel,
         lastTokenEventTier,
@@ -411,28 +424,36 @@ export function createCodexRolloutParser(
             sourceInstanceId = "codex:multica";
           }
 
-          sessionMeta = {
+          const metadata: SessionMetadata = {
             sessionId,
             timestamp,
             workspacePath: normalizeOptionalString(payload.cwd) ?? ".",
             providerId: normalizeOptionalString(payload.model_provider)
           };
+          sessionMeta = metadata;
+          // A spawned rollout can contain the parent's metadata immediately after
+          // its own header. Its cumulative usage counters belong to the child.
+          if (childUsageMeta === null && asRecord(asRecord(payload.source)?.subagent)?.thread_spawn) {
+            childUsageMeta = metadata;
+          }
           push({
             event_id: `codex:session:${sessionId}:started`,
             session_id: sessionId,
             timestamp,
             source_vendor: CODEX_SOURCE_VENDOR,
             source_adapter: CODEX_ROLLOUT_ADAPTER,
-            workspace_path: sessionMeta.workspacePath,
-            type: "session.started"
+            workspace_path: metadata.workspacePath,
+            type: "session.started",
+            ...(originator ? { originator } : {})
           });
           continue;
         }
 
         if (eventType === "token_usage_record" && payload !== null) {
-          const sessionId = sessionMeta?.sessionId ?? inferSessionIdFromPath(input.filePath);
-          if (!tokenCountUsageSeen && sessionId !== null) {
-            const providerId = sessionMeta?.providerId ?? null;
+          const activeMeta = childUsageMeta ?? sessionMeta;
+          const sessionId = activeMeta?.sessionId ?? inferSessionIdFromPath(input.filePath);
+          if (sessionId !== null) {
+            const providerId = activeMeta?.providerId ?? null;
             const turnInputMetadata = turnModel !== null && turnId !== null
               ? input.turnInputMetadata?.get(codexTurnMetadataKey(sessionId, turnId))
               : undefined;
@@ -444,24 +465,30 @@ export function createCodexRolloutParser(
               parsed,
               payload,
               sessionId,
-              workspacePath: sessionMeta?.workspacePath ?? ".",
+              workspacePath: activeMeta?.workspacePath ?? ".",
               model: turnModel ?? normalizeModelId(input.sessionModels?.[sessionId]),
               serviceTier: turnServiceTier ?? databaseTier ?? threadServiceTier,
               providerId,
               providerConfig: providerId ? input.providerConfigs?.[providerId] : undefined
             });
             if (mirrored !== null) {
-              mirroredUsageEvents.push(mirrored);
+              pendingMirror = mirrored;
+              if (!tokenCountUsageSeen) {
+                mirroredUsageEvents.push(mirrored);
+              }
             }
           }
           continue;
         }
 
         if (eventType === "response_item" && payload !== null) {
+          // Spawned rollouts append the parent's session_meta after the child's
+          // header; everything that follows still belongs to the child thread.
+          const activeMeta = childUsageMeta ?? sessionMeta;
           const payloadType = normalizeOptionalString(payload.type);
           const timestamp =
             normalizeOptionalString(parsed.timestamp) ??
-            sessionMeta?.timestamp ??
+            activeMeta?.timestamp ??
             new Date(0).toISOString();
           applyTimingBoundary(
             getResponseItemTimingBoundary(
@@ -470,7 +497,7 @@ export function createCodexRolloutParser(
             ),
             timestamp
           );
-          const sessionId = sessionMeta?.sessionId ?? inferSessionIdFromPath(input.filePath);
+          const sessionId = activeMeta?.sessionId ?? inferSessionIdFromPath(input.filePath);
 
           if (sessionId !== null && payloadType === "custom_tool_call") {
             const callId = normalizeOptionalString(payload.call_id);
@@ -483,7 +510,7 @@ export function createCodexRolloutParser(
 
             pendingToolCalls.set(callId, {
               sessionId,
-              workspacePath: sessionMeta?.workspacePath ?? ".",
+              workspacePath: activeMeta?.workspacePath ?? ".",
               timestamp,
               toolName,
               argumentSummary
@@ -494,7 +521,7 @@ export function createCodexRolloutParser(
               timestamp,
               source_vendor: CODEX_SOURCE_VENDOR,
               source_adapter: CODEX_ROLLOUT_ADAPTER,
-              workspace_path: sessionMeta?.workspacePath ?? ".",
+              workspace_path: activeMeta?.workspacePath ?? ".",
               type: "tool.called",
               tool_call_id: normalizeNativeId(callId) ?? `native:${callId}`,
               tool_name: toolName,
@@ -518,7 +545,7 @@ export function createCodexRolloutParser(
 
             pendingToolCalls.set(callId, {
               sessionId,
-              workspacePath: sessionMeta?.workspacePath ?? ".",
+              workspacePath: activeMeta?.workspacePath ?? ".",
               timestamp,
               toolName: inferFunctionCallToolName(functionName, argumentText),
               argumentSummary: summarizeFunctionCallArguments(functionName, argumentText)
@@ -531,7 +558,7 @@ export function createCodexRolloutParser(
                 timestamp,
                 source_vendor: CODEX_SOURCE_VENDOR,
                 source_adapter: CODEX_ROLLOUT_ADAPTER,
-                workspace_path: sessionMeta?.workspacePath ?? ".",
+                workspace_path: activeMeta?.workspacePath ?? ".",
                 type: "tool.called",
                 tool_call_id: normalizeNativeId(callId) ?? `native:${callId}`,
                 tool_name: pending.toolName,
@@ -632,10 +659,11 @@ export function createCodexRolloutParser(
         }
 
         if (eventType === "event_msg" && payload !== null) {
+          const activeMeta = childUsageMeta ?? sessionMeta;
           const payloadType = normalizeOptionalString(payload.type);
           const timestamp =
             normalizeOptionalString(parsed.timestamp) ??
-            sessionMeta?.timestamp ??
+            activeMeta?.timestamp ??
             new Date(0).toISOString();
           applyTimingBoundary(
             getEventMessageTimingBoundary(
@@ -647,7 +675,7 @@ export function createCodexRolloutParser(
           if (payloadType === "user_message") {
             endTimingWaits(timestamp);
           }
-          const sessionId = sessionMeta?.sessionId ?? inferSessionIdFromPath(input.filePath);
+          const sessionId = activeMeta?.sessionId ?? inferSessionIdFromPath(input.filePath);
           const eventKey = buildEventKey(parsed, payloadType ?? "event_msg", lineIndex);
 
           if (sessionId !== null && payloadType === "user_message") {
@@ -659,7 +687,7 @@ export function createCodexRolloutParser(
               timestamp,
               source_vendor: CODEX_SOURCE_VENDOR,
               source_adapter: CODEX_ROLLOUT_ADAPTER,
-              workspace_path: sessionMeta?.workspacePath ?? ".",
+              workspace_path: activeMeta?.workspacePath ?? ".",
               type: "prompt.submitted",
               prompt_id: `prompt_${eventKey}`,
               prompt_chars: promptText.length
@@ -669,7 +697,7 @@ export function createCodexRolloutParser(
 
           if (sessionId !== null && payloadType === "agent_message") {
             const responseText = normalizeOptionalString(payload.message) ?? "";
-            const providerId = sessionMeta?.providerId ?? null;
+            const providerId = activeMeta?.providerId ?? null;
             const providerConfig = providerId ? input.providerConfigs?.[providerId] : undefined;
 
             push({
@@ -678,7 +706,7 @@ export function createCodexRolloutParser(
               timestamp,
               source_vendor: CODEX_SOURCE_VENDOR,
               source_adapter: CODEX_ROLLOUT_ADAPTER,
-              workspace_path: sessionMeta?.workspacePath ?? ".",
+              workspace_path: activeMeta?.workspacePath ?? ".",
               type: "assistant.responded",
               message_id: `response_${eventKey}`,
               model: turnModel ?? normalizeModelId(input.sessionModels?.[sessionId]),
@@ -704,7 +732,7 @@ export function createCodexRolloutParser(
               timestamp,
               source_vendor: CODEX_SOURCE_VENDOR,
               source_adapter: CODEX_ROLLOUT_ADAPTER,
-              workspace_path: sessionMeta?.workspacePath ?? ".",
+              workspace_path: activeMeta?.workspacePath ?? ".",
               type: "tool.succeeded",
               tool_call_id: normalizeNativeId(callId) ?? `native:${callId}`,
               tool_name: "WebSearch",
@@ -728,7 +756,7 @@ export function createCodexRolloutParser(
               timestamp,
               source_vendor: CODEX_SOURCE_VENDOR,
               source_adapter: CODEX_ROLLOUT_ADAPTER,
-              workspace_path: sessionMeta?.workspacePath ?? ".",
+              workspace_path: activeMeta?.workspacePath ?? ".",
               tool_call_id: normalizeNativeId(callId) ?? `native:${callId}`,
               tool_name: inferExecCommandToolName(payload.command),
               duration_ms: getExecCommandDurationMs(payload)
@@ -766,7 +794,7 @@ export function createCodexRolloutParser(
                 timestamp,
                 source_vendor: CODEX_SOURCE_VENDOR,
                 source_adapter: CODEX_ROLLOUT_ADAPTER,
-                workspace_path: sessionMeta?.workspacePath ?? ".",
+                workspace_path: activeMeta?.workspacePath ?? ".",
                 type: "tool.succeeded",
                 tool_call_id: normalizeNativeId(callId) ?? `native:${callId}`,
                 tool_name: "apply_patch",
@@ -780,7 +808,7 @@ export function createCodexRolloutParser(
                 timestamp,
                 source_vendor: CODEX_SOURCE_VENDOR,
                 source_adapter: CODEX_ROLLOUT_ADAPTER,
-                workspace_path: sessionMeta?.workspacePath ?? ".",
+                workspace_path: activeMeta?.workspacePath ?? ".",
                 type: "tool.failed",
                 tool_call_id: normalizeNativeId(callId) ?? `native:${callId}`,
                 tool_name: "apply_patch",
@@ -800,7 +828,7 @@ export function createCodexRolloutParser(
                 timestamp,
                 source_vendor: CODEX_SOURCE_VENDOR,
                 source_adapter: CODEX_ROLLOUT_ADAPTER,
-                workspace_path: sessionMeta?.workspacePath ?? ".",
+                workspace_path: activeMeta?.workspacePath ?? ".",
                 type: "code.edit.applied",
                 tool_name: "apply_patch",
                 files_changed: filesChanged,
@@ -834,7 +862,7 @@ export function createCodexRolloutParser(
                 timestamp,
                 source_vendor: CODEX_SOURCE_VENDOR,
                 source_adapter: CODEX_ROLLOUT_ADAPTER,
-                workspace_path: sessionMeta?.workspacePath ?? ".",
+                workspace_path: activeMeta?.workspacePath ?? ".",
                 type: "code.edit.applied",
                 tool_name: "apply_patch",
                 files_changed: filesChanged,
@@ -889,7 +917,8 @@ export function createCodexRolloutParser(
           continue;
         }
 
-        const sessionId = sessionMeta?.sessionId ?? inferSessionIdFromPath(input.filePath);
+        const activeMeta = childUsageMeta ?? sessionMeta;
+        const sessionId = activeMeta?.sessionId ?? inferSessionIdFromPath(input.filePath);
         if (sessionId === null) {
           continue;
         }
@@ -900,6 +929,15 @@ export function createCodexRolloutParser(
         if (totalTokens === null) {
           continue;
         }
+
+        const mirror = pendingMirror;
+        pendingMirror = null;
+        const unchangedTotal = totalUsage !== null && totalTokens === previousTotalTokens;
+        previousTotalTokens = totalUsage === null ? null : totalTokens;
+        const usageTimestamp =
+          normalizeOptionalString(parsed.timestamp) ??
+          activeMeta?.timestamp ??
+          new Date(0).toISOString();
 
         const inputTokens = normalizeInteger(lastUsage?.input_tokens) ?? 0;
         const cacheReadTokens = normalizeInteger(lastUsage?.cached_input_tokens) ?? 0;
@@ -912,7 +950,7 @@ export function createCodexRolloutParser(
         const turnInputMetadata =
           turnModel !== null && turnId !== null
             ? input.turnInputMetadata?.get(
-                codexTurnMetadataKey(sessionMeta?.sessionId ?? sessionId, turnId)
+                codexTurnMetadataKey(activeMeta?.sessionId ?? sessionId, turnId)
               )
             : undefined;
         const databaseTier =
@@ -931,18 +969,24 @@ export function createCodexRolloutParser(
           threadServiceTier;
 
         if (inputTokens === 0 && cacheReadTokens === 0 && outputTokens === 0) {
+          // A zero-increment report immediately following a response can omit its
+          // usage entirely. Require an unchanged cumulative total as evidence.
+          const lagMs = mirror === null ? -1 : Date.parse(usageTimestamp) - Date.parse(mirror.timestamp);
+          if (lastUsage !== null && unchangedTotal && mirror !== null && lagMs >= 0 && lagMs <= 1000) {
+            const mirrorIndex = mirroredUsageEvents.indexOf(mirror);
+            if (mirrorIndex !== -1) {
+              mirroredUsageEvents.splice(mirrorIndex, 1);
+            }
+            push(mirror);
+          }
           continue;
         }
 
         tokenCountUsageSeen = true;
         mirroredUsageEvents.length = 0;
 
-        const providerId = sessionMeta?.providerId ?? null;
+        const providerId = activeMeta?.providerId ?? null;
         const providerConfig = providerId ? input.providerConfigs?.[providerId] : undefined;
-        const usageTimestamp =
-          normalizeOptionalString(parsed.timestamp) ??
-          sessionMeta?.timestamp ??
-          new Date(0).toISOString();
         // Rollouts have no stream chunks, so only estimate decode time between
         // consecutive reports when no tool/wait boundary intervened.
         const usageMs = Date.parse(usageTimestamp);
@@ -990,7 +1034,7 @@ export function createCodexRolloutParser(
           timestamp: usageTimestamp,
           source_vendor: CODEX_SOURCE_VENDOR,
           source_adapter: CODEX_ROLLOUT_ADAPTER,
-          workspace_path: sessionMeta?.workspacePath ?? ".",
+          workspace_path: activeMeta?.workspacePath ?? ".",
           type: "token.usage.recorded",
           message_id: `usage_${totalTokens}`,
           model: turnModel ?? normalizeModelId(input.sessionModels?.[sessionId]),
@@ -1041,7 +1085,7 @@ function buildMirroredUsageEvent(input: {
   serviceTier: string | null;
   providerId: string | null;
   providerConfig?: CodexProviderConfig;
-}): AnyEvent | null {
+}): CodexUsageEvent | null {
   const usage = asRecord(input.payload.usage);
   if (usage === null) {
     return null;
