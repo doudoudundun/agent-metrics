@@ -1,13 +1,15 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { persistOfficialKeyUsage, selectOfficialKeyUsage } from "./official-key-usage.js";
 import {
+  ANTIGRAVITY_MANAGER_CACHE_SOURCE,
   collectAntigravityKeyUsage,
   decodeGoKeyringSecret,
   parseAntigravityAvailableModels,
+  parseAntigravityManagerQuota,
   parseAntigravityQuotaSummary,
   readAntigravityCredentials
 } from "./official-key-usage-antigravity.js";
@@ -581,5 +583,309 @@ describe("collectAntigravityKeyUsage", () => {
 
     expect(result).toEqual({ snapshotsFound: 0, snapshotsStored: 0 });
     expect(selectOfficialKeyUsage(db, { vendor: "antigravity" })).toHaveLength(2);
+  });
+});
+
+async function writeManagerAccount(
+  managerRoot: string,
+  account: {
+    id: string;
+    accessToken?: string;
+    expiryTimestampSec?: number;
+    projectId?: string;
+    quota?: unknown;
+  }
+): Promise<void> {
+  await mkdir(join(managerRoot, "accounts"), { recursive: true });
+  await writeFile(
+    join(managerRoot, "accounts", `${account.id}.json`),
+    JSON.stringify({
+      id: account.id,
+      ...(account.accessToken !== undefined
+        ? {
+            token: {
+              access_token: account.accessToken,
+              expiry_timestamp: account.expiryTimestampSec,
+              project_id: account.projectId
+            }
+          }
+        : {}),
+      ...(account.quota !== undefined ? { quota: account.quota } : {})
+    })
+  );
+}
+
+describe("Antigravity Manager integration", () => {
+  it("reads active agy/classic credentials from accounts.json ahead of T3 profiles", async () => {
+    const providersRoot = await makeTempRoot("agent-metrics-agy-prov-mgr-");
+    const acpRoot = await createProfileDir(providersRoot, "t3-acct", "oauth-personal");
+    await writeFile(
+      join(acpRoot, "antigravity-oauth-token"),
+      JSON.stringify({ token: { access_token: "t3-token", expiry: "2026-11-25T05:00:00Z" } })
+    );
+
+    const managerRoot = await makeTempRoot("agent-metrics-agy-manager-");
+    await writeManagerAccount(managerRoot, {
+      id: "acct-agy",
+      accessToken: "mgr-agy-token",
+      expiryTimestampSec: Math.floor(Date.parse("2026-11-25T02:00:00Z") / 1000),
+      projectId: "proj-agy"
+    });
+    await writeManagerAccount(managerRoot, {
+      id: "acct-classic",
+      accessToken: "mgr-classic-token",
+      expiryTimestampSec: Math.floor(Date.parse("2026-11-25T03:00:00Z") / 1000),
+      projectId: "proj-classic"
+    });
+    await writeFile(
+      join(managerRoot, "accounts.json"),
+      JSON.stringify({
+        current_target_ide: "agy",
+        current_account_id: "acct-classic",
+        current_agy_account_id: "acct-agy",
+        current_classic_account_id: "acct-classic"
+      })
+    );
+
+    const agyCreds = await readAntigravityCredentials({ providersRoot, managerRoot });
+    expect(agyCreds).toEqual({
+      kind: "cli-token",
+      authMethod: "oauth-personal",
+      accessToken: "mgr-agy-token",
+      refreshToken: null,
+      expiresAt: Date.parse("2026-11-25T02:00:00.000Z"),
+      clientId: null,
+      clientSecret: null,
+      projectId: "proj-agy"
+    });
+
+    await writeFile(
+      join(managerRoot, "accounts.json"),
+      JSON.stringify({
+        current_target_ide: "classic",
+        current_account_id: "acct-agy",
+        current_agy_account_id: "acct-agy",
+        current_classic_account_id: "acct-classic"
+      })
+    );
+
+    const classicCreds = await readAntigravityCredentials({ providersRoot, managerRoot });
+    expect(classicCreds).toMatchObject({
+      accessToken: "mgr-classic-token",
+      projectId: "proj-classic"
+    });
+
+    // When isolated via providersRoot without managerRoot, never touch ~/.antigravity_tools.
+    const t3OnlyCreds = await readAntigravityCredentials({ providersRoot });
+    expect(t3OnlyCreds).toMatchObject({ accessToken: "t3-token" });
+  });
+
+  it("prefers unexpired and newer T3 profile credentials across multiple account directories", async () => {
+    const providersRoot = await makeTempRoot("agent-metrics-agy-multi-t3-");
+    const acpA = await createProfileDir(providersRoot, "acct-a", "oauth-personal");
+    const acpB = await createProfileDir(providersRoot, "acct-b", "oauth-personal");
+    const acpC = await createProfileDir(providersRoot, "acct-c", "oauth-personal");
+
+    // Alphabetically first directory has an expired token.
+    await writeFile(
+      join(acpA, "antigravity-oauth-token"),
+      JSON.stringify({ token: { access_token: "expired-a", expiry: "2026-11-25T00:10:00Z" } })
+    );
+    // Older valid token in acct-b.
+    const tokenPathB = join(acpB, "antigravity-oauth-token");
+    await writeFile(
+      tokenPathB,
+      JSON.stringify({ token: { access_token: "valid-b", expiry: "2026-11-25T02:00:00Z" } })
+    );
+    await utimes(tokenPathB, new Date("2026-11-25T00:20:00Z"), new Date("2026-11-25T00:20:00Z"));
+    // Newer valid token in acct-c.
+    const tokenPathC = join(acpC, "antigravity-oauth-token");
+    await writeFile(
+      tokenPathC,
+      JSON.stringify({ token: { access_token: "valid-c", expiry: "2026-11-25T02:00:00Z" } })
+    );
+    await utimes(tokenPathC, new Date("2026-11-25T00:50:00Z"), new Date("2026-11-25T00:50:00Z"));
+
+    const creds = await readAntigravityCredentials({ providersRoot, now: () => NOW });
+    expect(creds).toMatchObject({ accessToken: "valid-c" });
+  });
+
+  it("follows current_agy_account_id switches in Antigravity Manager", async () => {
+    const providersRoot = await makeTempRoot("agent-metrics-agy-switch-prov-");
+    const managerRoot = await makeTempRoot("agent-metrics-agy-switch-mgr-");
+    const validExpSec = Math.floor(Date.parse("2026-11-25T02:00:00Z") / 1000);
+
+    await writeManagerAccount(managerRoot, {
+      id: "acct-1",
+      accessToken: "token-1",
+      expiryTimestampSec: validExpSec,
+      projectId: "proj-consumers"
+    });
+    await writeManagerAccount(managerRoot, {
+      id: "acct-2",
+      accessToken: "token-2",
+      expiryTimestampSec: validExpSec,
+      projectId: "proj-consumers"
+    });
+    await writeFile(
+      join(managerRoot, "accounts.json"),
+      JSON.stringify({
+        current_target_ide: "agy",
+        current_account_id: "acct-1",
+        current_agy_account_id: "acct-1"
+      })
+    );
+
+    const seenTokens: string[] = [];
+    const fetchImpl = vi.fn(async (_url: string, init?: RequestInit) => {
+      const auth = (init?.headers as Record<string, string>)?.Authorization ?? "";
+      seenTokens.push(auth);
+      if (auth === "Bearer token-1") {
+        return jsonResponse(summaryPayload());
+      }
+      return jsonResponse({
+        groups: [
+          {
+            displayName: "Gemini Models",
+            buckets: [
+              {
+                bucketId: "gemini-5h",
+                window: "5h",
+                remainingFraction: 0.99,
+                resetTime: "2026-11-25T05:30:00Z",
+                description: "active"
+              }
+            ]
+          }
+        ]
+      });
+    });
+
+    const db = createDb();
+    await collectAntigravityKeyUsage(db, {
+      providersRoot,
+      managerRoot,
+      dailyEndpoint: "https://daily.agy.test",
+      prodEndpoint: "https://prod.agy.test",
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      now: () => NOW
+    });
+    expect(selectOfficialKeyUsage(db, { vendor: "antigravity" })).toHaveLength(2);
+
+    // Switch active account in Manager to acct-2.
+    await writeFile(
+      join(managerRoot, "accounts.json"),
+      JSON.stringify({
+        current_target_ide: "agy",
+        current_account_id: "acct-2",
+        current_agy_account_id: "acct-2"
+      })
+    );
+
+    await collectAntigravityKeyUsage(db, {
+      providersRoot,
+      managerRoot,
+      dailyEndpoint: "https://daily.agy.test",
+      prodEndpoint: "https://prod.agy.test",
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      now: () => new Date("2026-11-25T00:59:00.000Z")
+    });
+
+    expect(seenTokens).toEqual(["Bearer token-1", "Bearer token-2"]);
+    const afterSwitch = selectOfficialKeyUsage(db, { vendor: "antigravity" });
+    expect(afterSwitch).toHaveLength(1);
+    expect(afterSwitch[0]?.primary?.usedPercent).toBe(1);
+  });
+
+  it("falls back to Antigravity Manager cached quota_groups when token is expired or unauthorized", async () => {
+    const providersRoot = await makeTempRoot("agent-metrics-agy-cache-prov-");
+    const acpRoot = await createProfileDir(providersRoot, "t3-old", "oauth-personal");
+    await writeFile(
+      join(acpRoot, "antigravity-oauth-token"),
+      JSON.stringify({ token: { access_token: "t3-stale", expiry: "2026-11-25T05:00:00Z" } })
+    );
+
+    const managerRoot = await makeTempRoot("agent-metrics-agy-cache-mgr-");
+    const cachedQuota = {
+      last_updated: Math.floor(NOW.getTime() / 1000),
+      is_forbidden: false,
+      quota_groups: [
+        {
+          display_name: "Gemini Models",
+          buckets: [
+            {
+              bucket_id: "gemini-5h",
+              window: "5h",
+              remaining_fraction: 0.75,
+              reset_time: "2026-11-25T05:00:00Z",
+              description: "cached 5h"
+            },
+            {
+              bucket_id: "gemini-weekly",
+              window: "weekly",
+              remaining_fraction: 0.8,
+              reset_time: "2026-12-01T00:00:00Z",
+              description: "cached weekly"
+            }
+          ]
+        }
+      ]
+    };
+
+    // Case 1: expired Manager token skips fetch and uses cache (without falling back to t3-stale).
+    await writeManagerAccount(managerRoot, {
+      id: "acct-expired",
+      accessToken: "mgr-expired",
+      expiryTimestampSec: Math.floor(Date.parse("2026-11-25T00:10:00Z") / 1000),
+      quota: cachedQuota
+    });
+    await writeFile(
+      join(managerRoot, "accounts.json"),
+      JSON.stringify({ current_agy_account_id: "acct-expired" })
+    );
+
+    const fetchImpl = vi.fn(async () => jsonResponse({}, 401));
+    const db = createDb();
+    const expiredResult = await collectAntigravityKeyUsage(db, {
+      providersRoot,
+      managerRoot,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      now: () => NOW
+    });
+
+    expect(expiredResult).toEqual({ snapshotsFound: 1, snapshotsStored: 1 });
+    expect(fetchImpl).not.toHaveBeenCalled();
+    const stored = selectOfficialKeyUsage(db, { vendor: "antigravity" });
+    expect(stored[0]).toMatchObject({
+      source: ANTIGRAVITY_MANAGER_CACHE_SOURCE,
+      limitId: "gemini",
+      primary: { usedPercent: 25, windowMinutes: 300 },
+      secondary: { usedPercent: 20, windowMinutes: 10080 }
+    });
+
+    // Case 2: valid Manager token returning 401 falls back to quota_groups cache.
+    await writeManagerAccount(managerRoot, {
+      id: "acct-401",
+      accessToken: "mgr-401",
+      expiryTimestampSec: Math.floor(Date.parse("2026-11-25T02:00:00Z") / 1000),
+      quota: cachedQuota
+    });
+    await writeFile(
+      join(managerRoot, "accounts.json"),
+      JSON.stringify({ current_agy_account_id: "acct-401" })
+    );
+
+    const unauthorizedResult = await collectAntigravityKeyUsage(db, {
+      providersRoot,
+      managerRoot,
+      dailyEndpoint: "https://daily.agy.test",
+      prodEndpoint: "https://prod.agy.test",
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      now: () => new Date("2026-11-25T00:59:30.000Z")
+    });
+
+    expect(unauthorizedResult).toEqual({ snapshotsFound: 1, snapshotsStored: 1 });
+    expect(fetchImpl).toHaveBeenCalled();
+    expect(parseAntigravityManagerQuota({ is_forbidden: true, quota_groups: cachedQuota.quota_groups })).toEqual([]);
   });
 });
