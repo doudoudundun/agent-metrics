@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { selectOfficialKeyUsage } from "./official-key-usage.js";
+import { persistOfficialKeyUsage, selectOfficialKeyUsage } from "./official-key-usage.js";
 import {
   collectAntigravityKeyUsage,
   decodeGoKeyringSecret,
@@ -449,5 +449,74 @@ describe("collectAntigravityKeyUsage", () => {
     expect(result).toEqual({ snapshotsFound: 0, snapshotsStored: 0 });
     expect(fetchImpl).not.toHaveBeenCalled();
     expect(log.warn).toHaveBeenCalled();
+  });
+
+  it("prunes stale fallback rows when retrieveUserQuotaSummary succeeds", async () => {
+    const providersRoot = await makeTempRoot("agent-metrics-agy-prune-");
+    const acpRoot = await createProfileDir(providersRoot, "acct-1", "oauth-personal");
+    await writeFile(
+      join(acpRoot, "antigravity-oauth-token"),
+      JSON.stringify({
+        token: { access_token: "access-1", expiry: "2026-11-25T02:00:00Z" }
+      })
+    );
+
+    const db = createDb();
+    persistOfficialKeyUsage(
+      db,
+      parseAntigravityAvailableModels(availableModelsPayload(), "2026-11-25T00:10:00.000Z"),
+      "2026-11-25T00:10:00.000Z"
+    );
+    expect(selectOfficialKeyUsage(db, { vendor: "antigravity" }).map((entry) => entry.limitId)).toEqual([
+      "claude",
+      "gemini"
+    ]);
+
+    const fetchImpl = vi.fn(async () => jsonResponse(summaryPayload()));
+    const result = await collectAntigravityKeyUsage(db, {
+      providersRoot,
+      dailyEndpoint: "https://daily.agy.test",
+      prodEndpoint: "https://prod.agy.test",
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      now: () => NOW
+    });
+
+    expect(result).toEqual({ snapshotsFound: 2, snapshotsStored: 2 });
+    const stored = selectOfficialKeyUsage(db, { vendor: "antigravity" });
+    expect(stored.map((entry) => entry.limitName)).toEqual([
+      "Claude and GPT models",
+      "Gemini Models"
+    ]);
+  });
+
+  it("preserves previously stored rows when quota endpoints return empty", async () => {
+    const providersRoot = await makeTempRoot("agent-metrics-agy-empty-");
+    const acpRoot = await createProfileDir(providersRoot, "acct-1", "oauth-personal");
+    await writeFile(
+      join(acpRoot, "antigravity-oauth-token"),
+      JSON.stringify({
+        token: { access_token: "access-1", expiry: "2026-11-25T02:00:00Z" }
+      })
+    );
+
+    const db = createDb();
+    persistOfficialKeyUsage(
+      db,
+      parseAntigravityQuotaSummary(summaryPayload(), "2026-11-25T00:10:00.000Z"),
+      "2026-11-25T00:10:00.000Z"
+    );
+
+    const fetchImpl = vi.fn(async () => jsonResponse({}));
+    const result = await collectAntigravityKeyUsage(db, {
+      providersRoot,
+      dailyEndpoint: "https://daily.agy.test",
+      prodEndpoint: "https://prod.agy.test",
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      now: () => NOW,
+      log: { warn: vi.fn(), info: vi.fn() }
+    });
+
+    expect(result).toEqual({ snapshotsFound: 0, snapshotsStored: 0 });
+    expect(selectOfficialKeyUsage(db, { vendor: "antigravity" })).toHaveLength(2);
   });
 });

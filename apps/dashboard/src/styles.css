@@ -2836,6 +2836,14 @@ tbody tr[data-selected="true"] .session-select {
   background: rgba(16, 32, 48, 0.02);
 }
 
+.dashboard-page .key-usage-group + .key-usage-group {
+  border-top-color: rgba(16, 32, 48, 0.1);
+}
+
+.dashboard-page .key-usage-group__title {
+  color: var(--ink);
+}
+
 .dashboard-page .key-usage-card__vendor {
   color: var(--ink);
 }
@@ -3857,6 +3865,10 @@ body[data-desktop-surface="desktop-main"] {
   border: 1px solid var(--panel-border);
   border-radius: 10px;
   background: #eeede7;
+}
+
+.dashboard-page .key-usage-group + .key-usage-group {
+  border-top-color: var(--panel-border);
 }
 
 .dashboard-page .key-usage-card__vendor,

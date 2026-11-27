@@ -11,6 +11,7 @@ import {
   extractSnapshotsFromRolloutText,
   parseRateLimits,
   persistOfficialKeyUsage,
+  replaceVendorOfficialKeyUsage,
   selectOfficialKeyUsage,
   toKeyUsageResponse,
   type OfficialKeyUsageSnapshot
@@ -295,6 +296,54 @@ describe("official key usage storage", () => {
     expect(entry?.secondary).toBeNull();
     expect(entry?.credits).toBeNull();
     expect(entry?.primary?.usedPercent).toBe(20);
+  });
+
+  it("replaces a vendor's limit keys while preserving newer rows and other vendors", () => {
+    const db = createDb();
+    persistOfficialKeyUsage(db, [
+      snapshot({ vendor: "antigravity", source: "antigravity-quota-api", limitId: "claude", limitName: "Claude Models", observedAt: "2026-10-10T01:00:00.000Z" }),
+      snapshot({ vendor: "antigravity", source: "antigravity-quota-api", limitId: "gpt", limitName: "GPT Models", observedAt: "2026-10-10T01:00:00.000Z" }),
+      snapshot({ vendor: "antigravity", source: "antigravity-quota-api", limitId: "gemini", limitName: "Gemini Models", observedAt: "2026-10-10T01:00:00.000Z" }),
+      snapshot({ vendor: "antigravity", source: "antigravity-quota-api", limitId: "future-limit", limitName: "Future Models", observedAt: "2026-10-10T03:00:00.000Z" }),
+      snapshot({ vendor: "codex", source: "codex-rollout", limitId: "codex", observedAt: "2026-10-10T01:00:00.000Z" })
+    ]);
+
+    expect(
+      replaceVendorOfficialKeyUsage(
+        db,
+        "antigravity",
+        [
+          snapshot({ vendor: "antigravity", source: "antigravity-quota-api", limitId: "gemini", limitName: "Gemini Models", observedAt: "2026-10-10T02:00:00.000Z" }),
+          snapshot({ vendor: "antigravity", source: "antigravity-quota-api", limitId: "3p", limitName: "Claude and GPT models", observedAt: "2026-10-10T02:00:00.000Z" }),
+          snapshot({ vendor: "codex", source: "codex-rollout", limitId: "ignored-codex", observedAt: "2026-10-10T02:00:00.000Z" })
+        ],
+        "2026-10-10T02:00:00.000Z"
+      )
+    ).toBe(2);
+
+    expect(selectOfficialKeyUsage(db, { vendor: "antigravity" }).map((row) => row.limitId)).toEqual([
+      "3p",
+      "future-limit",
+      "gemini"
+    ]);
+    expect(selectOfficialKeyUsage(db, { vendor: "codex" }).map((row) => row.limitId)).toEqual([
+      "codex"
+    ]);
+  });
+
+  it("keeps stored rows untouched when replaceVendorOfficialKeyUsage receives no matching snapshots", () => {
+    const db = createDb();
+    persistOfficialKeyUsage(db, [
+      snapshot({ vendor: "antigravity", source: "antigravity-quota-api", limitId: "gemini", limitName: "Gemini Models", observedAt: "2026-10-10T01:00:00.000Z" })
+    ]);
+
+    expect(replaceVendorOfficialKeyUsage(db, "antigravity", [])).toBe(0);
+    expect(
+      replaceVendorOfficialKeyUsage(db, "antigravity", [
+        snapshot({ vendor: "codex", limitId: "codex", observedAt: "2026-10-10T02:00:00.000Z" })
+      ])
+    ).toBe(0);
+    expect(selectOfficialKeyUsage(db, { vendor: "antigravity" })).toHaveLength(1);
   });
 });
 

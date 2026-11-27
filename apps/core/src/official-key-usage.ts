@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import type { KeyUsageEntry, KeyUsageResponse } from "@agent-metrics/contracts";
-import type { SqliteDatabaseLike } from "./domain-types.js";
+import type { SqliteDatabaseLike, SqliteStatementLike } from "./domain-types.js";
 
 /**
  * Official key quota snapshots harvested from provider artifacts. Codex is the
@@ -201,18 +201,8 @@ export function ensureOfficialKeyUsageSchema(db: SqliteDatabaseLike): void {
   }
 }
 
-/** Upserts snapshots; an older scan never overwrites a newer stored row. */
-export function persistOfficialKeyUsage(
-  db: SqliteDatabaseLike,
-  snapshots: OfficialKeyUsageSnapshot[],
-  collectedAt: string = new Date().toISOString()
-): number {
-  if (snapshots.length === 0) {
-    return 0;
-  }
-  ensureOfficialKeyUsageSchema(db);
-
-  const insert = db.prepare(
+function prepareOfficialKeyUsageUpsert(db: SqliteDatabaseLike): SqliteStatementLike {
+  return db.prepare(
     `INSERT INTO official_key_usage (
       vendor, limit_key, window_key, source, limit_id, limit_name,
       primary_used_percent, primary_window_minutes, primary_resets_at,
@@ -236,32 +226,94 @@ export function persistOfficialKeyUsage(
       collected_at = excluded.collected_at
     WHERE excluded.observed_at >= official_key_usage.observed_at`
   );
+}
+
+function runOfficialKeyUsageUpsert(
+  insert: SqliteStatementLike,
+  snapshot: OfficialKeyUsageSnapshot,
+  collectedAt: string
+): void {
+  insert.run(
+    snapshot.vendor,
+    snapshot.limitId ?? "",
+    windowKey(snapshot),
+    snapshot.source,
+    snapshot.limitId,
+    snapshot.limitName,
+    snapshot.primary?.usedPercent ?? null,
+    snapshot.primary?.windowMinutes ?? null,
+    snapshot.primary?.resetsAt ?? null,
+    snapshot.secondary?.usedPercent ?? null,
+    snapshot.secondary?.windowMinutes ?? null,
+    snapshot.secondary?.resetsAt ?? null,
+    snapshot.credits === null ? null : snapshot.credits.hasCredits ? 1 : 0,
+    snapshot.credits === null ? null : snapshot.credits.unlimited ? 1 : 0,
+    snapshot.expiresAt,
+    snapshot.observedAt,
+    collectedAt
+  );
+}
+
+/** Upserts snapshots; an older scan never overwrites a newer stored row. */
+export function persistOfficialKeyUsage(
+  db: SqliteDatabaseLike,
+  snapshots: OfficialKeyUsageSnapshot[],
+  collectedAt: string = new Date().toISOString()
+): number {
+  if (snapshots.length === 0) {
+    return 0;
+  }
+  ensureOfficialKeyUsageSchema(db);
+
+  const insert = prepareOfficialKeyUsageUpsert(db);
 
   db.transaction(() => {
     for (const snapshot of snapshots) {
-      insert.run(
-        snapshot.vendor,
-        snapshot.limitId ?? "",
-        windowKey(snapshot),
-        snapshot.source,
-        snapshot.limitId,
-        snapshot.limitName,
-        snapshot.primary?.usedPercent ?? null,
-        snapshot.primary?.windowMinutes ?? null,
-        snapshot.primary?.resetsAt ?? null,
-        snapshot.secondary?.usedPercent ?? null,
-        snapshot.secondary?.windowMinutes ?? null,
-        snapshot.secondary?.resetsAt ?? null,
-        snapshot.credits === null ? null : snapshot.credits.hasCredits ? 1 : 0,
-        snapshot.credits === null ? null : snapshot.credits.unlimited ? 1 : 0,
-        snapshot.expiresAt,
-        snapshot.observedAt,
-        collectedAt
-      );
+      runOfficialKeyUsageUpsert(insert, snapshot, collectedAt);
     }
   })();
 
   return snapshots.length;
+}
+
+/**
+ * Replaces a vendor's active `limit_key` set atomically, pruning older
+ * obsolete limit keys while guarding against an older scan deleting newer data.
+ */
+export function replaceVendorOfficialKeyUsage(
+  db: SqliteDatabaseLike,
+  vendor: string,
+  snapshots: OfficialKeyUsageSnapshot[],
+  collectedAt: string = new Date().toISOString()
+): number {
+  const vendorSnapshots = snapshots.filter((snapshot) => snapshot.vendor === vendor);
+  if (vendorSnapshots.length === 0) {
+    return 0;
+  }
+  ensureOfficialKeyUsageSchema(db);
+
+  const activeLimitKeys = [...new Set(vendorSnapshots.map((snapshot) => snapshot.limitId ?? ""))];
+  const maxObservedAt = vendorSnapshots.reduce<string>(
+    (newest, snapshot) => (newest === "" || snapshot.observedAt > newest ? snapshot.observedAt : newest),
+    ""
+  );
+  const placeholders = activeLimitKeys.map(() => "?").join(", ");
+  const pruneObsolete = db.prepare(
+    `DELETE FROM official_key_usage
+    WHERE vendor = ?
+      AND observed_at <= ?
+      AND limit_key NOT IN (${placeholders})`
+  );
+  const insert = prepareOfficialKeyUsageUpsert(db);
+
+  db.transaction(() => {
+    pruneObsolete.run(vendor, maxObservedAt, ...activeLimitKeys);
+    for (const snapshot of vendorSnapshots) {
+      runOfficialKeyUsageUpsert(insert, snapshot, collectedAt);
+    }
+  })();
+
+  return vendorSnapshots.length;
 }
 
 /** Latest stored snapshot per (vendor, limit). Empty table → empty array. */

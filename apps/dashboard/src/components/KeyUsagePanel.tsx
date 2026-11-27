@@ -34,8 +34,8 @@ const ABSOLUTE_TIME_FORMAT: Intl.DateTimeFormatOptions = {
 
 export function KeyUsagePanel({ data, loading = false, errorMessage = null, leadCards, now }: KeyUsagePanelProps) {
   const entries = data?.entries ?? [];
-  const displayEntries = mergeVendorWindowEntries(entries);
-  const hasCards = displayEntries.length > 0 || leadCards != null;
+  const displayCards = buildDisplayCards(entries);
+  const hasCards = displayCards.length > 0 || leadCards != null;
   const resolvedNow = typeof now === "function" ? now() : now ?? new Date();
 
   return (
@@ -59,33 +59,61 @@ export function KeyUsagePanel({ data, loading = false, errorMessage = null, lead
       {!loading && !errorMessage && hasCards ? (
         <ul className="key-usage-list" aria-label="Official key quota windows">
           {leadCards}
-          {displayEntries.map((entry, index) => (
-            <li className="key-usage-card" key={`${entry.vendor}-${entry.limitId ?? "default"}-${index}`}>
+          {displayCards.map((card) => (
+            <li className="key-usage-card" key={card.key}>
               <div className="key-usage-card__head">
-                <strong className="key-usage-card__vendor">{formatVendor(entry.vendor)}</strong>
-                <span className="key-usage-card__limit">
-                  {entry.limitName ?? entry.limitId ?? "Default limit"}
-                </span>
-                {creditsState(entry) === "available" || creditsState(entry) === "unlimited" ? (
-                  <span className="key-usage-card__credits" data-state={creditsState(entry)}>
-                    {formatCredits(entry)}
+                <strong className="key-usage-card__vendor">{formatVendor(card.vendor)}</strong>
+                <span className="key-usage-card__limit">{card.limitLabel}</span>
+                {creditsState(card.credits) === "available" || creditsState(card.credits) === "unlimited" ? (
+                  <span className="key-usage-card__credits" data-state={creditsState(card.credits)}>
+                    {formatCredits(card.credits)}
                   </span>
                 ) : null}
               </div>
-              <div className="key-usage-card__windows">
-                {entry.primary !== null ? (
-                  <QuotaWindow label="Primary window" window={entry.primary} now={resolvedNow} />
-                ) : null}
-                {entry.secondary !== null ? (
-                  <QuotaWindow label="Secondary window" window={entry.secondary} now={resolvedNow} />
-                ) : null}
-                {entry.primary === null && entry.secondary === null ? (
-                  <p className="key-usage-card__empty">No quota windows reported.</p>
-                ) : null}
-              </div>
-              {entry.expiresAt ? (
+              {card.groups.length > 0 ? (
+                <div className="key-usage-card__groups">
+                  {card.groups.map((group) => (
+                    <div className="key-usage-group" key={group.key}>
+                      <div className="key-usage-group__title">{group.title}</div>
+                      <div className="key-usage-group__windows">
+                        {group.windows.length > 0 ? (
+                          group.windows.map((windowItem) => (
+                            <QuotaWindow
+                              key={windowItem.key}
+                              label={windowItem.label}
+                              window={windowItem.window}
+                              now={resolvedNow}
+                              ariaLabel={windowItem.ariaLabel}
+                              showWindowLength={windowItem.showWindowLength}
+                            />
+                          ))
+                        ) : (
+                          <p className="key-usage-card__empty">No quota windows reported.</p>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="key-usage-card__windows">
+                  {card.windows.map((windowItem) => (
+                    <QuotaWindow
+                      key={windowItem.key}
+                      label={windowItem.label}
+                      window={windowItem.window}
+                      now={resolvedNow}
+                      ariaLabel={windowItem.ariaLabel}
+                      showWindowLength={windowItem.showWindowLength}
+                    />
+                  ))}
+                  {card.windows.length === 0 ? (
+                    <p className="key-usage-card__empty">No quota windows reported.</p>
+                  ) : null}
+                </div>
+              )}
+              {card.expiresAt ? (
                 <p className="key-usage-card__expires">
-                  Valid until {formatLocalTime(new Date(entry.expiresAt))}
+                  Valid until {formatLocalTime(new Date(card.expiresAt))}
                 </p>
               ) : null}
             </li>
@@ -96,10 +124,46 @@ export function KeyUsagePanel({ data, loading = false, errorMessage = null, lead
   );
 }
 
-function QuotaWindow({ label, window, now }: { label: string; window: KeyUsageWindow; now: Date }) {
+type DisplayCardWindow = {
+  key: string;
+  label: string;
+  window: KeyUsageWindow;
+  ariaLabel?: string;
+  showWindowLength?: boolean;
+};
+
+type DisplayCardGroup = {
+  key: string;
+  title: string;
+  windows: DisplayCardWindow[];
+};
+
+type DisplayCard = {
+  key: string;
+  vendor: string;
+  limitLabel: string;
+  credits: KeyUsageEntry["credits"];
+  expiresAt: string | null;
+  windows: DisplayCardWindow[];
+  groups: DisplayCardGroup[];
+};
+
+function QuotaWindow({
+  label,
+  window,
+  now,
+  ariaLabel,
+  showWindowLength = true
+}: {
+  label: string;
+  window: KeyUsageWindow;
+  now: Date;
+  ariaLabel?: string;
+  showWindowLength?: boolean;
+}) {
   const usedPercent = Math.max(0, window.usedPercent);
   const barWidth = Math.min(100, usedPercent);
-  const windowLength = formatWindowLength(window.windowMinutes);
+  const windowLength = showWindowLength ? formatWindowLength(window.windowMinutes) : null;
 
   return (
     <div className="key-usage-window">
@@ -115,7 +179,7 @@ function QuotaWindow({ label, window, now }: { label: string; window: KeyUsageWi
       <div
         className="key-usage-window__bar"
         role="progressbar"
-        aria-label={`${label} quota used`}
+        aria-label={ariaLabel ?? `${label} quota used`}
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={Math.round(barWidth)}
@@ -131,63 +195,188 @@ function QuotaWindow({ label, window, now }: { label: string; window: KeyUsageWi
   );
 }
 
-function mergeVendorWindowEntries(entries: KeyUsageEntry[]): KeyUsageEntry[] {
-  // Only single-window entries (like Kimi Code's or ZCode's separate 5h/weekly
-  // rows) belong together on one card. Entries that already carry two windows
-  // or distinct Antigravity model-group pools stay separate with their limitName.
-  const singleWindowCountByVendor = new Map<string, number>();
+function buildDisplayCards(entries: KeyUsageEntry[]): DisplayCard[] {
+  const entriesByVendor = new Map<string, KeyUsageEntry[]>();
   for (const entry of entries) {
-    const isSingleWindow = (entry.primary !== null) !== (entry.secondary !== null);
-    if (isSingleWindow && entry.vendor !== "antigravity") {
-      singleWindowCountByVendor.set(entry.vendor, (singleWindowCountByVendor.get(entry.vendor) ?? 0) + 1);
+    const existing = entriesByVendor.get(entry.vendor);
+    if (existing === undefined) {
+      entriesByVendor.set(entry.vendor, [entry]);
+    } else {
+      existing.push(entry);
     }
   }
 
-  const mergedByVendor = new Map<string, KeyUsageEntry>();
-  const result: KeyUsageEntry[] = [];
-  for (const entry of entries) {
-    const isSingleWindow = (entry.primary !== null) !== (entry.secondary !== null);
-    if (
-      !isSingleWindow ||
-      entry.vendor === "antigravity" ||
-      (singleWindowCountByVendor.get(entry.vendor) ?? 0) < 2
-    ) {
-      result.push(entry);
+  const cards: DisplayCard[] = [];
+  for (const [vendor, vendorEntries] of entriesByVendor.entries()) {
+    if (vendorEntries.length === 1) {
+      const entry = vendorEntries[0]!;
+      cards.push({
+        key: `${vendor}-${entry.limitId ?? "default"}`,
+        vendor,
+        limitLabel: entry.limitName ?? entry.limitId ?? "Default limit",
+        credits: entry.credits,
+        expiresAt: entry.expiresAt,
+        windows: buildSingleEntryWindows(entry),
+        groups: []
+      });
       continue;
     }
 
-    const existing = mergedByVendor.get(entry.vendor);
-    if (existing === undefined) {
-      const merged: KeyUsageEntry = {
-        ...entry,
-        limitId: null,
-        limitName: null,
-        primary: entry.primary ?? entry.secondary,
-        secondary: entry.primary !== null ? entry.secondary : null
-      };
-      mergedByVendor.set(entry.vendor, merged);
-      result.push(merged);
+    const allSingleWindow = vendorEntries.every(
+      (entry) => (entry.primary !== null) !== (entry.secondary !== null)
+    );
+    if (vendor !== "antigravity" && allSingleWindow) {
+      cards.push(buildMergedSingleWindowCard(vendor, vendorEntries));
       continue;
     }
 
+    cards.push(buildMultiPoolCard(vendor, vendorEntries));
+  }
+
+  return cards;
+}
+
+function buildSingleEntryWindows(entry: KeyUsageEntry): DisplayCardWindow[] {
+  const windows: DisplayCardWindow[] = [];
+  if (entry.primary !== null) {
+    windows.push({ key: "primary", label: "Primary window", window: entry.primary });
+  }
+  if (entry.secondary !== null) {
+    windows.push({ key: "secondary", label: "Secondary window", window: entry.secondary });
+  }
+  return windows;
+}
+
+function buildMergedSingleWindowCard(vendor: string, vendorEntries: KeyUsageEntry[]): DisplayCard {
+  const windows: DisplayCardWindow[] = [];
+  let credits: KeyUsageEntry["credits"] = null;
+  let expiresAt: string | null = null;
+
+  for (const entry of vendorEntries) {
     const pending = [entry.primary, entry.secondary].filter(
       (window): window is KeyUsageWindow => window !== null
     );
     for (const window of pending) {
-      if (existing.primary === null) {
-        existing.primary = window;
-      } else if (existing.secondary === null) {
-        existing.secondary = window;
+      if (windows.length === 0) {
+        windows.push({ key: "primary", label: "Primary window", window });
+      } else if (windows.length === 1) {
+        windows.push({ key: "secondary", label: "Secondary window", window });
       }
     }
-    if (existing.credits === null && entry.credits !== null) {
-      existing.credits = entry.credits;
+    if (credits === null && entry.credits !== null) {
+      credits = entry.credits;
     }
-    if (existing.expiresAt === null && entry.expiresAt !== null) {
-      existing.expiresAt = entry.expiresAt;
+    if (expiresAt === null && entry.expiresAt !== null) {
+      expiresAt = entry.expiresAt;
     }
   }
-  return result;
+
+  return {
+    key: `${vendor}-default`,
+    vendor,
+    limitLabel: "Default limit",
+    credits,
+    expiresAt,
+    windows,
+    groups: []
+  };
+}
+
+function buildMultiPoolCard(vendor: string, vendorEntries: KeyUsageEntry[]): DisplayCard {
+  const sortedEntries = [...vendorEntries].sort(comparePoolEntries);
+  let usableCredits: KeyUsageEntry["credits"] = null;
+  let fallbackCredits: KeyUsageEntry["credits"] = null;
+  let expiresAt: string | null = null;
+
+  for (const entry of sortedEntries) {
+    const state = creditsState(entry.credits);
+    if (usableCredits === null && (state === "available" || state === "unlimited")) {
+      usableCredits = entry.credits;
+    }
+    if (fallbackCredits === null && entry.credits !== null) {
+      fallbackCredits = entry.credits;
+    }
+    if (expiresAt === null && entry.expiresAt !== null) {
+      expiresAt = entry.expiresAt;
+    }
+  }
+
+  const groups: DisplayCardGroup[] = sortedEntries.map((entry, groupIndex) => {
+    const title = entry.limitName ?? entry.limitId ?? "Default limit";
+    const rawWindows = [
+      { slotLabel: "Primary window", window: entry.primary },
+      { slotLabel: "Secondary window", window: entry.secondary }
+    ].filter(
+      (item): item is { slotLabel: string; window: KeyUsageWindow } => item.window !== null
+    );
+
+    return {
+      key: `${entry.limitId ?? title}-${groupIndex}`,
+      title,
+      windows: rawWindows.map(({ slotLabel, window }, windowIndex) => {
+        const windowLength = formatWindowLength(window.windowMinutes);
+        const displayLabel = windowLength ?? slotLabel;
+        return {
+          key: `${slotLabel}-${window.windowMinutes}-${windowIndex}`,
+          label: displayLabel,
+          window,
+          showWindowLength: false,
+          ariaLabel: `${title} ${displayLabel} quota used`
+        };
+      })
+    };
+  });
+
+  return {
+    key: `${vendor}-pools`,
+    vendor,
+    limitLabel: `${sortedEntries.length} pools`,
+    credits: usableCredits ?? fallbackCredits,
+    expiresAt,
+    windows: [],
+    groups
+  };
+}
+
+function comparePoolEntries(left: KeyUsageEntry, right: KeyUsageEntry): number {
+  const activityDiff = Number(isEntryActive(right)) - Number(isEntryActive(left));
+  if (activityDiff !== 0) {
+    return activityDiff;
+  }
+  const rankDiff = poolSortRank(left.limitId) - poolSortRank(right.limitId);
+  if (rankDiff !== 0) {
+    return rankDiff;
+  }
+  const leftLabel = left.limitName ?? left.limitId ?? "";
+  const rightLabel = right.limitName ?? right.limitId ?? "";
+  return leftLabel.localeCompare(rightLabel);
+}
+
+function isEntryActive(entry: KeyUsageEntry): boolean {
+  return isWindowActive(entry.primary) || isWindowActive(entry.secondary);
+}
+
+function isWindowActive(window: KeyUsageWindow | null): boolean {
+  return window !== null && (window.usedPercent > 0 || window.resetsAt !== null);
+}
+
+function poolSortRank(limitId: string | null): number {
+  if (limitId === "gemini") {
+    return 0;
+  }
+  if (limitId !== null && limitId.startsWith("gemini-")) {
+    return 1;
+  }
+  if (limitId === "3p") {
+    return 2;
+  }
+  if (limitId === "claude") {
+    return 3;
+  }
+  if (limitId === "gpt") {
+    return 4;
+  }
+  return 5;
 }
 
 function formatVendor(vendor: string): string {
@@ -264,22 +453,22 @@ function formatUpdatedAt(updatedAt: string | null): string {
   return `Synced from provider sources · Updated ${formatLocalTime(parsed)}`;
 }
 
-function creditsState(entry: KeyUsageEntry): string {
-  if (entry.credits === null) {
+function creditsState(credits: KeyUsageEntry["credits"]): string {
+  if (credits === null) {
     return "unknown";
   }
-  if (entry.credits.unlimited) {
+  if (credits.unlimited) {
     return "unlimited";
   }
-  return entry.credits.hasCredits ? "available" : "none";
+  return credits.hasCredits ? "available" : "none";
 }
 
-function formatCredits(entry: KeyUsageEntry): string {
-  if (entry.credits === null) {
+function formatCredits(credits: KeyUsageEntry["credits"]): string {
+  if (credits === null) {
     return "Credits unknown";
   }
-  if (entry.credits.unlimited) {
+  if (credits.unlimited) {
     return "Unlimited credits";
   }
-  return entry.credits.hasCredits ? "Credits available" : "No extra credits";
+  return credits.hasCredits ? "Credits available" : "No extra credits";
 }

@@ -3,7 +3,7 @@
   "arch": "arm64",
   "hostPlatform": "darwin",
   "hostArch": "arm64",
-  "timestamp": "2026-11-26T15:48:25.494Z",
+  "timestamp": "2026-11-26T16:33:45.930Z",
   "artifact": "/Users/chengzi/Code/GitHub/agent-metrics/apps/desktop/release/mac-arm64/AgentMetrics.app",
   "checks": {
     "verifyPackage": "passed",

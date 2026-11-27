@@ -3,7 +3,11 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { persistOfficialKeyUsage, type OfficialKeyUsageSnapshot, type OfficialKeyUsageWindow } from "./official-key-usage.js";
+import {
+  replaceVendorOfficialKeyUsage,
+  type OfficialKeyUsageSnapshot,
+  type OfficialKeyUsageWindow
+} from "./official-key-usage.js";
 import type { SqliteDatabaseLike } from "./domain-types.js";
 
 /**
@@ -107,7 +111,7 @@ export function decodeGoKeyringSecret(rawSecret: string): string {
 
 /**
  * Maps a `retrieveUserQuotaSummary` response into `OfficialKeyUsageSnapshot`
- * entries — one card per model group (e.g. `Gemini Models`, `Claude and GPT
+ * entries — one snapshot per model group (e.g. `Gemini Models`, `Claude and GPT
  * models`), pairing its `5h` bucket as `primary` and `weekly` bucket as
  * `secondary`.
  */
@@ -429,7 +433,12 @@ export async function collectAntigravityKeyUsage(
 
   return {
     snapshotsFound: result.snapshots.length,
-    snapshotsStored: persistOfficialKeyUsage(db, result.snapshots, collectedAt.toISOString())
+    snapshotsStored: replaceVendorOfficialKeyUsage(
+      db,
+      ANTIGRAVITY_KEY_USAGE_VENDOR,
+      result.snapshots,
+      collectedAt.toISOString()
+    )
   };
 }
 

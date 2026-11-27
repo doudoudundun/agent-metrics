@@ -113,7 +113,7 @@ describe("KeyUsagePanel", () => {
     expect(screen.getByText(/7d window/)).toBeInTheDocument();
   });
 
-  it("renders separate Antigravity model-group cards without merging or dropping windows", () => {
+  it("renders all Antigravity model pools inside one card without dropping windows", () => {
     render(
       <KeyUsagePanel
         now={NOW}
@@ -145,14 +145,110 @@ describe("KeyUsagePanel", () => {
       />
     );
 
-    expect(screen.getAllByRole("listitem")).toHaveLength(2);
-    expect(screen.getAllByText("Antigravity")).toHaveLength(2);
+    expect(screen.getAllByRole("listitem")).toHaveLength(1);
+    expect(screen.getAllByText("Antigravity")).toHaveLength(1);
+    expect(screen.getByText("2 pools")).toBeInTheDocument();
     expect(screen.getByText("Gemini Models")).toBeInTheDocument();
     expect(screen.getByText("Claude and GPT models")).toBeInTheDocument();
     expect(screen.getByText("8.1%")).toBeInTheDocument();
     expect(screen.getByText("9.2%")).toBeInTheDocument();
     expect(screen.getByText("0%")).toBeInTheDocument();
     expect(screen.getByText("55.8%")).toBeInTheDocument();
+    expect(screen.getByRole("progressbar", { name: "Gemini Models 5h window quota used" })).toBeInTheDocument();
+    expect(screen.getByRole("progressbar", { name: "Gemini Models 7d window quota used" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("progressbar", { name: "Claude and GPT models 5h window quota used" })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("progressbar", { name: "Claude and GPT models 7d window quota used" })
+    ).toBeInTheDocument();
+  });
+
+  it("orders active Antigravity pools ahead of idle pools and keeps fallback families in one card", () => {
+    const { container } = render(
+      <KeyUsagePanel
+        now={NOW}
+        data={{
+          updatedAt: "2026-10-10T08:55:00.000Z",
+          entries: [
+            {
+              vendor: "antigravity",
+              source: "antigravity-quota-api",
+              limitId: "3p",
+              limitName: "Claude and GPT models",
+              primary: { usedPercent: 0, windowMinutes: 300, resetsAt: null },
+              secondary: { usedPercent: 0, windowMinutes: 10080, resetsAt: null },
+              credits: null,
+              expiresAt: null
+            },
+            {
+              vendor: "antigravity",
+              source: "antigravity-quota-api",
+              limitId: "gemini",
+              limitName: "Gemini Models",
+              primary: { usedPercent: 3.4, windowMinutes: 300, resetsAt: "2026-10-10T12:20:00.000Z" },
+              secondary: { usedPercent: 1.0, windowMinutes: 10080, resetsAt: "2026-10-15T01:19:16.000Z" },
+              credits: null,
+              expiresAt: null
+            }
+          ]
+        }}
+      />
+    );
+
+    const groupTitles = Array.from(container.querySelectorAll(".key-usage-group__title")).map(
+      (node) => node.textContent
+    );
+    expect(groupTitles).toEqual(["Gemini Models", "Claude and GPT models"]);
+
+    cleanup();
+
+    render(
+      <KeyUsagePanel
+        now={NOW}
+        data={{
+          updatedAt: "2026-10-10T08:55:00.000Z",
+          entries: [
+            {
+              vendor: "antigravity",
+              source: "antigravity-quota-api",
+              limitId: "claude",
+              limitName: "Claude Models",
+              primary: { usedPercent: 12, windowMinutes: 0, resetsAt: "2026-10-10T12:20:00.000Z" },
+              secondary: null,
+              credits: null,
+              expiresAt: null
+            },
+            {
+              vendor: "antigravity",
+              source: "antigravity-quota-api",
+              limitId: "gemini",
+              limitName: "Gemini Models",
+              primary: { usedPercent: 5, windowMinutes: 0, resetsAt: "2026-10-10T12:20:00.000Z" },
+              secondary: null,
+              credits: null,
+              expiresAt: null
+            },
+            {
+              vendor: "antigravity",
+              source: "antigravity-quota-api",
+              limitId: "gpt",
+              limitName: "GPT Models",
+              primary: { usedPercent: 1, windowMinutes: 0, resetsAt: "2026-10-10T12:20:00.000Z" },
+              secondary: null,
+              credits: null,
+              expiresAt: null
+            }
+          ]
+        }}
+      />
+    );
+
+    expect(screen.getAllByRole("listitem")).toHaveLength(1);
+    expect(screen.getByText("3 pools")).toBeInTheDocument();
+    expect(screen.getByText("Claude Models")).toBeInTheDocument();
+    expect(screen.getByText("Gemini Models")).toBeInTheDocument();
+    expect(screen.getByText("GPT Models")).toBeInTheDocument();
   });
 
   it("marks a window whose reset time already passed as expired", () => {

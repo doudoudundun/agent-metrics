@@ -111,6 +111,41 @@
   gap: 10px;
 }
 
+.key-usage-card__groups {
+  display: grid;
+  gap: 10px;
+}
+
+.key-usage-group {
+  display: grid;
+  gap: 8px;
+}
+
+.key-usage-group + .key-usage-group {
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.key-usage-group__title {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: #d8e4f2;
+}
+
+.key-usage-group__windows {
+  display: grid;
+  gap: 8px;
+}
+
+.key-usage-group .key-usage-window {
+  gap: 4px;
+}
+
+.key-usage-group .key-usage-window__percent {
+  font-size: 13px;
+}
+
 .key-usage-card__empty {
   margin: 0;
   font-family: var(--font-mono);
