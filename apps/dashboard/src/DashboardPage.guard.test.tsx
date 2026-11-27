@@ -13,6 +13,7 @@ import {
   buildExportUrl,
   fetchCursorAccountUsage,
   fetchKeyUsage,
+  fetchPersonalQuota,
   fetchOverview,
   fetchSessionDetail,
   fetchSessions,
@@ -39,6 +40,7 @@ const apiMocks = vi.hoisted(() => ({
   fetchSessionDetail: vi.fn(),
   fetchCursorAccountUsage: vi.fn(),
   fetchKeyUsage: vi.fn(),
+  fetchPersonalQuota: vi.fn(),
   fetchSyncRun: vi.fn(),
   fetchSyncStatus: vi.fn(),
   triggerSync: vi.fn(),
@@ -162,6 +164,7 @@ function seedContractApiMocks(): void {
   });
   vi.mocked(fetchCursorAccountUsage).mockResolvedValue(null);
   vi.mocked(fetchKeyUsage).mockResolvedValue({ updatedAt: null, entries: [] });
+  vi.mocked(fetchPersonalQuota).mockResolvedValue({ families: [] });
   vi.mocked(fetchSessionDetail).mockResolvedValue(null as never);
   vi.mocked(fetchSyncStatus).mockResolvedValue({
     generatedAt: "2026-05-27T10:30:00.000Z",

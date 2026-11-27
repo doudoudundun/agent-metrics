@@ -5,6 +5,7 @@ import { App } from "./App";
 import {
   fetchCursorAccountUsage,
   fetchKeyUsage,
+  fetchPersonalQuota,
   fetchOverview,
   fetchSessions,
   fetchSyncStatus,
@@ -30,6 +31,7 @@ const apiMocks = vi.hoisted(() => ({
   fetchSessions: vi.fn(),
   fetchCursorAccountUsage: vi.fn(),
   fetchKeyUsage: vi.fn(),
+  fetchPersonalQuota: vi.fn(),
   fetchSyncStatus: vi.fn(),
   fetchWidgetSnapshot: vi.fn(),
   fetchSessionDetail: vi.fn(),
@@ -204,6 +206,7 @@ function seedMainDashboardMocks(): void {
   });
   vi.mocked(fetchCursorAccountUsage).mockResolvedValue(null);
   vi.mocked(fetchKeyUsage).mockResolvedValue({ updatedAt: null, entries: [] });
+  vi.mocked(fetchPersonalQuota).mockResolvedValue({ families: [] });
   vi.mocked(fetchSyncStatus).mockResolvedValue({
     generatedAt: "2026-05-27T10:30:00.000Z",
     shuttingDown: false,

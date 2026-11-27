@@ -1,6 +1,7 @@
 export * from "./common.js";
 export * from "./cursor-account-usage.js";
 export * from "./key-usage.js";
+export * from "./personal-quota.js";
 export * from "./errors.js";
 export * from "./health.js";
 export * from "./sync.js";

@@ -9,6 +9,7 @@ import {
   buildExportUrl,
   fetchCursorAccountUsage,
   fetchKeyUsage,
+  fetchPersonalQuota,
   fetchOverview,
   fetchSessionDetail,
   fetchSessions,
@@ -38,6 +39,7 @@ const apiMocks = vi.hoisted(() => ({
   fetchSessionDetail: vi.fn(),
   fetchCursorAccountUsage: vi.fn(),
   fetchKeyUsage: vi.fn(),
+  fetchPersonalQuota: vi.fn(),
   fetchSyncRun: vi.fn(),
   fetchSyncStatus: vi.fn(),
   buildExportUrl: vi.fn(),
@@ -820,6 +822,7 @@ function seedApiMocks(): void {
   });
   vi.mocked(fetchCursorAccountUsage).mockResolvedValue(null);
   vi.mocked(fetchKeyUsage).mockResolvedValue({ updatedAt: null, entries: [] });
+  vi.mocked(fetchPersonalQuota).mockResolvedValue({ families: [] });
   vi.mocked(fetchSyncRun).mockImplementation(async (runId) => buildSyncRun(runId, "succeeded"));
   vi.mocked(buildExportUrl).mockImplementation((format: "csv" | "json") => `/api/exports/${format}`);
   vi.mocked(triggerSync).mockResolvedValue({

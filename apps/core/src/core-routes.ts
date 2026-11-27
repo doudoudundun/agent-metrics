@@ -6,6 +6,7 @@ import {
   CursorAccountUsageResponseSchema,
   HealthResponseSchema,
   KeyUsageResponseSchema,
+  PersonalQuotaResponseSchema,
   ManualSyncRequestSchema,
   ManualSyncResponseSchema,
   OverviewResponseSchema,
@@ -34,6 +35,7 @@ import {
   selectOfficialKeyUsage,
   toKeyUsageResponse
 } from "./official-key-usage.js";
+import { selectPersonalQuota } from "./personal-quota.js";
 import {
   selectOverviewRows,
   selectTokensByModel,
@@ -294,6 +296,13 @@ export function registerCoreRoutes({
     );
     // An unsynced database is not an error: the panel renders its empty state.
     return KeyUsageResponseSchema.parse(toKeyUsageResponse(snapshots));
+  });
+
+  app.get("/api/personal-quota", async (_request, reply) => {
+    reply.header("cache-control", "no-store");
+    return PersonalQuotaResponseSchema.parse(
+      selectPersonalQuota(db as unknown as import("./domain-types.js").SqliteDatabaseLike)
+    );
   });
 
   app.get("/api/token-trend", async (request, reply) => {

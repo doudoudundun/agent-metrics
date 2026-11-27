@@ -2,6 +2,7 @@ import {
   ApiErrorResponseSchema,
   CursorAccountUsageResponseSchema,
   KeyUsageResponseSchema,
+  PersonalQuotaResponseSchema,
   ManualSyncResponseSchema,
   OverviewResponseSchema,
   SessionDetailResponseSchema,
@@ -14,6 +15,7 @@ import {
   type ManualSyncResponse,
   type CursorAccountUsageResponse,
   type KeyUsageResponse,
+  type PersonalQuotaResponse,
   type SourceVendor as EventSourceVendor,
   type OverviewResponse,
   type SessionDetailResponse,
@@ -36,6 +38,7 @@ export type {
   ManualSyncResponse,
   CursorAccountUsageResponse,
   KeyUsageResponse,
+  PersonalQuotaResponse,
   OverviewResponse,
   SessionDetailResponse,
   SessionsResponse,
@@ -213,6 +216,14 @@ export async function fetchKeyUsage(signal?: AbortSignal): Promise<KeyUsageRespo
     await fetchContractJson("/api/key-usage", { signal }),
     KeyUsageResponseSchema,
     "/api/key-usage"
+  );
+}
+
+export async function fetchPersonalQuota(signal?: AbortSignal): Promise<PersonalQuotaResponse> {
+  return parseContractResponse(
+    await fetchContractJson("/api/personal-quota", { signal }),
+    PersonalQuotaResponseSchema,
+    "/api/personal-quota"
   );
 }
 

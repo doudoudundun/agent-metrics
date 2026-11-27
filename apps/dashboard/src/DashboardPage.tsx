@@ -3,6 +3,7 @@ import {
   buildExportUrl,
   fetchCursorAccountUsage,
   fetchKeyUsage,
+  fetchPersonalQuota,
   fetchOverview,
   fetchSyncRun,
   fetchSyncStatus,
@@ -20,6 +21,7 @@ import {
 import { CursorQuotaCard } from "./components/CursorQuotaCard";
 import { CacheHitPanel } from "./components/CacheHitPanel";
 import { KeyUsagePanel } from "./components/KeyUsagePanel";
+import { PersonalQuotaPanel } from "./components/PersonalQuotaPanel";
 import { KpiGrid } from "./components/KpiGrid";
 import { ModelUsagePanel } from "./components/ModelUsagePanel";
 import { ProviderBreakdownPanel } from "./components/ProviderBreakdownPanel";
@@ -183,6 +185,10 @@ export function DashboardPage() {
     (signal: AbortSignal) => fetchKeyUsage(signal),
     []
   );
+  const personalQuotaLoader = useCallback(
+    (signal: AbortSignal) => fetchPersonalQuota(signal),
+    []
+  );
   const syncStatusLoader = useCallback(
     (signal: AbortSignal) => fetchSyncStatus(signal),
     []
@@ -210,6 +216,11 @@ export function DashboardPage() {
     "key-usage",
     keyUsageLoader
   );
+  const personalQuotaQuery = useQuery(
+    queryClient,
+    "personal-quota",
+    personalQuotaLoader
+  );
   const syncQuery = useQuery(queryClient, "sync-status", syncStatusLoader);
 
   useEffect(() => {
@@ -223,6 +234,7 @@ export function DashboardPage() {
 
   const refreshCursorUsage = cursorUsageQuery.refresh;
   const refreshKeyUsage = keyUsageQuery.refresh;
+  const refreshPersonalQuota = personalQuotaQuery.refresh;
 
   useEffect(() => {
     const handleWindowFocus = () => {
@@ -235,6 +247,7 @@ export function DashboardPage() {
       }
       lastQuotaRefreshAtRef.current = now;
       void refreshKeyUsage().catch(() => undefined);
+      void refreshPersonalQuota().catch(() => undefined);
       void refreshCursorUsage().catch(() => undefined);
     };
 
@@ -242,7 +255,7 @@ export function DashboardPage() {
     return () => {
       window.removeEventListener("focus", handleWindowFocus);
     };
-  }, [refreshCursorUsage, refreshKeyUsage]);
+  }, [refreshCursorUsage, refreshKeyUsage, refreshPersonalQuota]);
 
   const handleSync = async () => {
     const controller = new AbortController();
@@ -551,6 +564,15 @@ export function DashboardPage() {
                     : null
                 }
               />
+            }
+          />
+          <PersonalQuotaPanel
+            families={personalQuotaQuery.data?.families ?? []}
+            loading={personalQuotaQuery.status === "loading"}
+            errorMessage={
+              personalQuotaQuery.status === "error"
+                ? personalQuotaQuery.error?.message ?? "Unable to load your Antigravity usage."
+                : null
             }
           />
         </div>
